@@ -285,12 +285,21 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 }
 .seg button[aria-pressed="true"]{ background:var(--gold); color:var(--on-gold); }
 .lotbox .hint{ margin-top:9px; }
+/* 入力中の落札は「次に押したカードがこうなる」という予告。押すまで何も記録しない */
+.lotarm{
+  margin:11px 0 0; padding:9px 11px; border-radius:7px;
+  background:var(--gold-bg); border:1px solid color-mix(in srgb, var(--gold) 35%, transparent);
+  font-size:13px; color:var(--ink-2); display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline;
+}
+.lotarm b{ font-family:var(--font-num); font-variant-numeric:tabular-nums; color:var(--gold-ink); font-size:15px; }
+.lotarm .sub{ font-size:12px; color:var(--ink-3); }
 
 .lotnow{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
 .lotnow .big{
   font-family:var(--font-num); font-variant-numeric:tabular-nums;
   font-size:20px; font-weight:600; letter-spacing:-.02em; color:var(--gold-ink);
 }
+.lotnow .big .u{ font-family:var(--font-ui); font-size:14px; font-weight:700; color:var(--ink-2); margin-left:3px; }
 .lotnow .who{ font-size:13px; color:var(--ink-2); }
 .lotnow .spacer{ flex:1 1 auto; }
 .pipes{ display:flex; gap:4px; }
@@ -751,7 +760,7 @@ body.locked > header, body.locked > main { display:none; }
       <section class="panel">
         <header>
           <h2>落札と排出</h2>
-          <span class="hint">落札を登録 → その口数ぶんカードを押す</span>
+          <span class="hint">金額を入れて、出たカードを押す（押した時点で記録）</span>
         </header>
         <div class="body">
           <div id="lotBar"></div>
@@ -1981,6 +1990,8 @@ function openOripa(id, m){
   DB.currentId = id;
   simPrice = null;
   activeAnchor = "rec";
+  resetLotDraft();
+  lotBarKey = "";
   go(m || "edit");
 }
 
@@ -2158,13 +2169,33 @@ function renderLive(c){
   if(next) next.addEventListener("click", () => duplicateCurrent("（次回）"));
 }
 
-let lotDraft = { price: "", qty: 1, buyer: "", mode: "unit" };
+/* 落札の下書き。ここに金額を入れただけでは何も記録しない。
+   カードを押した時点で「ロット＋排出」が同時に立つ（draw() を見よ）。
+   touched は「入力に触ったか」。触っていなければ定価の即決として扱う。 */
+let lotDraft = { price: "", qty: 1, buyer: "", mode: "unit", touched: false, qtyTouched: false };
 let lotBarKey = "";
 
 function lotUnitPrice(){
   const v = Number(lotDraft.price === "" ? S.price : lotDraft.price) || 0;
   const q = Math.max(1, Math.round(Number(lotDraft.qty) || 1));
   return lotDraft.mode === "total" ? Math.round(v / q) : Math.round(v);
+}
+
+function lotDraftQty(){
+  return Math.max(1, Math.round(Number(lotDraft.qty) || 1));
+}
+
+function resetLotDraft(){
+  lotDraft = { price: "", qty: 1, buyer: "", mode: lotDraft.mode, touched: false, qtyTouched: false };
+}
+
+/** 取り消しでロットが消えたとき、入力し直さなくていいように下書きへ戻す */
+function lotToDraft(lot){
+  if(!lot || lot.kind !== "auction") { resetLotDraft(); return; }
+  lotDraft = {
+    price: String(lot.price), qty: lot.qty, buyer: lot.buyer || "",
+    mode: "unit", touched: true, qtyTouched: lot.qty > 1
+  };
 }
 
 function renderLotBar(c){
@@ -2183,7 +2214,7 @@ function renderLotBar(c){
     bar.innerHTML = `
       <div class="lotbox active">
         <div class="lotnow">
-          <span class="big">${yen(lot.price)} × ${lot.qty} 口</span>
+          <span class="big">${yen(lot.price)} × ${lot.qty}<span class="u">口</span></span>
           ${lot.buyer ? `<span class="who">${esc(lot.buyer)}</span>` : ""}
           <span class="pipes">${Array.from({length: lot.qty}, (_, i) =>
             `<i class="${i < st.drawn ? "on" : ""}"></i>`).join("")}</span>
@@ -2217,8 +2248,8 @@ function renderLotBar(c){
           <label for="lotBuyer">落札者（任意）</label>
           <input type="text" id="lotBuyer" value="${esc(lotDraft.buyer)}" placeholder="ID・名前">
         </div>
-        <button type="button" class="btn primary" id="btnAddLot">落札を登録</button>
       </div>
+      <p class="lotarm" id="lotArm"></p>
       <p class="hint" id="lotHint"></p>
     </div>`;
 
@@ -2226,48 +2257,52 @@ function renderLotBar(c){
     lotDraft.price = $("lotPrice").value;
     lotDraft.qty   = $("lotQty").value;
     lotDraft.buyer = $("lotBuyer").value;
+    lotDraft.touched = true;
     updateLotHint();
   };
   ["lotPrice", "lotQty", "lotBuyer"].forEach(id => $(id).addEventListener("input", upd));
+  $("lotQty").addEventListener("input", () => { lotDraft.qtyTouched = true; });
   bar.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
     lotDraft.mode = b.dataset.m;
+    lotDraft.touched = true;
+    lotBarKey = "";
     renderLotBar(compute());
   }));
-  $("btnAddLot").addEventListener("click", registerLot);
-  $("lotPrice").addEventListener("keydown", e => { if(e.key === "Enter") registerLot(); });
-  $("lotQty").addEventListener("keydown", e => { if(e.key === "Enter") registerLot(); });
+  // Enter は入力の確定だけ。ここでは何も記録せず、数字キーでカードを押せる状態にする
+  ["lotPrice", "lotQty", "lotBuyer"].forEach(id =>
+    $(id).addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); $(id).blur(); } }));
   updateLotHint();
 }
 
+/** 「次に押したカードがどう記録されるか」の予告と、価格の目安 */
 function updateLotHint(){
   const el = $("lotHint");
   if(!el) return;
   const c = compute();
   const unit = lotUnitPrice();
-  const q = Math.max(1, Math.round(Number(lotDraft.qty) || 1));
+  const q = Math.min(lotDraftQty(), Math.max(1, c.left));
+
+  const arm = $("lotArm");
+  if(arm){
+    arm.innerHTML = c.left <= 0
+      ? `<span>残りの口数がない。</span>`
+      : `<span>次に押したカード＝<b>${yen(unit)}</b> × <b>${q}</b> 口`
+        + (q > 1 ? `（合計 <b>${yen(unit * q)}</b>）` : "")
+        + (lotDraft.buyer.trim() ? ` ／ ${esc(lotDraft.buyer.trim())}` : "")
+        + `</span>`
+        + `<span class="sub">${lotDraft.touched ? "オークション" : "即決（定価）"}として記録`
+        + (q > 1 ? ` ／ ${q} 枚ぶん押すまで進行中` : "") + `</span>`;
+  }
+
   const parts = [];
   if(lotDraft.mode === "total") parts.push(`1口あたり <b class="num">${yen(unit)}</b>`);
-  else parts.push(`合計 <b class="num">${yen(unit * q)}</b>`);
   if(c.left > 0){
     parts.push(`この時点の下限 <b class="num">${yen(c.pFloor)}</b>`);
     parts.push(`損益分岐 <b class="num">${c.pBE > 0 ? yen(c.pBE) : "回収済"}</b>`);
   }
-  if(q > c.left) parts.push(`<b>残りは ${c.left} 口</b>`);
+  if(lotDraftQty() > c.left && c.left > 0) parts.push(`<b>残りは ${c.left} 口</b>`);
   el.innerHTML = parts.join(" ／ ")
-    + `<br>登録せずにカードを押すと、いまの単価 ${yen(S.price)} の即決として記録する。`;
-}
-
-async function registerLot(){
-  if(!S || S.closedAt || activeLot()) return;
-  const c = compute();
-  const unit = lotUnitPrice();
-  let qty = Math.max(1, Math.round(Number(lotDraft.qty) || 1));
-  if(c.left <= 0){ say("残りの口数がない。"); return; }
-  if(qty > c.left){ qty = c.left; }
-  if(unit <= 0 && !await ask("落札金額が 0 円になっている。このまま登録しますか？")) return;
-  addLot(unit, qty, lotDraft.buyer.trim(), "auction");
-  lotDraft = { price: "", qty: 1, buyer: "", mode: lotDraft.mode };
-  render();
+    + `<br>入力欄で Enter を押すと確定して、数字キー <b>1</b>〜<b>9</b> でもカードを押せる。`;
 }
 
 async function cancelLot(id){
@@ -2278,6 +2313,8 @@ async function cancelLot(id){
                                 { okLabel: "取り消す", danger: true })) return;
   S.events = S.events.filter(e => e.lotId !== id);
   S.lots = S.lots.filter(l => l.id !== id);
+  lotToDraft(lot);
+  lotBarKey = "";
   render();
 }
 
@@ -3182,11 +3219,20 @@ function draw(prizeId, n = 1){
   if(k <= 0) return;
 
   let lot = activeLot();
-  if(lot) k = Math.min(k, lot.qty - lotStats(S, lot).drawn);   // 落札した口数を超えない
-  else lot = addLot(S.price, k, "", "instant");                // 登録なしなら即決として起こす
+  if(lot){
+    k = Math.min(k, lot.qty - lotStats(S, lot).drawn);         // 落札した口数を超えない
+  }else{
+    // 進行中の落札が無ければ、入力中の金額でここに起こす。
+    // ＝金額の入力とカードを押す操作が1つになり、押した瞬間に口数が減る。
+    const want = lotDraft.qtyTouched ? Math.min(lotDraftQty(), c.left) : k;
+    lot = addLot(lotUnitPrice(), want, lotDraft.buyer.trim(),
+                 lotDraft.touched ? "auction" : "instant");
+    k = Math.min(k, want);
+  }
   if(k <= 0) return;
 
   for(let i = 0; i < k; i++) S.events.push({ prizeId, price: lot.price, lotId: lot.id });
+  if(lotStats(S, lot).complete) resetLotDraft();               // 落札1件ぶん済んだら入力を空に
   if(simPrice != null && activeAnchor === "rec") simPrice = null;
   render();
 }
@@ -3194,14 +3240,18 @@ function draw(prizeId, n = 1){
 function undo(){
   if(!S || S.closedAt || !S.events.length) return;
   const e = S.events.pop();
-  // 排出のたびに起こした即決ロットは、空になったら一緒に消す
-  if(e && e.lotId && !S.events.some(x => x.lotId === e.lotId)){
-    const lot = S.lots.find(l => l.id === e.lotId);
-    if(lot && lot.kind === "instant") S.lots = S.lots.filter(l => l.id !== lot.id);
-    else if(lot) lot.qty = Math.max(1, lot.qty);
-  }else if(e && e.lotId){
-    const lot = S.lots.find(l => l.id === e.lotId);
-    if(lot && lot.kind === "instant") lot.qty = S.events.filter(x => x.lotId === lot.id).length;
+  const lot = e && e.lotId ? S.lots.find(l => l.id === e.lotId) : null;
+  if(lot){
+    const rest = S.events.filter(x => x.lotId === lot.id).length;
+    if(rest === 0){
+      // ロットは排出と一緒に立つので、排出が全部消えたらロットも残さない。
+      // 入力し直さなくていいように金額は下書きへ戻す。
+      S.lots = S.lots.filter(l => l.id !== lot.id);
+      lotToDraft(lot);
+      lotBarKey = "";
+    }else if(lot.kind === "instant"){
+      lot.qty = rest;   // まとめ排出の即決は、押した数がそのまま口数
+    }
   }
   render();
 }
@@ -3294,7 +3344,7 @@ $("btnUndo").addEventListener("click", undo);
 $("btnResetDraws").addEventListener("click", async () => {
   if(!S.events.length && !S.lots.length) return;
   if(await ask("排出と落札の記録をすべて消しますか？", { okLabel: "すべて消す", danger: true })){
-    S.events = []; S.lots = []; render();
+    S.events = []; S.lots = []; resetLotDraft(); lotBarKey = ""; render();
   }
 });
 
