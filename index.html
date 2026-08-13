@@ -501,6 +501,7 @@ table.edit .calc{
   font-size:30px; font-weight:600; line-height:1; letter-spacing:-.03em;
 }
 .simhead .lead{ font-size:13px; color:var(--ink-2); flex:1 1 260px; min-width:0; }
+.simhead .delta{ font-size:12px; color:var(--ink-3); margin-top:5px; }
 .simgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:16px; }
 .simgrid > div{ border-left:2px solid var(--line-2); padding-left:11px; }
 .simgrid b{
@@ -1655,9 +1656,8 @@ function simulateBreakup(o, topMult, minReturn){
   const trials = N > 400 ? 4000 : (N > 150 ? 10000 : 20000);
   const rand = rng(hashSeed(`${N}|${costTotal}|${mktTotal}|${price}|${topMult}|${minReturn}|${topCount}`));
 
-  const sold = [], cash = [], stock = [];
-  const hist = new Array(N + 1).fill(0);
-  let broke = 0, cashNeg = 0;
+  const sold = [], cash = [], stock = [], mar = [], earlyMar = [];
+  let broke = 0, cashNeg = 0, early = 0;
 
   const arr = slots.slice();
   for(let t = 0; t < trials; t++){
@@ -1679,16 +1679,30 @@ function simulateBreakup(o, topMult, minReturn){
       if(topGone || thin){ k = i + 1; stopped = true; break; }
     }
 
-    const c = k * price - costDrawn;
+    const rev = k * price;
+    const c = rev - costDrawn;
     const w = c + (mktTotal - mktDrawn) * recovery;
-    sold.push(k); cash.push(c); stock.push(w);
-    hist[k]++;
+    const m = rev > 0 ? c / rev : 0;
+    sold.push(k); cash.push(c); stock.push(w); mar.push(m);
     if(stopped) broke++;
     if(c < 0) cashNeg++;
+    if(k <= N / 2){ early++; earlyMar.push(m); }
   }
 
-  sold.sort((a, b) => a - b); cash.sort((a, b) => a - b); stock.sort((a, b) => a - b);
+  const marRaw = mar.slice();
+  sold.sort((a, b) => a - b); cash.sort((a, b) => a - b);
+  stock.sort((a, b) => a - b); mar.sort((a, b) => a - b);
   const mean = a => a.reduce((n, v) => n + v, 0) / a.length;
+
+  // 利益率の分布（グラフ用）。ごく稀な大外れに潰されないよう上下2%で切る
+  const BINS = 28;
+  const lo = quantile(mar, 0.02), hi = quantile(mar, 0.98);
+  const span = (hi - lo) || 1;
+  const hist = new Array(BINS).fill(0);
+  for(const v of marRaw){
+    const t = clamp((v - lo) / span, 0, 0.9999);
+    hist[Math.floor(t * BINS)]++;
+  }
 
   return {
     N, trials, topCount, topLine, price, costTotal, mktTotal,
@@ -1697,8 +1711,13 @@ function simulateBreakup(o, topMult, minReturn){
     soldMed: quantile(sold, 0.5), soldP10: quantile(sold, 0.1), soldP90: quantile(sold, 0.9),
     cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashMean: mean(cash),
     stockMed: quantile(stock, 0.5), stockP10: quantile(stock, 0.1), stockMean: mean(stock),
+    marMed: quantile(mar, 0.5), marP10: quantile(mar, 0.1), marP90: quantile(mar, 0.9), marMean: mean(mar),
+    earlyRate: early / trials,
+    earlyMarMed: earlyMar.length ? quantile(earlyMar.sort((a, b) => a - b), 0.5) : 0,
+    soldOutMargin: (N * price) > 0 ? (N * price - costTotal) / (N * price) : 0,
     soldOutProfit: N * price - costTotal,
-    hist
+    hist, histLo: lo, histHi: hi,
+    histClipLo: mar[0] < lo, histClipHi: mar[mar.length - 1] > hi
   };
 }
 
@@ -2708,19 +2727,21 @@ function renderSim(){
 
   note.textContent = `${r.trials.toLocaleString()} 回ぶんの引き順で試算`;
 
-  const cls = r.breakupRate >= 0.7 ? "is-bad" : r.breakupRate <= 0.3 ? "is-good" : "";
+  const cls = r.marMed >= 0.25 ? "is-good" : r.marMed >= 0 ? "" : "is-bad";
   const lead = r.topCount === 0
-    ? `販売単価の ${topMult} 倍（${yen(r.topLine)}）以上の賞品が無いので、残り還元率が ${pct(minReturn,0)} を切ったときだけ解体と見なしている。`
-    : `目玉は ${r.topCount} 口（相場 ${yen(r.topLine)} 以上）。`
-      + `それが出尽くすか、残り還元率が ${pct(minReturn,0)} を切った時点で解体とみなす。`;
+    ? `販売単価の ${topMult} 倍（${yen(r.topLine)}）以上の賞品が無いので、`
+      + `残り還元率が ${pct(minReturn,0)} を切った時点を終わりとみなしている。`
+    : `目玉 ${r.topCount} 口（相場 ${yen(r.topLine)} 以上）が出尽くすのは中央値で ${r.soldMed} 口目。`
+      + `そこまで売れば売上 ${yen(r.soldMed * r.price)}、手元に残るのが ${syen(r.cashMed)}。`;
 
   const soldPct = r.N ? r.soldMed / r.N : 0;
 
   body.innerHTML = `
     <div class="simhead ${cls}">
       <div>
-        <span class="label">解体になる確率</span>
-        <div class="big">${pct(r.breakupRate, 0)}</div>
+        <span class="label">解体時に落ち着く利益率</span>
+        <div class="big">${spct(r.marMed, 1)}</div>
+        <div class="delta">${r.trials ? `10回中8回は ${spct(r.marP10,0)} 〜 ${spct(r.marP90,0)} に収まる` : ""}</div>
       </div>
       <p class="lead">${esc(lead)}</p>
     </div>
@@ -2730,6 +2751,11 @@ function renderSim(){
         <span class="label">解体時の販売口数</span>
         <b>${r.soldMed} / ${r.N}</b>
         <span class="sub">消化 ${pct(soldPct, 0)}・幅 ${r.soldP10}〜${r.soldP90} 口</span>
+      </div>
+      <div>
+        <span class="label">解体時の売上</span>
+        <b>${yen(r.soldMed * r.price)}</b>
+        <span class="sub">単価 ${yen(r.price)} × ${r.soldMed} 口</span>
       </div>
       <div>
         <span class="label">解体時の現金損益</span>
@@ -2747,17 +2773,17 @@ function renderSim(){
         <span class="sub">解体時点で手元の現金が減る</span>
       </div>
       <div>
-        <span class="label">完売できる確率</span>
-        <b>${pct(1 - r.breakupRate, 0)}</b>
-        <span class="sub">完売なら ${syen(r.soldOutProfit)}</span>
+        <span class="label">半分以下で終わる確率</span>
+        <b class="${r.earlyRate > 0.3 ? "neg" : ""}">${pct(r.earlyRate, 0)}</b>
+        <span class="sub">${r.earlyRate > 0 ? `そのときの利益率は ${spct(r.earlyMarMed, 0)}` : "早期解体は起きにくい"}</span>
       </div>
     </div>
 
-    <canvas id="simChart" role="img" aria-label="解体になる販売口数の分布"></canvas>
+    <canvas id="simChart" role="img" aria-label="解体時の利益率の分布"></canvas>
     <p class="hint" style="margin:10px 0 0">
-      全口を販売単価 ${yen(r.price)} で売った前提。実際の落札はこれより上下するので、
-      現金損益は目安として見る。<b>在庫込み損益</b>は、売れ残りを回収率
-      ${pct(clamp(S.recovery ?? 0.7, 0, 1), 0)} で評価した数字。
+      全口を販売単価 ${yen(r.price)} で売った前提。実際の落札は上下するので目安として見る。
+      利益率は<b>（売上 − 出た賞品の原価）÷ 売上</b>で、売れ残りは含めない。
+      売れ残りを回収率 ${pct(clamp(S.recovery ?? 0.7, 0, 1), 0)} で評価したのが<b>在庫込み損益</b>。
     </p>`;
 
   drawSimChart(r);
@@ -2775,41 +2801,49 @@ function drawSimChart(r){
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
 
-  const padL = 8, padR = 8, padT = 14, padB = 22;
+  const padL = 8, padR = 8, padT = 16, padB = 22;
   const w = W - padL - padR, h = H - padT - padB;
-  const BUCKETS = Math.min(28, r.N);
-  const size = r.N / BUCKETS;
-  const bins = new Array(BUCKETS).fill(0);
-  for(let k = 1; k <= r.N; k++){
-    const b = Math.min(BUCKETS - 1, Math.floor((k - 1) / size));
-    bins[b] += r.hist[k] || 0;
-  }
+  const bins = r.hist, B = bins.length;
   const max = Math.max(...bins, 1);
-  const bw = w / BUCKETS;
+  const bw = w / B;
+  const span = (r.histHi - r.histLo) || 1;
+  const xOf = v => padL + w * clamp((v - r.histLo) / span, 0, 1);
+  const medBin = Math.min(B - 1, Math.floor((r.marMed - r.histLo) / span * B));
 
-  const medBin = Math.min(BUCKETS - 1, Math.floor((r.soldMed - 1) / size));
   bins.forEach((v, i) => {
     const bh = (v / max) * h;
     const x = padL + i * bw, y = padT + h - bh;
     g.fillStyle = i === medBin ? col("--gold") : col("--line-2");
-    const r2 = Math.min(4, bw / 2 - 1);
+    const rr = Math.min(4, bw / 2 - 1);
     g.beginPath();
-    g.roundRect(x + 1, y, Math.max(1, bw - 2), Math.max(1, bh), [r2, r2, 0, 0]);
+    g.roundRect(x + 1, y, Math.max(1, bw - 2), Math.max(1, bh), [rr, rr, 0, 0]);
     g.fill();
   });
+
+  // 利益率0の位置
+  if(r.histLo < 0 && r.histHi > 0){
+    const x0 = Math.round(xOf(0)) + .5;
+    g.save();
+    g.setLineDash([3, 3]); g.strokeStyle = col("--bad"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x0, padT); g.lineTo(x0, padT + h); g.stroke();
+    g.restore();
+  }
 
   g.strokeStyle = col("--line"); g.lineWidth = 1;
   g.beginPath(); g.moveTo(padL, padT + h + .5); g.lineTo(W - padR, padT + h + .5); g.stroke();
 
-  g.fillStyle = col("--ink-3"); g.font = "10.5px " + col("--font-ui");
+  g.font = "10.5px " + col("--font-ui");
+  g.fillStyle = col("--ink-3");
   g.textBaseline = "top";
-  g.textAlign = "left";  g.fillText("1 口", padL, padT + h + 6);
-  g.textAlign = "right"; g.fillText(`${r.N} 口（完売）`, W - padR, padT + h + 6);
-  g.textAlign = "center";
+  g.textAlign = "left";
+  g.fillText((r.histClipLo ? "≤ " : "") + spct(r.histLo, 0), padL, padT + h + 6);
+  g.textAlign = "right";
+  g.fillText((r.histClipHi ? "≥ " : "") + spct(r.histHi, 0), W - padR, padT + h + 6);
+
   g.textBaseline = "alphabetic";
+  g.textAlign = "center";
   g.fillStyle = col("--gold-ink");
-  g.fillText(`中央値 ${r.soldMed} 口`,
-             clamp(padL + w * (r.soldMed / r.N), padL + 44, W - padR - 44), padT - 2);
+  g.fillText(`中央値 ${spct(r.marMed, 1)}`, clamp(xOf(r.marMed), padL + 46, W - padR - 46), padT - 4);
 }
 
 function renderFormulas(c){
