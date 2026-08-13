@@ -827,10 +827,10 @@ body.locked > header, body.locked > main { display:none; }
         <span class="v" id="mMargin">—</span>
         <span class="s" id="mMarginSub">—</span>
       </div>
-      <div class="kpi" id="kpiHeat">
-        <span class="label">残りの濃さ</span>
-        <span class="v" id="mHeat">—</span>
-        <span class="s" id="mHeatSub">—</span>
+      <div class="kpi" id="kpiRev">
+        <span class="label">現在の売上</span>
+        <span class="v" id="mRev">—</span>
+        <span class="s" id="mRevSub">—</span>
       </div>
       <div class="kpi">
         <span class="label">販売済</span>
@@ -2675,17 +2675,19 @@ function renderLive(c){
     ? `売上 ${yen(c.revenue)} − 排出原価 ${yen(c.costDrawn)}`
     : "まだ排出なし";
 
-  const kH = $("kpiHeat");
-  kH.className = "kpi " + (c.left === 0 ? "" : c.heat >= 1.05 ? "is-good" : c.heat < 0.80 ? "is-bad" : c.heat < 0.95 ? "is-warn" : "");
-  $("mHeat").textContent = c.left > 0 ? (c.heat).toFixed(2) + "×" : "—";
-  $("mHeatSub").textContent = c.left > 0
-    ? `残り1口の期待値 ${yen(c.evMkt)}（設計 ${yen(c.baseEvMkt)}）`
-    : "残りなし";
+  // 売上は実額。開封待ちはまだ入っていないので、あるときだけ添える
+  const avgSold = c.sold > 0 ? c.revenue / c.sold : 0;
+  $("mRev").textContent = yen(c.revenue);
+  $("mRevSub").textContent = c.sold === 0
+    ? (c.pendingSlots > 0 ? `落札 ${yen(c.pendingRev)} は開封待ち` : "まだ売上なし")
+    : `${c.sold} 口・平均 ${yen(avgSold)}`
+      + (c.price > 0 ? `（定価比 ${pct(avgSold / c.price, 0)}）` : "")
+      + (c.pendingSlots > 0 ? `／開封待ち ${yen(c.pendingRev)}` : "");
 
   $("mSold").textContent = `${c.sold}/${c.N}`;
   $("mSoldSub").textContent = c.left > 0
     ? (c.pendingSlots > 0
-        ? `落札済みで開封待ち ${c.pendingSlots} 口（${yen(c.pendingRev)}）・残り ${c.left} 口`
+        ? `開封待ち ${c.pendingSlots} 口・残り ${c.left} 口・残り還元率 ${c.price>0 ? pct(c.returnLeft,0) : "—"}`
         : `残り ${c.left} 口・残り還元率 ${c.price>0 ? pct(c.returnLeft,0) : "—"}`)
     : `全口排出済み`;
 
@@ -2696,9 +2698,9 @@ function renderLive(c){
   $("mFinal").textContent = syen(c.profitNow);
   $("mFinal").className = "v " + (c.profitNow >= 0 ? "pos" : "neg");
   $("mFinalSub").textContent = c.sold === 0
-    ? (c.pendingSlots > 0 ? `落札 ${yen(c.pendingRev)} は開封待ち（まだ売上に入れていない）` : "まだ排出なし")
+    ? "まだ排出なし"
     : `在庫込み ${syen(withStock)}`
-      + (c.pendingSlots > 0 ? `／落札 ${yen(c.pendingRev)} が開封待ち` : `（残り ${c.left} 口を回収 ${pct(c.recovery, 0)} で評価）`);
+      + (c.left > 0 ? `（残り ${c.left} 口を回収 ${pct(c.recovery, 0)} で評価）` : "");
 
   renderCue(c);
   renderLotBar(c);
