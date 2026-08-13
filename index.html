@@ -488,6 +488,29 @@ table.edit .calc{
 }
 .bar span{ display:block; height:100%; background:var(--gold); border-radius:3px; }
 
+/* ---- 解体シミュレーション ---- */
+.simhead{
+  display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+  padding:14px 16px; border-left:3px solid var(--gold); background:var(--surface-2);
+  border-radius:9px; margin:18px 0 0;
+}
+.simhead.is-bad{ border-left-color:var(--bad); }
+.simhead.is-good{ border-left-color:var(--good); }
+.simhead .big{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:30px; font-weight:600; line-height:1; letter-spacing:-.03em;
+}
+.simhead .lead{ font-size:13px; color:var(--ink-2); flex:1 1 260px; min-width:0; }
+.simgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:16px; }
+.simgrid > div{ border-left:2px solid var(--line-2); padding-left:11px; }
+.simgrid b{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:19px; font-weight:600; margin-top:2px;
+}
+.simgrid b.pos{ color:var(--good); } .simgrid b.neg{ color:var(--bad); }
+.simgrid .sub{ display:block; font-size:11.5px; color:var(--ink-3); margin-top:2px; }
+canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
+
 .empty{
   text-align:center; padding:40px 20px; color:var(--ink-3); font-size:14px;
   border:1px dashed var(--line-2); border-radius:var(--r);
@@ -918,6 +941,27 @@ body.locked > header, body.locked > main { display:none; }
           <div><span class="label">設計利益率</span><b id="sMargin">—</b></div>
           <div><span class="label">完売時の利益</span><b id="sProfit">—</b></div>
         </div>
+      </div>
+    </section>
+
+    <section class="panel" id="simPanel">
+      <header>
+        <h2>解体シミュレーション</h2>
+        <span class="hint" id="simNote"></span>
+      </header>
+      <div class="body">
+        <div class="fields">
+          <div class="field">
+            <label for="simTopMult">目玉の基準（販売単価の何倍以上）</label>
+            <input type="number" id="simTopMult" min="1" step="0.5" value="5">
+          </div>
+          <div class="field">
+            <label for="simMinReturn">解体する残り還元率（%を下回ったら）</label>
+            <input type="number" id="simMinReturn" min="0" max="200" step="5" value="50">
+          </div>
+        </div>
+
+        <div id="simBody"></div>
       </div>
     </section>
 
@@ -1553,6 +1597,108 @@ function auctionSummary(o){
     max: prices.length ? Math.max(...prices) : 0,
     min: prices.length ? Math.min(...prices) : 0,
     last: o.lots.length ? o.lots[o.lots.length - 1].price : 0
+  };
+}
+
+/* ============================================================
+   解体シミュレーション
+
+   オリパは「目玉が出尽くす」か「残りが薄くなりすぎる」と解体になる。
+   いつそうなるかは引き順しだいで、口は有限（非復元抽出）なので、
+   解析式より引き順を何万回も回して分布を見るほうが正確で扱いやすい。
+   ============================================================ */
+
+/** 同じ構成なら毎回同じ結果になるよう、条件から種を作る */
+function hashSeed(str){
+  let h = 2166136261;
+  for(let i = 0; i < str.length; i++){
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function rng(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const quantile = (sorted, q) => sorted.length
+  ? sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * q)))]
+  : 0;
+
+/**
+ * o: オリパ / topMult: 目玉＝相場が販売単価の何倍以上か
+ * minReturn: 残り還元率がこれを下回ったら解体（0で無効）
+ */
+function simulateBreakup(o, topMult, minReturn){
+  const price = Math.max(0, o.price || 0);
+  const recovery = clamp(o.recovery ?? 0.7, 0, 1);
+  const slots = [];
+  let costTotal = 0, mktTotal = 0;
+  const topLine = price * (topMult > 0 ? topMult : 0);
+
+  for(const p of o.prizes){
+    const c = costOf(p), m = mktOf(p), n = Math.max(0, p.count | 0);
+    for(let i = 0; i < n; i++){
+      slots.push({ c, m, top: topLine > 0 && m >= topLine });
+      costTotal += c; mktTotal += m;
+    }
+  }
+  const N = slots.length;
+  if(!N || price <= 0) return null;
+
+  const topCount = slots.filter(x => x.top).length;
+  const trials = N > 400 ? 4000 : (N > 150 ? 10000 : 20000);
+  const rand = rng(hashSeed(`${N}|${costTotal}|${mktTotal}|${price}|${topMult}|${minReturn}|${topCount}`));
+
+  const sold = [], cash = [], stock = [];
+  const hist = new Array(N + 1).fill(0);
+  let broke = 0, cashNeg = 0;
+
+  const arr = slots.slice();
+  for(let t = 0; t < trials; t++){
+    // 引き順をシャッフル（Fisher-Yates）
+    for(let i = N - 1; i > 0; i--){
+      const j = (rand() * (i + 1)) | 0;
+      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+    }
+
+    let costDrawn = 0, mktDrawn = 0, topDrawn = 0, k = N, stopped = false;
+    for(let i = 0; i < N; i++){
+      const s = arr[i];
+      costDrawn += s.c; mktDrawn += s.m; if(s.top) topDrawn++;
+      const left = N - (i + 1);
+      if(left === 0) break;
+      const evMkt = (mktTotal - mktDrawn) / left;
+      const topGone = topCount > 0 && topDrawn === topCount;
+      const thin = minReturn > 0 && evMkt / price < minReturn;
+      if(topGone || thin){ k = i + 1; stopped = true; break; }
+    }
+
+    const c = k * price - costDrawn;
+    const w = c + (mktTotal - mktDrawn) * recovery;
+    sold.push(k); cash.push(c); stock.push(w);
+    hist[k]++;
+    if(stopped) broke++;
+    if(c < 0) cashNeg++;
+  }
+
+  sold.sort((a, b) => a - b); cash.sort((a, b) => a - b); stock.sort((a, b) => a - b);
+  const mean = a => a.reduce((n, v) => n + v, 0) / a.length;
+
+  return {
+    N, trials, topCount, topLine, price, costTotal, mktTotal,
+    breakupRate: broke / trials,
+    cashNegRate: cashNeg / trials,
+    soldMed: quantile(sold, 0.5), soldP10: quantile(sold, 0.1), soldP90: quantile(sold, 0.9),
+    cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashMean: mean(cash),
+    stockMed: quantile(stock, 0.5), stockP10: quantile(stock, 0.1), stockMean: mean(stock),
+    soldOutProfit: N * price - costTotal,
+    hist
   };
 }
 
@@ -2526,6 +2672,144 @@ function renderEdit(c){
   const designMargin = (c.N * c.price) > 0 ? (c.N * c.price - c.costTotal) / (c.N * c.price) : 0;
   $("sMargin").textContent = c.N && c.price ? spct(designMargin) : "—";
   $("sProfit").textContent = syen(c.N * c.price - c.costTotal);
+
+  renderSim();
+}
+
+/* ---------- 解体シミュレーションの表示 ---------- */
+let simCache = { key: "", res: null };
+
+function simParams(){
+  return {
+    topMult: Math.max(0, Number($("simTopMult").value) || 0),
+    minReturn: Math.max(0, Number($("simMinReturn").value) || 0) / 100
+  };
+}
+
+function renderSim(){
+  const body = $("simBody"), note = $("simNote");
+  if(!S){ body.innerHTML = ""; return; }
+  const { topMult, minReturn } = simParams();
+
+  const key = JSON.stringify([
+    S.prizes.map(p => [costOf(p), mktOf(p), p.count | 0]),
+    S.price, S.recovery, topMult, minReturn
+  ]);
+  if(key !== simCache.key){
+    simCache = { key, res: simulateBreakup(S, topMult, minReturn) };
+  }
+  const r = simCache.res;
+
+  if(!r){
+    note.textContent = "";
+    body.innerHTML = `<p class="hint" style="margin:16px 0 0">賞品と販売単価を入れると、解体になる確率と、そのときの損益を出す。</p>`;
+    return;
+  }
+
+  note.textContent = `${r.trials.toLocaleString()} 回ぶんの引き順で試算`;
+
+  const cls = r.breakupRate >= 0.7 ? "is-bad" : r.breakupRate <= 0.3 ? "is-good" : "";
+  const lead = r.topCount === 0
+    ? `販売単価の ${topMult} 倍（${yen(r.topLine)}）以上の賞品が無いので、残り還元率が ${pct(minReturn,0)} を切ったときだけ解体と見なしている。`
+    : `目玉は ${r.topCount} 口（相場 ${yen(r.topLine)} 以上）。`
+      + `それが出尽くすか、残り還元率が ${pct(minReturn,0)} を切った時点で解体とみなす。`;
+
+  const soldPct = r.N ? r.soldMed / r.N : 0;
+
+  body.innerHTML = `
+    <div class="simhead ${cls}">
+      <div>
+        <span class="label">解体になる確率</span>
+        <div class="big">${pct(r.breakupRate, 0)}</div>
+      </div>
+      <p class="lead">${esc(lead)}</p>
+    </div>
+
+    <div class="simgrid">
+      <div>
+        <span class="label">解体時の販売口数</span>
+        <b>${r.soldMed} / ${r.N}</b>
+        <span class="sub">消化 ${pct(soldPct, 0)}・幅 ${r.soldP10}〜${r.soldP90} 口</span>
+      </div>
+      <div>
+        <span class="label">解体時の現金損益</span>
+        <b class="${r.cashMed >= 0 ? "pos" : "neg"}">${syen(r.cashMed)}</b>
+        <span class="sub">悪いほう1割で ${syen(r.cashP10)}</span>
+      </div>
+      <div>
+        <span class="label">解体時の在庫込み損益</span>
+        <b class="${r.stockMed >= 0 ? "pos" : "neg"}">${syen(r.stockMed)}</b>
+        <span class="sub">悪いほう1割で ${syen(r.stockP10)}</span>
+      </div>
+      <div>
+        <span class="label">現金がマイナスになる確率</span>
+        <b class="${r.cashNegRate > 0.5 ? "neg" : ""}">${pct(r.cashNegRate, 0)}</b>
+        <span class="sub">解体時点で手元の現金が減る</span>
+      </div>
+      <div>
+        <span class="label">完売できる確率</span>
+        <b>${pct(1 - r.breakupRate, 0)}</b>
+        <span class="sub">完売なら ${syen(r.soldOutProfit)}</span>
+      </div>
+    </div>
+
+    <canvas id="simChart" role="img" aria-label="解体になる販売口数の分布"></canvas>
+    <p class="hint" style="margin:10px 0 0">
+      全口を販売単価 ${yen(r.price)} で売った前提。実際の落札はこれより上下するので、
+      現金損益は目安として見る。<b>在庫込み損益</b>は、売れ残りを回収率
+      ${pct(clamp(S.recovery ?? 0.7, 0, 1), 0)} で評価した数字。
+    </p>`;
+
+  drawSimChart(r);
+}
+
+function drawSimChart(r){
+  const cv = $("simChart");
+  if(!cv) return;
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 600, H = 130;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  const padL = 8, padR = 8, padT = 14, padB = 22;
+  const w = W - padL - padR, h = H - padT - padB;
+  const BUCKETS = Math.min(28, r.N);
+  const size = r.N / BUCKETS;
+  const bins = new Array(BUCKETS).fill(0);
+  for(let k = 1; k <= r.N; k++){
+    const b = Math.min(BUCKETS - 1, Math.floor((k - 1) / size));
+    bins[b] += r.hist[k] || 0;
+  }
+  const max = Math.max(...bins, 1);
+  const bw = w / BUCKETS;
+
+  const medBin = Math.min(BUCKETS - 1, Math.floor((r.soldMed - 1) / size));
+  bins.forEach((v, i) => {
+    const bh = (v / max) * h;
+    const x = padL + i * bw, y = padT + h - bh;
+    g.fillStyle = i === medBin ? col("--gold") : col("--line-2");
+    const r2 = Math.min(4, bw / 2 - 1);
+    g.beginPath();
+    g.roundRect(x + 1, y, Math.max(1, bw - 2), Math.max(1, bh), [r2, r2, 0, 0]);
+    g.fill();
+  });
+
+  g.strokeStyle = col("--line"); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(padL, padT + h + .5); g.lineTo(W - padR, padT + h + .5); g.stroke();
+
+  g.fillStyle = col("--ink-3"); g.font = "10.5px " + col("--font-ui");
+  g.textBaseline = "top";
+  g.textAlign = "left";  g.fillText("1 口", padL, padT + h + 6);
+  g.textAlign = "right"; g.fillText(`${r.N} 口（完売）`, W - padR, padT + h + 6);
+  g.textAlign = "center";
+  g.textBaseline = "alphabetic";
+  g.fillStyle = col("--gold-ink");
+  g.fillText(`中央値 ${r.soldMed} 口`,
+             clamp(padL + w * (r.soldMed / r.N), padL + 44, W - padR - 44), padT - 2);
 }
 
 function renderFormulas(c){
@@ -3062,6 +3346,9 @@ function unmakeSet(p){
 }
 
 $("btnMakeSet").addEventListener("click", makeSet);
+
+["simTopMult", "simMinReturn"].forEach(id =>
+  $(id).addEventListener("change", () => renderSim()));
 
 $("btnAddPrize").addEventListener("click", () => {
   S.prizes.push({ id: uid++, name: "新しい賞品", cost: 0, market: 0, count: 1, note: "", normal: false, items: [] });
