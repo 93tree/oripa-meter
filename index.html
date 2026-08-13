@@ -837,7 +837,7 @@ body.locked > header, body.locked > main { display:none; }
 
           <div class="simrow">
             <span class="label">試算価格</span>
-            <span class="simprice">¥<input type="number" id="simPriceInput" min="0" step="10" inputmode="numeric"></span>
+            <span class="simprice">¥<input type="number" id="simPriceInput" min="0" step="1" inputmode="numeric"></span>
             <input type="range" id="simPriceRange" min="0" max="100" step="1" aria-label="試算価格スライダー">
           </div>
 
@@ -907,7 +907,7 @@ body.locked > header, body.locked > main { display:none; }
           </div>
           <div class="field">
             <label for="impPrice">販売単価（円）</label>
-            <input type="number" id="impPrice" min="0" step="100" inputmode="numeric">
+            <input type="number" id="impPrice" min="0" step="1" inputmode="numeric">
           </div>
           <div class="field" style="justify-content:flex-end">
             <label class="check"><input type="checkbox" id="impGroup" checked> 同じ名前・同じ単価をまとめる</label>
@@ -1013,7 +1013,7 @@ body.locked > header, body.locked > main { display:none; }
           </div>
           <div class="field">
             <label for="fPrice">販売単価（円）</label>
-            <input type="number" id="fPrice" min="0" step="10" inputmode="numeric">
+            <input type="number" id="fPrice" min="0" step="1" inputmode="numeric">
           </div>
         </div>
 
@@ -1060,14 +1060,14 @@ body.locked > header, body.locked > main { display:none; }
 
   <!-- 排出の記録。カードを押すとここが開き、金額を入れて確定する -->
   <div class="modal" id="drawModal" hidden>
-    <form class="modalbox drawbox" id="drawForm" role="dialog" aria-modal="true" aria-labelledby="drawTitle">
+    <form class="modalbox drawbox" id="drawForm" novalidate role="dialog" aria-modal="true" aria-labelledby="drawTitle">
       <div class="drawhead">
         <h3 id="drawTitle">—</h3>
         <p class="sub" id="drawSub">—</p>
       </div>
       <div class="drawfields">
         <label class="df df-price" for="drawPrice">落札金額
-          <input type="number" id="drawPrice" min="0" step="100" inputmode="numeric" required>
+          <input type="number" id="drawPrice" min="0" step="1" inputmode="numeric" required>
         </label>
         <div class="seg" role="group" aria-label="金額の入れ方">
           <button type="button" data-m="unit"  id="drawModeUnit">単価</button>
@@ -1206,14 +1206,19 @@ function normalizeOripa(o){
     events: (Array.isArray(o.events) ? o.events : [])
       .filter(e => e && e.prizeId != null)
       .map(e => ({ prizeId: e.prizeId, price: Math.max(0, Number(e.price) || 0), lotId: e.lotId || null })),
-    lots: (Array.isArray(o.lots) ? o.lots : []).map(l => ({
-      id: l.id || newId(),
-      price: Math.max(0, Number(l.price) || 0),
-      qty: Math.max(1, Math.round(Number(l.qty) || 1)),
-      buyer: String(l.buyer || ""),
-      kind: l.kind === "auction" ? "auction" : "instant",
-      at: Number(l.at) || Date.now()
-    })),
+    lots: (Array.isArray(o.lots) ? o.lots : []).map(l => {
+      const q = Math.max(1, Math.round(Number(l.qty) || 1));
+      return {
+        id: l.id || newId(),
+        price: Math.max(0, Number(l.price) || 0),
+        qty: q,
+        // 端数の1円を配る口数。口数を超えることはない
+        rem: clamp(Math.round(Number(l.rem) || 0), 0, q - 1),
+        buyer: String(l.buyer || ""),
+        kind: l.kind === "auction" ? "auction" : "instant",
+        at: Number(l.at) || Date.now()
+      };
+    }),
     totalSlots: 0,
     createdAt: Number(o.createdAt) || t,
     updatedAt: Number(o.updatedAt) || t,
@@ -1638,20 +1643,45 @@ function lotStats(o, lot){
     names.push(p.name);
   }
   const drawn = evs.length;
+  // 売上はロットの単価×口数ではなく、**実際に積んだイベントの合計**。
+  // 合計金額を口数で割り切れないとき、端数の1円を配ってあるため。
+  const revenue = evs.reduce((n, e) => n + (Number(e.price) || 0), 0);
   return {
-    drawn, cost, mkt, names,
-    revenue: lot.price * drawn,
-    total: lot.price * lot.qty,
-    profit: lot.price * drawn - cost,
+    drawn, cost, mkt, names, revenue,
+    total: lotTotal(lot),
+    profit: revenue - cost,
     complete: drawn >= lot.qty
   };
 }
 
-function addLot(price, qty, buyer, kind){
+/* オークションは1円単位で入る。合計で入れた金額が口数で割り切れないとき、
+   単価をそのまま掛けると合計がずれる（¥10,000÷3口 → 3,333×3 = 9,999）。
+   単価は切り捨て、余りの円を先頭の口へ1円ずつ配って合計を合わせる。
+   rem = 1円を足す口数。 */
+function lotUnitAndRem(total, qty){
+  const t = Math.max(0, Math.round(total) || 0);
+  const q = Math.max(1, Math.round(qty) || 1);
+  const unit = Math.floor(t / q);
+  return { price: unit, rem: t - unit * q };
+}
+
+/** そのロットの落札総額（端数込み） */
+function lotTotal(lot){
+  return lot.price * lot.qty + (lot.rem || 0);
+}
+
+/** ロット内 idx 番目（0始まり）の口の値段 */
+function lotSlotPrice(lot, idx){
+  return lot.price + (idx < (lot.rem || 0) ? 1 : 0);
+}
+
+function addLot(price, qty, buyer, kind, rem){
+  const q = Math.max(1, Math.round(qty) || 1);
   const lot = {
     id: newId(),
     price: Math.max(0, Math.round(price) || 0),
-    qty: Math.max(1, Math.round(qty) || 1),
+    qty: q,
+    rem: Math.max(0, Math.min(q - 1, Math.round(Number(rem) || 0))),
     buyer: String(buyer || ""),
     kind: kind || "auction",
     at: Date.now()
@@ -1665,7 +1695,7 @@ function auctionSummary(o){
   const done = lotDrawn(o);
   const auctions = o.lots.filter(l => l.kind === "auction");
   const drawnQty = o.lots.reduce((n, l) => n + (done.get(l.id) || 0), 0);
-  const revenue  = o.lots.reduce((n, l) => n + l.price * (done.get(l.id) || 0), 0);
+  const revenue  = o.events.reduce((n, e) => n + (e.lotId ? (Number(e.price) || 0) : 0), 0);
   const prices = o.lots.filter(l => (done.get(l.id) || 0) > 0).map(l => l.price);
   return {
     lots: o.lots.length,
@@ -2092,15 +2122,26 @@ $("modal").addEventListener("mousedown", e => { if(e.target === $("modal")) clos
 /* ---- 排出の記録ダイアログ ---- */
 function submitDraw(atListPrice){
   const c = compute();
-  const unit = atListPrice ? c.price : drawUnitPrice();
-  const qty  = atListPrice ? 1 : Math.max(1, Math.round(Number($("drawQty").value) || 1));
+
+  // 標準の入力チェックには任せない（novalidate）。弾かれても画面に何も出ず、
+  // 「押したのに記録されない」になるため、ここで見て理由を出す。
+  if(!atListPrice){
+    const raw = $("drawPrice").value.trim();
+    if(raw === "" || !isFinite(Number(raw)) || Number(raw) < 0){
+      $("drawArm").innerHTML = `<span style="color:var(--bad);font-weight:700">金額を入れる（1円単位で入る）</span>`;
+      $("drawPrice").focus();
+      return;
+    }
+  }
+
+  const d = atListPrice ? { price: c.price, rem: 0, qty: 1 } : drawPricing();
   const buyer = atListPrice ? "" : $("drawBuyer").value.trim();
   // 金額と「単価/合計」は次も同じ水準になりやすいので覚える。
   // 落札者は毎回変わるので残さない（取り消しで戻すときだけ lotToDraft が入れる）。
-  lotDraft.price = atListPrice ? "" : String(unit);
+  lotDraft.price = atListPrice ? "" : $("drawPrice").value.trim();
   lotDraft.buyer = "";
-  closeDraw({ price: unit, qty, buyer,
-              kind: (unit === c.price && !buyer) ? "instant" : "auction" });
+  closeDraw({ price: d.price, rem: d.rem, qty: d.qty, buyer,
+              kind: (d.price === c.price && d.rem === 0 && !buyer) ? "instant" : "auction" });
 }
 
 $("drawForm").addEventListener("submit", e => { e.preventDefault(); submitDraw(false); });
@@ -2450,6 +2491,7 @@ function renderLotBar(c){
     <div class="lotbox active">
       <div class="lotnow">
         <span class="big">${yen(lot.price)} × ${lot.qty}<span class="u">口</span></span>
+        ${lot.rem ? `<span class="who">合計 ${yen(lotTotal(lot))}</span>` : ""}
         ${lot.buyer ? `<span class="who">${esc(lot.buyer)}</span>` : ""}
         <span class="pipes">${Array.from({length: lot.qty}, (_, i) =>
           `<i class="${i < st.drawn ? "on" : ""}"></i>`).join("")}</span>
@@ -2469,31 +2511,36 @@ function renderLotBar(c){
    ------------------------------------------------------------ */
 let drawDone = null;
 
-function drawUnitPrice(){
-  const v = Math.max(0, Number($("drawPrice").value) || 0);
+/** 入力中の金額を「単価＋端数」に直す。合計入力でも1円のずれが出ない */
+function drawPricing(){
+  const v = Math.max(0, Math.round(Number($("drawPrice").value) || 0));
   const q = Math.max(1, Math.round(Number($("drawQty").value) || 1));
-  return lotDraft.mode === "total" ? Math.round(v / q) : Math.round(v);
+  if(lotDraft.mode === "total") return { ...lotUnitAndRem(v, q), qty: q, total: v };
+  return { price: v, rem: 0, qty: q, total: v * q };
 }
 
 function updateDrawArm(c){
-  const unit = drawUnitPrice();
-  const q = Math.min(Math.max(1, Math.round(Number($("drawQty").value) || 1)), Math.max(1, c.left));
+  const d = drawPricing();
+  const q = Math.min(d.qty, Math.max(1, c.left));
   const buyer = $("drawBuyer").value.trim();
-  const kind = (unit === c.price && !buyer) ? "即決（定価）" : "オークション";
+  const kind = (d.price === c.price && d.rem === 0 && !buyer) ? "即決（定価）" : "オークション";
+  // 表示は実際に記録する口数ぶんで。端数の1円は先頭の口に乗る
+  const shown = d.price * q + Math.min(d.rem, q);
 
   $("drawArm").innerHTML =
-    `<b>${yen(unit)}</b> × <b>${q}</b> 口`
-    + (q > 1 ? `（合計 <b>${yen(unit * q)}</b>）` : "")
+    `<b>${yen(d.price)}${d.rem ? "〜" + yen(d.price + 1) : ""}</b> × <b>${q}</b> 口`
+    + (q > 1 ? `（合計 <b>${yen(shown)}</b>）` : "")
     + (buyer ? ` ／ ${esc(buyer)}` : "")
     + ` を ${kind}として記録`
-    + (q > 1 ? `<br><span class="sub">残り ${q - 1} 口ぶんは、続けてカードを押す</span>` : "");
+    + (q > 1 ? `<br><span class="sub">残り ${q - 1} 口ぶんは、続けてカードを押す` +
+               (d.rem ? `／割り切れないぶんの ${d.rem} 円は先頭の口に乗せる` : "") + `</span>` : "");
 
   const parts = [];
-  if(lotDraft.mode === "total") parts.push(`1口あたり <b class="num">${yen(unit)}</b>`);
+  if(lotDraft.mode === "total") parts.push(`1口あたり <b class="num">${yen(d.price)}</b>`);
   parts.push(`この時点の下限 <b class="num">${yen(c.pFloor)}</b>`);
   const bk = liveBreakup(c);
   if(bk) parts.push(`損益分岐 <b class="num">${bk.pBE === Infinity ? "届かない" : (bk.pBE > 0 ? yen(bk.pBE) : "回収済")}</b>`);
-  if(Math.round(Number($("drawQty").value) || 1) > c.left) parts.push(`<b>残りは ${c.left} 口</b>`);
+  if(d.qty > c.left) parts.push(`<b>残りは ${c.left} 口</b>`);
   $("drawHint").innerHTML = parts.join(" ／ ");
 }
 
@@ -2569,7 +2616,7 @@ function renderLotTable(){
         `${lot.kind === "auction" ? "オークション" : "即決"}` +
         `${lot.buyer ? " ／ " + esc(lot.buyer) : ""}${names}</td>` +
       `<td class="n">${st.drawn}/${lot.qty}</td>` +
-      `<td class="n">${yen(lot.price)}</td>` +
+      `<td class="n">${yen(lot.price)}${lot.rem ? `<br><span class="hint">合計 ${yen(lotTotal(lot))}</span>` : ""}</td>` +
       `<td class="n">${yen(st.cost)}</td>` +
       `<td class="n ${st.profit >= 0 ? "pos" : "neg"}">${syen(st.profit)}</td>` +
       `<td>${S.closedAt ? "" : `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
@@ -2771,7 +2818,7 @@ function renderPrice(c){
   const sim = simPrice == null ? c.rec : simPrice;
   const rng = $("simPriceRange");
   rng.max = String(Math.round(simMax));
-  rng.step = String(Math.max(10, Math.round(simMax / 200 / 10) * 10));
+  rng.step = "1";                       // 落札は1円単位なので試算も1円単位で動かせる
   rng.value = String(Math.min(sim, Math.round(simMax)));
   $("simPriceInput").value = String(Math.round(sim));
 
@@ -2937,10 +2984,10 @@ function renderEdit(c){
       <td><input type="text" data-f="name" value="${esc(p.name)}" aria-label="賞品名"></td>
       <td>${set
         ? `<span class="calc num">${yen(costOf(p))}</span>`
-        : `<input type="number" data-f="cost" min="0" step="10" value="${p.cost|0}" aria-label="原価" inputmode="numeric">`}</td>
+        : `<input type="number" data-f="cost" min="0" step="1" value="${p.cost|0}" aria-label="原価" inputmode="numeric">`}</td>
       <td>${set
         ? `<span class="calc num">${yen(mktOf(p))}</span>`
-        : `<input type="number" data-f="market" min="0" step="10" value="${p.market|0}" aria-label="相場" inputmode="numeric">`}</td>
+        : `<input type="number" data-f="market" min="0" step="1" value="${p.market|0}" aria-label="相場" inputmode="numeric">`}</td>
       <td><input type="number" data-f="count" min="0" step="1" value="${p.count|0}" aria-label="口数" inputmode="numeric"></td>
       <td><input type="text" data-f="note" value="${esc(p.note || "")}" aria-label="備考"></td>
       <td style="text-align:center"><input type="radio" name="normalRow" data-f="normal" ${p.normal?"checked":""} aria-label="通常枠にする" style="width:auto"></td>
@@ -2979,8 +3026,8 @@ function renderEdit(c){
         sub.innerHTML = `
           <td></td>
           <td><span class="tree">└</span><input type="text" data-i="name" value="${esc(it.name)}" aria-label="中身の名前"></td>
-          <td><input type="number" data-i="cost" min="0" step="10" value="${it.cost|0}" aria-label="中身の原価" inputmode="numeric"></td>
-          <td><input type="number" data-i="market" min="0" step="10" value="${it.market|0}" aria-label="中身の相場" inputmode="numeric"></td>
+          <td><input type="number" data-i="cost" min="0" step="1" value="${it.cost|0}" aria-label="中身の原価" inputmode="numeric"></td>
+          <td><input type="number" data-i="market" min="0" step="1" value="${it.market|0}" aria-label="中身の相場" inputmode="numeric"></td>
           <td><input type="number" data-i="qty" min="1" step="1" value="${itemQty(it)}" aria-label="1口あたりの数量" inputmode="numeric"></td>
           <td colspan="3" class="hint">1 口に ${itemQty(it)} 個</td>
           <td><button type="button" class="rowdel" ${drawn>0?"disabled":""} aria-label="この中身を外す">×</button></td>`;
@@ -3527,11 +3574,15 @@ async function draw(prizeId, n = 1){
     const want = Math.max(1, Math.min(r.qty, c2.left));
     k = Math.min(want, (p.count|0) - drawn2, c2.left);
     if(k <= 0) return;
-    lot = addLot(r.price, want, r.buyer, r.kind);
+    lot = addLot(r.price, want, r.buyer, r.kind, r.rem);
   }
   if(k <= 0) return;
 
-  for(let i = 0; i < k; i++) S.events.push({ prizeId, price: lot.price, lotId: lot.id });
+  // 合計で入れたときの端数（1円）は、ロットの先頭の口から順に乗せる
+  const already = S.events.filter(e => e.lotId === lot.id).length;
+  for(let i = 0; i < k; i++){
+    S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id });
+  }
   if(simPrice != null && activeAnchor === "rec") simPrice = null;
   render();
 }
@@ -3550,6 +3601,7 @@ function undo(){
       lotBarKey = "";
     }else if(lot.kind === "instant"){
       lot.qty = rest;   // まとめ排出の即決は、押した数がそのまま口数
+      lot.rem = clamp(lot.rem || 0, 0, rest - 1);
     }
   }
   render();
