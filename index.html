@@ -1972,40 +1972,43 @@ function lastHit(c){
 let cueVariant = 0;
 const pick = (arr, v) => arr[((v % arr.length) + arr.length) % arr.length];
 
-/* 口調。読み上げる文の言い回しだけを変える。**数字は一切変えない**。
-   煽っても、出ない賞品は出ない。数字を盛った瞬間にカンペの価値が無くなる。 */
+/* 口調。読み上げる文の言い回しだけを変える。
+
+   **読み上げ行に出す数字は「残り口数」と「相場」だけ。**
+   単価・還元率・確率・1口あたりの期待値は出さない（運用者の指示）。
+   商売の内訳を配信で言う筋合いはないし、確率を口に出すと後で揉める。
+   熱さは「激熱！」「残り熱！」のような言葉に寄せてふわっと伝える。
+   数字そのものは画面のメーターと「自分用」の行で見る。 */
 let cueTone = "hot";
 try{ if(localStorage.getItem("oripa-cue-tone") === "calm") cueTone = "calm"; }catch(_){}
 
 /* x は buildCue が作る材料。各関数は候補の配列を返し、pick() が回して選ぶ。 */
 const CUE_TONE = {
-  /* 落ち着いた説明口調 */
+  /* 落ち着いた口調 */
   calm: {
     open: x => x.T > 0
       ? [`残り<b>${x.L}口</b>。${x.names}がまだ残ってます`,
          `${x.names}、まだ出てません。残り<b>${x.L}口</b>です`,
          `狙いは${x.topName}。残り<b>${x.L}口</b>の中にまだあります`]
-      : [`目玉はもう出きりました。残り<b>${x.L}口</b>です${x.bestName ? `。いま最高は${x.bestName}` : ""}`,
-         `上のほうは抜けきってます。残り<b>${x.L}口</b>${x.bestName ? `。いま最高は${x.bestName}` : ""}`],
-    odds: x => [
-      ...(x.half ? [`だいたい<b>${x.half}口</b>引けば半々で目玉が出ます`] : []),
-      ...(x.L >= 10 ? [`10口回せば<b>${x.p10}</b>で目玉のどれかが出ます`] : []),
-      `次の1口で目玉を引く確率は<b>${x.pNext}</b>`],
-    value: x => [
-      `残り1口の中身は平均<b>${x.ev}</b>。単価に対して還元率<b>${x.ret}</b>です${x.thick}`,
-      `いま1口あたり<b>${x.ev}</b>ぶん入ってます。還元率<b>${x.ret}</b>${x.thick}`],
+      : [`大物はもう出きりました。残り<b>${x.L}口</b>です`,
+         `上のほうは抜けきってます。残り<b>${x.L}口</b>`],
+    tease: x => [`${x.topName}、相場<b>${x.topMkt}</b>のやつです。まだ沈んでます`,
+                 `${x.topName}は相場<b>${x.topMkt}</b>。これがまだ残ってます`],
+    best: x => [`いま残ってるいちばんは${x.bestName}、相場<b>${x.bestMkt}</b>です`,
+                `頭は${x.bestName}。相場<b>${x.bestMkt}</b>です`],
+    heat: x => ({
+      hot:  [`いま濃いです。狙うならここ`, `残りが濃いので、引くならいまです`],
+      warm: [`まだ中身は残ってます`, `ここからもまだあります`],
+      flat: [`まだまだこれからです`, `ここからです`],
+      thin: [`正直、いまは渋いです。そのぶん安くします`, `渋いのは認めます。値段で返します`],
+      out:  [`上物は抜けました。ここからは値段で勝負します`, `大物は出きりました。安くしていきます`]
+    })[x.mood],
     hit: x => [`さっき${x.hitName}が出ました。相場<b>${x.hitMkt}</b>です`,
-               `${x.hitName}、出ましたね。<b>${x.hitMkt}</b>ぶんです`],
-    thickWord: { up: "。設計より濃いです", down: "。設計より薄くなってます", flat: "" },
-    mood: x => x.heat >= 1.15
-      ? [`残りが濃いので、いま引くのがいちばん得です`,
-         `出た数より残ってる価値のほうが大きい状態です`]
-      : [`正直いまは薄いです。値段を下げます`,
-         `ここは渋いので、単価を落として回します`],
-    cut: x => [`<b>${x.rec}</b>まで下げます`, `ここから<b>${x.rec}</b>でいきます`],
+               `${x.hitName}、出ましたね。相場<b>${x.hitMkt}</b>です`],
+    cut: x => [`ここから値段を下げます`, `安くしていきます`],
     last: x => [`残り<b>${x.L}口</b>。ここで終わりです`, `ラスト<b>${x.L}口</b>です`],
-    done: x => [`${x.N}口、完売しました。ありがとうございました`,
-                `これで全部です。${x.N}口ぜんぶ出ました`]
+    done: x => [`<b>${x.N}口</b>、完売しました。ありがとうございました`,
+                `これで全部です。<b>${x.N}口</b>ぜんぶ出ました`]
   },
 
   /* たたき売り。短く、区切って、たたみかける */
@@ -2013,34 +2016,36 @@ const CUE_TONE = {
     open: x => x.T > 0
       ? [`さあ次いくよ！残り<b>${x.L}口</b>！${x.topName}まだ沈んでる！`,
          `はい次！残り<b>${x.L}口</b>！${x.names}、まだ誰も引いてないよ！`,
-         `いくよいくよ！${x.topName}が残り<b>${x.L}口</b>の中にまだ入ってる！`,
+         `いくよいくよ！${x.topName}がまだ入ってる！残り<b>${x.L}口</b>！`,
          `お待たせ！${x.names}、これ狙いでしょ！残り<b>${x.L}口</b>！`]
       : [`上物はもう抜けた！正直に言う！ここからは値段で勝負するよ！`,
-         `目玉は出きった！隠さないよ！だから安くいく！残り<b>${x.L}口</b>！`,
-         `デカいのは出た！${x.bestName ? `いま頭は${x.bestName}！` : ""}ここからは数で勝負！`],
-    odds: x => [
-      ...(x.half ? [`<b>${x.half}口</b>引けば半分の確率で目玉！どう見る！`,
-                    `目安<b>${x.half}口</b>！そこで半々だよ！`] : []),
-      ...(x.L >= 10 ? [`10口まわせば<b>${x.p10}</b>！これ強いよ！`] : []),
-      `次の1発で<b>${x.pNext}</b>！一撃狙うならここ！`],
-    value: x => [
-      `1口に平均<b>${x.ev}</b>入ってる！単価<b>${x.price}</b>だよ、還元<b>${x.ret}</b>${x.thick}`,
-      `<b>${x.price}</b>で中身<b>${x.ev}</b>${x.thick}これ以上は言わない！`,
-      `還元<b>${x.ret}</b>！<b>${x.price}</b>でこれだからね${x.thick}`],
+         `大物は出きった！隠さないよ！だから安くいく！残り<b>${x.L}口</b>！`,
+         `デカいのは出た！ここからは数で勝負！残り<b>${x.L}口</b>！`],
+    tease: x => [`${x.topName}！相場<b>${x.topMkt}</b>！これがまだ沈んでるよ！`,
+                 `狙いは${x.topName}！相場<b>${x.topMkt}</b>！まだ誰も当ててない！`,
+                 `${x.topName}、相場<b>${x.topMkt}</b>のやつ！これ持ってってよ！`],
+    best: x => [`いまの頭は${x.bestName}！相場<b>${x.bestMkt}</b>！`,
+                `残ってるいちばんは${x.bestName}！相場<b>${x.bestMkt}</b>だよ！`],
+    heat: x => ({
+      hot:  [`いま激熱！ここが一番おいしいとこ！`,
+             `のこ熱！残りが濃いよ、迷ってる場合じゃない！`,
+             `残り熱い！この状態で回せるの今だけ！`],
+      warm: [`まだ熱いよ！中身しっかり残ってる！`,
+             `のこ熱！まだまだ入ってるよ！`],
+      flat: [`まだまだこれから！ここからだよ！`,
+             `いくよいくよ、まだあるよ！`],
+      thin: [`正直ちょい渋い！だから安くいくよ！`,
+             `渋いのは認める！値段で返すよ！`,
+             `薄いのは隠さない！そのぶん下げる！`],
+      out:  [`上は抜けた！ここからは値段勝負！`,
+             `大物は出た！だから安くいくよ！`]
+    })[x.mood],
     hit: x => [`出たー！${x.hitName}！相場<b>${x.hitMkt}</b>！`,
-               `${x.hitName}！これ<b>${x.hitMkt}</b>だよ、見た！？`,
-               `はい${x.hitName}持ってかれた！<b>${x.hitMkt}</b>！`],
-    thickWord: { up: "！しかも設計より濃い！", down: "！薄いのは認める！", flat: "！" },
-    mood: x => x.heat >= 1.15
-      ? [`いま一番おいしいとこ！迷ってる場合じゃない！`,
-         `残り濃いよ！ここ入らないと損するよ！`,
-         `この濃さで回せるの今だけ！`]
-      : [`正直に言う、いま薄い！だから下げる！`,
-         `渋いのは分かってる！値段で返すよ！`,
-         `薄いのは隠さない！そのぶん安くする！`],
-    cut: x => [`よし下げた！<b>${x.rec}</b>！`,
-               `<b>${x.rec}</b>！ここまで落とすよ！`,
-               `はい<b>${x.rec}</b>！これで手ぇ上げて！`],
+               `${x.hitName}！これ相場<b>${x.hitMkt}</b>だよ、見た！？`,
+               `はい${x.hitName}持ってかれた！相場<b>${x.hitMkt}</b>！`],
+    cut: x => [`よし下げる！安くするよ！`,
+               `ここで下げた！いまが買いだよ！`,
+               `はい下げた！これで手ぇ上げて！`],
     last: x => [`ラスト<b>${x.L}口</b>！終わっちゃうよ！`,
                 `残り<b>${x.L}口</b>！早い者勝ち！`,
                 `あと<b>${x.L}口</b>で締めるよ！`],
@@ -2055,35 +2060,33 @@ function buildCue(c){
   const L = c.left, T = topsLeft(c);
   const lines = [];
 
-  // --- いまの局面 ---
-  let level, cls;
-  if(L === 0){ level = "完売"; cls = ""; }
-  else if(c.heat >= 1.15){ level = "激アツ"; cls = "is-hot"; }
-  else if(c.heat >= 1.05){ level = "濃いめ"; cls = "is-hot"; }
-  else if(c.heat >= 0.95){ level = "平常"; cls = ""; }
-  else if(c.heat >= 0.80){ level = "やや薄い"; cls = "is-warm"; }
-  else { level = "出きった"; cls = "is-cold"; }
+  // --- いまの熱さ。読み上げ行では数字にせず言葉で伝える ---
+  let level, cls, mood;
+  if(L === 0){ level = "完売"; cls = ""; mood = "flat"; }
+  else if(c.heat >= 1.15){ level = "激熱"; cls = "is-hot"; mood = "hot"; }
+  else if(c.heat >= 1.05){ level = "熱い"; cls = "is-hot"; mood = "warm"; }
+  else if(c.heat >= 0.95){ level = "まだまだ"; cls = ""; mood = "flat"; }
+  else if(c.heat >= 0.80){ level = "ちょい渋い"; cls = "is-warm"; mood = "thin"; }
+  else { level = "出きった"; cls = "is-cold"; mood = "thin"; }
+  // 目玉の線を超える賞品が無くても、残りが濃いなら「安くいく」とは言わない
+  // （バッジが「激熱」なのに文が「大物は出た、安くする」だと食い違う）
+  if(T.count === 0 && L > 0 && c.heat < 1.05){ mood = "out"; }
+  // 添えの行は自分用。ここには数字を出してよい（読み上げるものではない）
   const label = `残りの濃さ ${c.heat.toFixed(2)}× ／ 残り還元率 ${c.price > 0 ? pct(c.returnLeft, 0) : "—"}`;
 
   const best = c.o.prizes
     .map(p => ({ p, rest: Math.max(0, (p.count|0) - (c.drawnBy.get(p.id) || 0)), mkt: mktOf(p) }))
-    .filter(x => x.rest > 0).sort((a, b) => b.mkt - a.mkt)[0];
+    .filter(y => y.rest > 0).sort((a, b) => b.mkt - a.mkt)[0];
   const hit = lastHit(c);
 
-  // 文に差し込む材料。数字はすべて compute() の実値
   const x = {
-    L, N: c.N, T: T.count, heat: c.heat,
+    L, N: c.N, T: T.count, mood,
     names: T.list.slice(0, 2).map(y => `${y.p.name}${y.rest > 1 ? `が${y.rest}本` : ""}`).join("と"),
     topName: T.list.length ? T.list[0].p.name : "",
-    bestName: best ? best.p.name : "",
-    half: halfDraws(L, T.count),
-    p10: pct(pWithin(L, T.count, Math.min(10, L)), 0),
-    pNext: pct(L > 0 ? T.count / L : 0, 1),
-    ev: yen(c.evMkt), price: yen(c.price), ret: pct(c.returnLeft, 0),
-    hitName: hit ? hit.p.name : "", hitMkt: hit ? yen(mktOf(hit.p)) : "",
-    rec: yen(c.rec)
+    topMkt:  T.list.length ? yen(T.list[0].mkt) : "",
+    bestName: best ? best.p.name : "", bestMkt: best ? yen(best.mkt) : "",
+    hitName: hit ? hit.p.name : "", hitMkt: hit ? yen(mktOf(hit.p)) : ""
   };
-  x.thick = t.thickWord[c.heat >= 1.05 ? "up" : c.heat < 0.95 ? "down" : "flat"];
 
   if(L === 0){
     return { cls: "is-hot", level: "完売", sub: `${c.N} 口すべて排出`,
@@ -2092,14 +2095,14 @@ function buildCue(c){
 
   // 残りが少ないときは、頭を「ラスト」に差し替える
   lines.push(pick(L <= Math.max(5, Math.round(c.N * 0.08)) ? t.last(x) : t.open(x), v));
-  if(T.count > 0) lines.push(pick(t.odds(x), v));
-  if(c.price > 0) lines.push(pick(t.value(x), v));
+  if(T.count > 0) lines.push(pick(t.tease(x), v));
+  else if(best) lines.push(pick(t.best(x), v));
+  lines.push(pick(t.heat(x), v));
   if(hit && hit.ago <= 4) lines.push(pick(t.hit(x), v));
-  if(c.heat >= 1.15 || c.heat < 0.80) lines.push(pick(t.mood(x), v));
   // 端数レベルの差で毎回「下げた！」と言うと嘘くさくなるので、5% 以上のときだけ
   if(c.rec > 0 && c.price > 0 && (c.price - c.rec) / c.price >= 0.05) lines.push(pick(t.cut(x), v));
 
-  // --- 裏で見るだけの一言（読み上げ用ではない） ---
+  // --- 裏で見るだけの一言（読み上げ用ではない。ここには数字を出す） ---
   const diff = c.price - c.rec;
   let act;
   if(c.pendingSlots > 0){
@@ -2108,9 +2111,10 @@ function buildCue(c){
   }else if(T.count === 0){
     act = `<b>目玉が残っていない。</b>ここは長く引っ張らず、値下げして捌くか、賞品を足して組み直す。`;
   }else if(diff > 0){
-    act = `<b>推奨 ${yen(c.rec)}（現行から ${yen(diff)} 引き）。</b>いまの還元率だと手が止まりやすい。`;
+    act = `<b>推奨 ${yen(c.rec)}（現行から ${yen(diff)} 引き）。</b>`
+        + `残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
   }else{
-    act = `<b>いまの価格のままでいい。</b>まだ買い手から見て十分に強い。`;
+    act = `<b>いまの価格のままでいい。</b>残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
   }
 
   return { cls, level, sub: label, lines: lines.slice(0, 5), act };
