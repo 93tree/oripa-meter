@@ -213,6 +213,56 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 .kpi .v.neg{ color:var(--bad); }
 
 /* ============================================================
+   カンペ（配信中に読み上げる用）
+   ============================================================ */
+.cue{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:13px 16px 15px;
+  border-left:4px solid var(--flat);
+}
+.cue.is-hot{ border-left-color:var(--good); }
+.cue.is-warm{ border-left-color:var(--gold); }
+.cue.is-cold{ border-left-color:var(--bad); }
+.cuehead{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.cuehead .spacer{ flex:1 1 auto; }
+.cuehead .btn{ padding:5px 10px; font-size:12px; }
+.cuepill{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 12px; border-radius:999px; font-size:13.5px; font-weight:800; white-space:nowrap;
+  background:var(--flat-bg); color:var(--flat);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 25%, transparent);
+}
+.cue.is-hot  .cuepill{ background:var(--good-bg); color:var(--good); }
+.cue.is-warm .cuepill{ background:var(--gold-bg); color:var(--gold-ink); }
+.cue.is-cold .cuepill{ background:var(--bad-bg);  color:var(--bad); }
+.cuepill .dot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
+.cuesub{ font-size:12px; color:var(--ink-3); min-width:0; }
+.cuelines{ list-style:none; margin:11px 0 0; padding:0; display:flex; flex-direction:column; gap:7px; }
+.cuelines li{
+  font-size:16.5px; line-height:1.5; font-weight:700; letter-spacing:-.01em;
+  padding-left:15px; position:relative; overflow-wrap:anywhere;
+}
+.cuelines li::before{
+  content:"「"; position:absolute; left:0; top:0; color:var(--ink-3); font-weight:400;
+}
+.cuelines li::after{ content:"」"; color:var(--ink-3); font-weight:400; }
+.cuelines li b{ color:var(--gold-ink); font-family:var(--font-num); font-variant-numeric:tabular-nums; }
+.cueact{
+  margin:12px 0 0; padding:9px 12px; border-radius:7px;
+  background:var(--surface-2); font-size:13px; color:var(--ink-2);
+}
+.cueact b{ color:var(--ink); }
+/* 読み上げ用の行と混ざらないよう、自分用のメモだと明示する */
+.cueact .tag{
+  display:inline-block; margin-right:8px; padding:1px 7px; border-radius:999px;
+  font-size:10.5px; font-weight:800; letter-spacing:.08em; vertical-align:1px;
+  background:var(--line); color:var(--ink-3);
+}
+@media (max-width: 560px){
+  .cuelines li{ font-size:15px; }
+}
+
+/* ============================================================
    排出パネル
    ============================================================ */
 .prizes{ display:flex; flex-direction:column; gap:8px; min-width:0; }
@@ -755,6 +805,21 @@ body.locked > header, body.locked > main { display:none; }
     </section>
 
     <div id="liveNotice"></div>
+
+    <!-- カンペ。いまの残りから読み上げる用の文を組み立てる -->
+    <section class="cue" id="cue">
+      <div class="cuehead">
+        <span class="cuepill" id="cuePill"><span class="dot"></span><span id="cueLevel">—</span></span>
+        <span class="cuesub" id="cueSub">—</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="btnCueSwap">別の言い方</button>
+        <button type="button" class="btn ghost" id="btnCueFold">たたむ</button>
+      </div>
+      <div id="cueBody">
+        <ul class="cuelines" id="cueLines"></ul>
+        <p class="cueact" id="cueAct"></p>
+      </div>
+    </section>
 
     <div class="kpis">
       <div class="kpi is-key" id="kpiMargin">
@@ -1828,6 +1893,170 @@ function simulateBreakup(o, topMult, minReturn){
 }
 
 /* ============================================================
+   カンペ
+
+   配信しながら読み上げる文を、いまの残りから組み立てる。
+   このアプリは通信しないので、文はここで作る（外に問い合わせない）。
+   数字はすべて compute() の結果そのままで、盛らない。
+   盛ると「言ったのに出ない」で信用を落とすほうが高くつく。
+   ============================================================ */
+
+/** 残っている目玉。目玉の線は解体シミュレーションと同じ（単価 × 倍率）*/
+function topsLeft(c){
+  const topMult = simParams().topMult;
+  const line = c.price * (topMult > 0 ? topMult : 0);
+  const out = [];
+  for(const p of c.o.prizes){
+    const rest = Math.max(0, (p.count | 0) - (c.drawnBy.get(p.id) || 0));
+    if(rest > 0 && line > 0 && mktOf(p) >= line) out.push({ p, rest, mkt: mktOf(p) });
+  }
+  out.sort((a, b) => b.mkt - a.mkt);
+  return { line, list: out, count: out.reduce((n, x) => n + x.rest, 0) };
+}
+
+/** 残り L 口・当たり T 口のとき、N 口引いて1本以上出る確率（非復元） */
+function pWithin(L, T, N){
+  if(T <= 0 || L <= 0) return 0;
+  const n = Math.min(N, L);
+  let miss = 1;
+  for(let i = 0; i < n; i++){
+    const rest = L - T - i;
+    if(rest < 0) return 1;
+    miss *= rest / (L - i);
+  }
+  return 1 - miss;
+}
+
+/** 半々（50%）に届くまでの口数。届かなければ 0 */
+function halfDraws(L, T){
+  if(T <= 0) return 0;
+  for(let n = 1; n <= L; n++) if(pWithin(L, T, n) >= 0.5) return n;
+  return 0;
+}
+
+/** 直近に出た「見せ場」。単価の2倍以上の相場のものを新しい順に探す */
+function lastHit(c){
+  const byId = new Map(c.o.prizes.map(p => [p.id, p]));
+  for(let i = c.o.events.length - 1; i >= 0; i--){
+    const p = byId.get(c.o.events[i].prizeId);
+    if(p && mktOf(p) >= c.price * 2) return { p, ago: c.o.events.length - 1 - i };
+  }
+  return null;
+}
+
+/* 同じことを何度も言わないよう、言い回しを何通りか持って回す */
+let cueVariant = 0;
+const pick = (arr, v) => arr[((v % arr.length) + arr.length) % arr.length];
+
+function buildCue(c){
+  const v = cueVariant;
+  const L = c.left, T = topsLeft(c);
+  const lines = [];
+
+  // --- いまの局面 ---
+  let level, label, cls;
+  if(L === 0){ level = "完売"; cls = ""; }
+  else if(c.heat >= 1.15){ level = "激アツ"; cls = "is-hot"; }
+  else if(c.heat >= 1.05){ level = "濃いめ"; cls = "is-hot"; }
+  else if(c.heat >= 0.95){ level = "平常"; cls = ""; }
+  else if(c.heat >= 0.80){ level = "やや薄い"; cls = "is-warm"; }
+  else { level = "出きった"; cls = "is-cold"; }
+  label = `残りの濃さ ${c.heat.toFixed(2)}× ／ 残り還元率 ${c.price > 0 ? pct(c.returnLeft, 0) : "—"}`;
+
+  if(L === 0){
+    return { cls: "is-hot", level: "完売", sub: `${c.N} 口すべて排出`, lines: [
+      pick([`${c.N}口、完売しました。ありがとうございました`,
+            `これで全部です。${c.N}口ぜんぶ出ました`], v)
+    ], act: "配信を終了して記録に残す。" };
+  }
+
+  // --- 残りと目玉 ---
+  if(T.count > 0){
+    const names = T.list.slice(0, 2).map(x => `${x.p.name}${x.rest > 1 ? `が${x.rest}本` : ""}`).join("と");
+    lines.push(pick([
+      `残り<b>${L}口</b>。${names}がまだ残ってます`,
+      `${names}、まだ出てません。残り<b>${L}口</b>です`,
+      `狙いは${T.list[0].p.name}。残り<b>${L}口</b>の中にまだあります`
+    ], v));
+  }else{
+    const best = c.o.prizes
+      .map(p => ({ p, rest: Math.max(0, (p.count|0) - (c.drawnBy.get(p.id) || 0)), mkt: mktOf(p) }))
+      .filter(x => x.rest > 0).sort((a, b) => b.mkt - a.mkt)[0];
+    lines.push(pick([
+      `目玉はもう出きりました。残り<b>${L}口</b>です`,
+      `上のほうは抜けきってます。残り<b>${L}口</b>`
+    ], v) + (best ? `。いま最高は${best.p.name}` : ""));
+  }
+
+  // --- 確率（言い切れる数字だけ） ---
+  if(T.count > 0){
+    const half = halfDraws(L, T.count);
+    const p10 = pWithin(L, T.count, Math.min(10, L));
+    const opts = [];
+    if(half) opts.push(`だいたい<b>${half}口</b>引けば半々で目玉が出ます`);
+    if(L >= 10) opts.push(`10口回せば<b>${pct(p10, 0)}</b>で目玉のどれかが出ます`);
+    opts.push(`次の1口で目玉を引く確率は<b>${pct(T.count / L, 1)}</b>`);
+    lines.push(pick(opts, v));
+  }
+
+  // --- 期待値・還元率 ---
+  if(c.price > 0){
+    lines.push(pick([
+      `残り1口の中身は平均<b>${yen(c.evMkt)}</b>。単価に対して還元率<b>${pct(c.returnLeft, 0)}</b>です`,
+      `いま1口あたり<b>${yen(c.evMkt)}</b>ぶん入ってます。還元率<b>${pct(c.returnLeft, 0)}</b>`
+    ], v) + (c.heat >= 1.05 ? "。設計より濃いです" : c.heat < 0.95 ? "。設計より薄くなってます" : ""));
+  }
+
+  // --- 直近の見せ場 ---
+  const hit = lastHit(c);
+  if(hit && hit.ago <= 4){
+    lines.push(pick([
+      `さっき${hit.p.name}が出ました。相場<b>${yen(mktOf(hit.p))}</b>です`,
+      `${hit.p.name}、出ましたね。<b>${yen(mktOf(hit.p))}</b>ぶんです`
+    ], v));
+  }
+
+  // --- 局面のひとこと ---
+  if(c.heat >= 1.15){
+    lines.push(pick([`残りが濃いので、いま引くのがいちばん得です`,
+                     `出た数より残ってる価値のほうが大きい状態です`], v));
+  }else if(c.heat < 0.80){
+    lines.push(pick([`正直いまは薄いです。値段を下げます`,
+                     `ここは渋いので、単価を落として回します`], v));
+  }
+
+  // --- 裏で見るだけの一言（読み上げ用ではない） ---
+  const diff = c.price - c.rec;
+  let act;
+  if(T.count === 0){
+    act = `<b>目玉が残っていない。</b>ここは長く引っ張らず、値下げして捌くか、賞品を足して組み直す。`;
+  }else if(diff > 0){
+    act = `<b>推奨 ${yen(c.rec)}（現行から ${yen(diff)} 引き）。</b>いまの還元率だと手が止まりやすい。`;
+  }else{
+    act = `<b>いまの価格のままでいい。</b>まだ買い手から見て十分に強い。`;
+  }
+
+  return { cls, level, sub: label, lines: lines.slice(0, 5), act };
+}
+
+let cueOpen = true;
+try{ cueOpen = localStorage.getItem("oripa-cue-fold") !== "1"; }catch(_){}
+
+function renderCue(c){
+  const el = $("cue");
+  if(!el) return;
+  const r = buildCue(c);
+  el.className = "cue" + (r.cls ? " " + r.cls : "");
+  $("cueLevel").textContent = r.level;
+  $("cueSub").textContent = r.sub;
+  $("cueLines").innerHTML = r.lines.map(t => `<li>${t}</li>`).join("");
+  $("cueAct").innerHTML = `<span class="tag">自分用</span>` + r.act;
+  $("cueBody").hidden = !cueOpen;
+  $("btnCueFold").textContent = cueOpen ? "たたむ" : "ひらく";
+  $("btnCueSwap").hidden = !cueOpen;
+}
+
+/* ============================================================
    配信中の解体シミュレーション
 
    編集画面の simulateBreakup() は「まっさらな構成を最初から回す」もの。
@@ -2144,6 +2373,14 @@ function submitDraw(atListPrice){
               kind: (d.price === c.price && d.rem === 0 && !buyer) ? "instant" : "auction" });
 }
 
+/* ---- カンペ ---- */
+$("btnCueSwap").addEventListener("click", () => { cueVariant++; renderCue(compute()); });
+$("btnCueFold").addEventListener("click", () => {
+  cueOpen = !cueOpen;
+  try{ localStorage.setItem("oripa-cue-fold", cueOpen ? "0" : "1"); }catch(_){}
+  renderCue(compute());
+});
+
 $("drawForm").addEventListener("submit", e => { e.preventDefault(); submitDraw(false); });
 $("drawList").addEventListener("click", () => submitDraw(true));
 $("drawCancel").addEventListener("click", () => closeDraw(null));
@@ -2439,6 +2676,7 @@ function renderLive(c){
     ? "まだ排出なし"
     : `在庫込み ${syen(withStock)}（残り ${c.left} 口を回収 ${pct(c.recovery, 0)} で評価）`;
 
+  renderCue(c);
   renderLotBar(c);
   renderPrizes(c);
   renderLotTable();
