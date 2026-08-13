@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="robots" content="noindex, nofollow">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>オリパ収支メーター — 配信中のリアルタイム利益率と値下げ判断</title>
+<title>配信オリパAI支援 — 配信中のリアルタイム利益率と値下げ判断</title>
 <style>
 /* ============================================================
    トークン
@@ -544,7 +544,7 @@ body.locked > header, body.locked > main { display:none; }
 
 <div class="gate" id="gate">
   <form class="gatebox" id="gateForm" autocomplete="on">
-    <h1>オリパ収支メーター</h1>
+    <h1>配信オリパAI支援</h1>
     <p>関係者向けのテスト版です。配布された ID とパスワードを入れてください。</p>
     <label>ID
       <input id="gateId" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
@@ -563,7 +563,7 @@ body.locked > header, body.locked > main { display:none; }
   <div class="brand">
     <span class="mark" aria-hidden="true"></span>
     <div>
-      <h1 id="titleText">オリパ収支メーター</h1>
+      <h1 id="titleText">配信オリパAI支援</h1>
       <p id="subText">配信中のリアルタイム利益率と値下げ判断</p>
     </div>
   </div>
@@ -1540,11 +1540,11 @@ function render(){
   $("view-edit").hidden = mode !== "edit";
 
   const inList = mode === "list";
-  $("titleText").textContent = inList ? "オリパ収支メーター" : (S.name || "オリパ収支メーター");
+  $("titleText").textContent = inList ? "配信オリパAI支援" : (S.name || "配信オリパAI支援");
   $("subText").textContent   = inList
     ? "保存したオリパの一覧"
     : (mode === "edit" ? "オリパの中身を編集" : "配信中のリアルタイム利益率と値下げ判断");
-  document.title = (!inList && S && S.name ? S.name + " — " : "") + "オリパ収支メーター";
+  document.title = (!inList && S && S.name ? S.name + " — " : "") + "配信オリパAI支援";
 
   if(inList){
     $("verdictPill").hidden = true;
@@ -2607,7 +2607,7 @@ $("btnSample").addEventListener("click", () => {
   openOripa(o.id, "edit");
 });
 $("btnBackupAll").addEventListener("click", () => {
-  downloadAs(JSON.stringify(DB, null, 2), "application/json", "オリパ収支メーター_バックアップ.json");
+  downloadAs(JSON.stringify(DB, null, 2), "application/json", "配信オリパAI支援_バックアップ.json");
 });
 
 $("btnDuplicate").addEventListener("click", () => duplicateCurrent("（複製）"));
