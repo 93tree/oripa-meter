@@ -470,6 +470,7 @@ table.edit input:focus{ border-color:var(--gold); outline:none; }
   100% { box-shadow: var(--shadow), 0 0 0 2px transparent; }
 }
 .ocard .acts .btn{ padding:6px 11px; font-size:12.5px; }
+.btn.danger:hover{ border-color:var(--bad); color:var(--bad); }
 
 .bar{
   height:5px; border-radius:3px; background:var(--surface-2); overflow:hidden; margin-top:7px;
@@ -1758,12 +1759,14 @@ function renderList(){
         <button type="button" class="btn" data-act="live"${c.N ? "" : " disabled title='賞品が無いのでまだ配信できない'"}>配信</button>
         <button type="button" class="btn ghost" data-act="edit">編集</button>
         <button type="button" class="btn ghost" data-act="copy">複製</button>
+        <button type="button" class="btn ghost danger" data-act="del">削除</button>
       </div>`;
 
     el.querySelector(".oname").addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="edit"]').addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="live"]').addEventListener("click", () => openOripa(o.id, "live"));
     el.querySelector('[data-act="copy"]').addEventListener("click", () => duplicateOripa(o, "（複製）", false));
+    el.querySelector('[data-act="del"]').addEventListener("click", () => { if(deleteOripa(o)) render(); });
     if(o.id === flashed) el.classList.add("just-added");
     wrap.appendChild(el);
   }
@@ -2767,13 +2770,22 @@ $("btnRestore").addEventListener("click", () => {
 
 $("btnDuplicate").addEventListener("click", () => duplicateCurrent("（複製）"));
 
+function deleteOripa(o){
+  if(!o) return false;
+  const c = compute(o);
+  const detail = c.sold > 0 ? `\n排出 ${c.sold} 件の入力内容も消える。` : "";
+  if(!confirm(`「${o.name}」を削除する。${detail}\n記録済みの実績は「配信の記録」に残る。よろしいか？`)) return false;
+  DB.oripas = DB.oripas.filter(x => x.id !== o.id);
+  if(S && S.id === o.id){
+    S = null;
+    pending = null; draftId = null;
+    $("importPanel").hidden = true;
+  }
+  return true;
+}
+
 $("btnDelete").addEventListener("click", () => {
-  if(!confirm(`「${S.name}」を削除する。排出の入力内容は消えるが、記録済みの実績は「配信の記録」に残る。よろしいか？`)) return;
-  DB.oripas = DB.oripas.filter(o => o.id !== S.id);
-  S = null;
-  pending = null; draftId = null;
-  $("importPanel").hidden = true;
-  go("list");
+  if(deleteOripa(S)) go("list");
 });
 
 $("btnUndo").addEventListener("click", undo);
