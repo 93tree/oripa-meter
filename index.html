@@ -1644,7 +1644,11 @@ async function syncNow(manual){
     return true;
   }catch(err){
     // 失敗しても since は進めない。次回また送り直す
-    setSyncState("is-bad", (manual ? "同期できなかった：" : "同期できていない：") + (err.message || err));
+    let why = err.message || String(err);
+    if(/Failed to fetch|NetworkError|Load failed/i.test(why)){
+      why += "（回線、URL の誤り、または埋め込み表示で外部通信が禁止されている）";
+    }
+    setSyncState("is-bad", (manual ? "同期できなかった：" : "同期できていない：") + why);
     return false;
   }finally{
     syncBusy = false;
@@ -4047,19 +4051,35 @@ function readDataFile(f, target){
 
 /** 1件のオリパでも、全体バックアップでも読める。どちらも既存には足す形で取り込む。 */
 function loadJsonText(text){
-  let added = [];
+  let added = [], addedRecords = 0;
   try{
     const d = JSON.parse(text);
     const incoming = Array.isArray(d && d.oripas) ? d.oripas
                    : (d && Array.isArray(d.prizes)) ? [d]
                    : null;
     if(!incoming || !incoming.length) throw new Error("形式が違う");
+
+    const idMap = new Map();                // 元の id → 振り直した id
     for(const raw of incoming){
       const o = normalizeOripa(raw);
+      const was = o.id;
       o.id = newId();                       // 既存とぶつからないよう振り直す
+      if(was != null) idMap.set(String(was), o.id);
       for(const pz of o.prizes){ if(!pz.id) pz.id = uid; uid = Math.max(uid, (pz.id|0) + 1); }
       DB.oripas.push(o);
       added.push(o);
+    }
+
+    // 配信の記録も一緒に運ぶ。オリパの id を振り直しているので紐づけ先も直す。
+    // 端末を移すときに実績が置き去りになるのを防ぐため。
+    for(const raw of (Array.isArray(d && d.records) ? d.records : [])){
+      if(!raw || typeof raw !== "object") continue;
+      const r = { ...raw, id: newId(), updatedAt: Number(raw.updatedAt) || Number(raw.endedAt) || Date.now() };
+      const mapped = idMap.get(String(raw.oripaId));
+      if(mapped == null) continue;          // 対応するオリパが来ていない記録は入れない
+      r.oripaId = mapped;
+      DB.records.push(r);
+      addedRecords++;
     }
   }catch(err){
     say("読み込めなかった。\nこのアプリが書き出した JSON か、在庫 CSV を選ぶこと。");
@@ -4067,8 +4087,11 @@ function loadJsonText(text){
   }
   pending = null; draftId = null;
   $("importPanel").hidden = true;
-  if(added.length === 1) openOripa(added[0].id, "edit");
-  else { S = null; go("list"); }
+  if(added.length === 1 && !addedRecords) openOripa(added[0].id, "edit");
+  else {
+    S = null; go("list");
+    say(`オリパ ${added.length} 本` + (addedRecords ? `と配信の記録 ${addedRecords} 件` : "") + `を読み込んだ。`);
+  }
 }
 
 /* ============================================================
