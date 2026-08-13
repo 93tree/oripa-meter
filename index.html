@@ -578,6 +578,27 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
   border:1px dashed var(--line-2); border-radius:var(--r);
 }
 
+/* ---- 端末間の同期 ---- */
+.syncbox{ margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
+.syncbox > summary{
+  display:flex; align-items:center; gap:10px; cursor:pointer;
+  font-size:13px; font-weight:700; color:var(--ink-2); list-style:none;
+}
+.syncbox > summary::-webkit-details-marker{ display:none; }
+.syncbox > summary::before{ content:"▶"; font-size:9px; color:var(--ink-3); }
+.syncbox[open] > summary::before{ content:"▼"; }
+.syncstate{
+  font-size:11.5px; font-weight:700; padding:2px 9px; border-radius:999px;
+  background:var(--flat-bg); color:var(--flat);
+}
+.syncstate.is-on{ background:var(--good-bg); color:var(--good); }
+.syncstate.is-bad{ background:var(--bad-bg); color:var(--bad); }
+.syncstate.is-busy{ background:var(--gold-bg); color:var(--gold-ink); }
+.syncbody{ display:flex; flex-direction:column; gap:12px; margin-top:12px; }
+.syncbody .fields{ gap:10px; }
+.syncbody input{ font-family:var(--font-ui); font-size:13px; }
+.syncbody .drawbar{ margin-top:0; }
+
 /* ---- 画面内ダイアログ ---- */
 .modal{
   position:fixed; inset:0; z-index:200; display:grid; place-items:center;
@@ -740,6 +761,43 @@ body.locked > header, body.locked > main { display:none; }
           名前を押すとそのオリパの編集画面へ。在庫 CSV は画面のどこにドロップしても、
           そのまま新しいオリパになる。
         </p>
+
+        <details class="syncbox" id="syncBox">
+          <summary>
+            <span>端末間で同期</span>
+            <span class="syncstate" id="syncState">未設定</span>
+          </summary>
+          <div class="syncbody">
+            <p class="hint" style="margin:0">
+              同じ<b>同期コード</b>を入れた端末どうしで、オリパと配信の記録が揃う。
+              設定しなければ、これまでどおりこの端末だけに保存される。
+            </p>
+            <div class="fields">
+              <div class="field" style="grid-column:1/-1">
+                <label for="syncUrl">同期先 URL（Apps Script のウェブアプリ）</label>
+                <input type="text" id="syncUrl" placeholder="https://script.google.com/macros/s/.../exec"
+                       autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="syncRoom">同期コード</label>
+                <input type="text" id="syncRoom" placeholder="例：2ndline" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="syncToken">合言葉</label>
+                <input type="password" id="syncToken" placeholder="スクリプトの SHARED_SECRET" autocomplete="off">
+              </div>
+            </div>
+            <div class="drawbar">
+              <button type="button" class="btn primary" id="btnSyncNow">いま同期する</button>
+              <button type="button" class="btn ghost" id="btnSyncOff">同期をやめる</button>
+              <span class="hint" id="syncNote"></span>
+            </div>
+            <p class="hint" style="margin:0">
+              変更があると数秒後に自動で送る。通信に失敗しても、この端末の内容は消えない。
+              <b>URL と合言葉がこの端末のブラウザに保存される。</b>共用の端末では設定しないこと。
+            </p>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -1324,10 +1382,15 @@ function normalizeDB(d){
     }
   const records = (Array.isArray(d.records) ? d.records : [])
     .filter(r => r && typeof r === "object")
-    .map(r => ({ ...r, id: r.id || newId(), endedAt: Number(r.endedAt) || Date.now() }))
+    .map(r => ({ ...r, id: r.id || newId(), endedAt: Number(r.endedAt) || Date.now(),
+                 updatedAt: Number(r.updatedAt) || Number(r.endedAt) || Date.now() }))
     .sort((a, b) => b.endedAt - a.endedAt);
   const currentId = oripas.some(o => o.id === d.currentId) ? d.currentId : null;
-  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId };
+  // 墓標（消したという事実）。同期していないときも持っておく
+  const gr = (Array.isArray(d.graves) ? d.graves : [])
+    .filter(g => g && g.kind && g.id != null)
+    .map(g => ({ kind: String(g.kind), id: String(g.id), updatedAt: Number(g.updatedAt) || 0 }));
+  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId, graves: gr };
 }
 
 /** 上書きの前に、そのときの中身をそのまま別キーへ退避する */
@@ -1410,6 +1473,7 @@ function save(){
     DB.version = APP_DATA_VERSION;
     localStorage.setItem(STORE_KEY, JSON.stringify(DB));
     if(dataState === "quota"){ dataState = "ok"; renderDataNotice(); }
+    scheduleSync();
   }catch(e){
     // 容量超過など。黙って失うのがいちばん悪いので必ず知らせる
     if(dataState !== "quota"){
@@ -1417,6 +1481,194 @@ function save(){
       renderDataNotice();
     }
   }
+}
+
+/* ============================================================
+   端末間の同期
+
+   Apps Script のウェブアプリへ JSON を投げるだけ。設定しなければ何もしない。
+
+   守る線：**この端末の内容は、同期のせいで消えない。**
+   通信は best-effort。失敗しても localStorage の中身はそのまま、
+   画面もそのまま動く。マージは 1 件ごとに updatedAt の新しいほうを採る。
+
+   消したことを他の端末へ伝えるために墓標（graves）を持つ。
+   墓標が無いと、消したオリパが他の端末から復活してくる。
+   ============================================================ */
+const SYNC_KEY = "oripa-sync-conf";
+const SYNC_DEBOUNCE = 3000;
+
+let syncConf = { url: "", room: "", token: "", since: 0 };
+let syncBusy = false, syncTimer = null, syncMsg = "";
+
+function loadSyncConf(){
+  try{
+    const raw = localStorage.getItem(SYNC_KEY);
+    if(raw) syncConf = Object.assign(syncConf, JSON.parse(raw) || {});
+  }catch(_){}
+}
+function saveSyncConf(){
+  try{ localStorage.setItem(SYNC_KEY, JSON.stringify(syncConf)); }catch(_){}
+}
+const syncOn = () => !!(syncConf.url && syncConf.room && syncConf.token);
+
+/** 消したものの控え。相手の端末へ「消した」を伝えるまで持っておく */
+function graves(){
+  if(!Array.isArray(DB.graves)) DB.graves = [];
+  return DB.graves;
+}
+function bury(kind, id){
+  const g = graves();
+  const at = Date.now();
+  const hit = g.find(x => x.kind === kind && String(x.id) === String(id));
+  if(hit) hit.updatedAt = at;
+  else g.push({ kind, id: String(id), updatedAt: at });
+  if(g.length > 500) g.splice(0, g.length - 500);
+  scheduleSync();
+}
+
+/** 送るもの。前回同期より新しいものだけ */
+function syncOutbox(){
+  const since = Number(syncConf.since) || 0;
+  const out = [];
+  for(const o of DB.oripas){
+    const at = Number(o.updatedAt) || 0;
+    if(at > since) out.push({ kind: "oripa", id: String(o.id), updatedAt: at, json: JSON.stringify(o) });
+  }
+  for(const r of DB.records){
+    const at = Number(r.updatedAt || r.endedAt) || 0;
+    if(at > since) out.push({ kind: "record", id: String(r.id), updatedAt: at, json: JSON.stringify(r) });
+  }
+  for(const g of graves()){
+    if((Number(g.updatedAt) || 0) > since) out.push({ kind: g.kind, id: String(g.id), updatedAt: g.updatedAt, deleted: true });
+  }
+  return out;
+}
+
+/** 受け取ったものを取り込む。新しいほうが勝つ。ローカルを黙って消さない */
+function syncApply(items){
+  let changed = 0;
+  for(const it of items || []){
+    const id = it.id;
+    if(it.kind === "oripa"){
+      // 配信中・編集中のオリパは、他の端末の更新で差し替えない。
+      // 打っている最中に中身がすり替わるのがいちばん困る。
+      // こちらの版はこのあと送られるので、新しければ相手に反映される。
+      if(S && String(S.id) === String(id) && mode !== "list") continue;
+      const i = DB.oripas.findIndex(o => String(o.id) === String(id));
+      const mine = i >= 0 ? Number(DB.oripas[i].updatedAt) || 0 : -1;
+      if(Number(it.updatedAt) < mine) continue;          // こちらが新しい
+      if(it.deleted){
+        if(i >= 0){ DB.oripas.splice(i, 1); changed++; }
+        bury0("oripa", id, it.updatedAt);
+      }else{
+        let o;
+        try{ o = normalizeOripa(JSON.parse(it.json)); }catch(_){ continue; }
+        o.id = String(o.id) === String(id) ? o.id : id;
+        if(i >= 0) DB.oripas[i] = o; else DB.oripas.push(o);
+        changed++;
+      }
+    }else if(it.kind === "record"){
+      const i = DB.records.findIndex(r => String(r.id) === String(id));
+      const mine = i >= 0 ? Number(DB.records[i].updatedAt || DB.records[i].endedAt) || 0 : -1;
+      if(Number(it.updatedAt) < mine) continue;
+      if(it.deleted){
+        if(i >= 0){ DB.records.splice(i, 1); changed++; }
+        bury0("record", id, it.updatedAt);
+      }else{
+        let r;
+        try{ r = JSON.parse(it.json); }catch(_){ continue; }
+        if(i >= 0) DB.records[i] = r; else DB.records.push(r);
+        changed++;
+      }
+    }
+  }
+  // 差し替えで S が宙に浮かないよう、同じ id の実体へ結び直す
+  if(S) S = DB.oripas.find(o => String(o.id) === String(S.id)) || null;
+  if(!S && mode !== "list") mode = "list";
+
+  // id が衝突しないよう、取り込んだあとの最大値まで採番を進める
+  const ids = DB.oripas.map(o => Number(o.id) || 0)
+    .concat(DB.records.map(r => Number(r.id) || 0))
+    .concat(DB.oripas.flatMap(o => (o.prizes || []).map(p => Number(p.id) || 0)));
+  const max = ids.length ? Math.max(...ids) : 0;
+  if(max >= uid) uid = max + 1;
+  return changed;
+}
+
+/** 墓標を「相手から来た事実」として控える（自分が消したときは bury）*/
+function bury0(kind, id, at){
+  const g = graves();
+  const hit = g.find(x => x.kind === kind && String(x.id) === String(id));
+  if(hit) hit.updatedAt = Math.max(Number(hit.updatedAt) || 0, Number(at) || 0);
+  else g.push({ kind, id: String(id), updatedAt: Number(at) || Date.now() });
+}
+
+function setSyncState(kind, msg){
+  syncMsg = msg || "";
+  const el = $("syncState"), note = $("syncNote");
+  if(!el) return;
+  el.className = "syncstate" + (kind ? " " + kind : "");
+  el.textContent = !syncOn() ? "未設定"
+    : kind === "is-busy" ? "同期中"
+    : kind === "is-bad" ? "失敗"
+    : kind === "is-on" ? "同期あり" : "未同期";
+  if(note) note.textContent = syncMsg;
+}
+
+async function syncNow(manual){
+  if(!syncOn() || syncBusy || dataState === "broken") return false;
+  syncBusy = true;
+  setSyncState("is-busy", "送信中…");
+  const sentSince = Number(syncConf.since) || 0;
+  try{
+    const body = JSON.stringify({
+      token: syncConf.token, room: syncConf.room, action: "sync",
+      since: sentSince, items: syncOutbox()
+    });
+    // text/plain にしておくと preflight が飛ばない（Apps Script は OPTIONS を返せない）
+    const res = await fetch(syncConf.url, {
+      method: "POST", body, redirect: "follow",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }
+    });
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const data = JSON.parse(await res.text());
+    if(!data.ok) throw new Error(data.error || "サーバが受け付けなかった");
+
+    const changed = syncApply(data.items);
+    syncConf.since = Number(data.now) || Date.now();
+    saveSyncConf();
+    save();
+    setSyncState("is-on", `${fmtClock(Date.now())} に同期（受信 ${changed} 件）`);
+    if(changed && mode === "list") render();
+    return true;
+  }catch(err){
+    // 失敗しても since は進めない。次回また送り直す
+    setSyncState("is-bad", (manual ? "同期できなかった：" : "同期できていない：") + (err.message || err));
+    return false;
+  }finally{
+    syncBusy = false;
+  }
+}
+
+function scheduleSync(){
+  if(!syncOn()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow(false), SYNC_DEBOUNCE);
+}
+
+const fmtClock = t => {
+  const d = new Date(t);
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+};
+
+function renderSyncBox(){
+  const box = $("syncBox");
+  if(!box) return;
+  $("syncUrl").value   = syncConf.url || "";
+  $("syncRoom").value  = syncConf.room || "";
+  $("syncToken").value = syncConf.token || "";
+  if(!syncMsg) setSyncState(syncOn() ? "is-on" : "", syncOn() ? "設定済み" : "");
 }
 
 /* ============================================================
@@ -2298,7 +2550,7 @@ function buildRecord(o, endedAt, memo){
   for(const e of o.events) priceCount.set(e.price, (priceCount.get(e.price) || 0) + 1);
 
   return {
-    id: newId(),
+    id: newId(), updatedAt: Date.now(),
     oripaId: o.id,
     name: o.name,
     endedAt: endedAt,
@@ -2606,6 +2858,7 @@ function openOripa(id, m){
    オリパ一覧
    ============================================================ */
 function renderList(){
+  renderSyncBox();
   const wrap = $("oripaList");
   wrap.innerHTML = "";
 
@@ -2705,6 +2958,7 @@ function renderRecords(){
       if(!await ask(`${fmtDate(r.endedAt)}「${r.name}」の記録を削除しますか？`,
                     { okLabel: "削除する", danger: true })) return;
       DB.records = DB.records.filter(x => x.id !== r.id);
+      bury("record", r.id);
       const o = DB.oripas.find(x => x.id === r.oripaId);
       if(o && !DB.records.some(x => x.oripaId === o.id)) o.closedAt = 0;
       render();
@@ -3876,6 +4130,7 @@ async function reopenStream(){
   if(!S || !S.closedAt) return;
   if(!await ask("記録を取り消して排出の入力を再開しますか？\nこの配信の記録は消えます。",
                 { okLabel: "取り消して再開", danger: true })) return;
+  DB.records.filter(r => r.oripaId === S.id).forEach(r => bury("record", r.id));
   DB.records = DB.records.filter(r => r.oripaId !== S.id);
   S.closedAt = 0;
   render();
@@ -4005,6 +4260,32 @@ $("btnBackupAll").addEventListener("click", () => {
   downloadAs(JSON.stringify(DB, null, 2), "application/json", "配信オリパAI支援_バックアップ.json");
 });
 
+/* ---- 端末間の同期 ---- */
+["syncUrl", "syncRoom", "syncToken"].forEach(id =>
+  $(id).addEventListener("change", () => {
+    const url = $("syncUrl").value.trim();
+    const room = $("syncRoom").value.trim();
+    const token = $("syncToken").value;
+    // 同期先やコードが変わったら、取り込み位置は最初から
+    if(url !== syncConf.url || room !== syncConf.room) syncConf.since = 0;
+    syncConf.url = url; syncConf.room = room; syncConf.token = token;
+    saveSyncConf();
+    setSyncState(syncOn() ? "is-on" : "", syncOn() ? "設定済み。「いま同期する」で確かめる。" : "");
+  }));
+
+$("btnSyncNow").addEventListener("click", async () => {
+  if(!syncOn()){ setSyncState("is-bad", "URL・同期コード・合言葉をすべて入れる。"); return; }
+  await syncNow(true);
+});
+
+$("btnSyncOff").addEventListener("click", async () => {
+  if(!await ask("同期をやめますか？\nこの端末の内容はそのまま残ります。", { okLabel: "やめる" })) return;
+  syncConf = { url: "", room: "", token: "", since: 0 };
+  saveSyncConf();
+  renderSyncBox();
+  setSyncState("", "同期を切った。この端末だけに保存する。");
+});
+
 /* 版を上げるときや読み込みに失敗したときに自動で退避した控えから戻す */
 $("btnRestore").addEventListener("click", async () => {
   const keys = backupKeys();
@@ -4048,6 +4329,7 @@ async function deleteOripa(o){
   if(!await ask(`「${o.name}」を削除しますか？${detail}\n記録済みの実績は「配信の記録」に残ります。`,
                 { okLabel: "削除する", danger: true })) return false;
   DB.oripas = DB.oripas.filter(x => x.id !== o.id);
+  bury("oripa", o.id);
   if(S && S.id === o.id){
     S = null;
     pending = null; draftId = null;
@@ -4218,7 +4500,14 @@ mq.addEventListener("change", () => { if(mode === "live") drawSpark(compute()); 
 DB = loadDB();
 S = DB.oripas.find(o => o.id === DB.currentId) || null;
 mode = "list";
+loadSyncConf();
 render();
+// 立ち上げ直後に一度だけ取りに行く。失敗しても画面はそのまま動く
+if(syncOn()) syncNow(false);
+// 復帰したときにも拾いに行く（配信中にスリープした端末など）
+document.addEventListener("visibilitychange", () => {
+  if(document.visibilityState === "visible" && syncOn()) scheduleSync();
+});
 </script>
 
 <script>
