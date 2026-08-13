@@ -403,6 +403,16 @@ table.edit input{
 }
 table.edit input[type=text]{ font-family:var(--font-ui); }
 table.edit input:focus{ border-color:var(--gold); outline:none; }
+table.edit tr.subrow td{ padding-top:1px; padding-bottom:1px; }
+table.edit tr.subrow input{ background:var(--surface); }
+table.edit .tree{ color:var(--ink-3); margin-right:6px; font-family:var(--font-num); }
+table.edit .calc{
+  display:inline-block; padding:7px 8px; color:var(--ink-2);
+  font-variant-numeric:tabular-nums; font-size:12.5px;
+}
+.sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.linkbtn:disabled{ opacity:.4; cursor:not-allowed; text-decoration:none; }
+
 .rowdel{
   border:1px solid var(--line); background:transparent; color:var(--ink-3);
   border-radius:6px; width:32px; height:32px; font-size:15px; line-height:1;
@@ -880,13 +890,14 @@ body.locked > header, body.locked > main { display:none; }
           <table class="edit">
             <thead>
               <tr>
-                <th style="width:27%">賞品名</th>
-                <th style="width:13%">原価</th>
-                <th style="width:13%">相場</th>
-                <th style="width:10%">口数</th>
-                <th style="width:21%">備考</th>
-                <th style="width:8%">通常枠</th>
-                <th style="width:8%">排出済</th>
+                <th style="width:3%"><span class="sr">選択</span></th>
+                <th style="width:25%">賞品名</th>
+                <th style="width:12%">原価</th>
+                <th style="width:12%">相場</th>
+                <th style="width:9%">口数</th>
+                <th style="width:20%">備考</th>
+                <th style="width:7%">通常枠</th>
+                <th style="width:7%">排出済</th>
                 <th></th>
               </tr>
             </thead>
@@ -895,7 +906,8 @@ body.locked > header, body.locked > main { display:none; }
         </div>
         <div class="drawbar">
           <button type="button" class="btn" id="btnAddPrize">＋ 賞品を追加</button>
-          <span class="hint">総口数は口数の合計。ハズレ枠は通常枠の行を足してその口数を入れる</span>
+          <button type="button" class="btn" id="btnMakeSet" disabled>選んだ行を 1 口にまとめる</button>
+          <span class="hint" id="setHint">総口数は口数の合計。ハズレ枠は通常枠の行を足してその口数を入れる</span>
         </div>
 
         <div class="summary" style="margin-top:20px">
@@ -995,7 +1007,19 @@ let dataState = "ok";   // ok | broken | quota | newer
 let brokenRaw = null;   // 読めなかった中身。捨てずに持っておく
 
 const clamp = (v,a,b)=> Math.min(b, Math.max(a, v));
-const mktOf = p => (p.market > 0 ? p.market : p.cost);
+/* 賞品は単品でも「複数商品をまとめた1口（セット）」でもよい。
+   items があるときは、原価・相場はその中身の合計になる。 */
+const itemQty = it => Math.max(1, Math.round(Number(it.qty) || 1));
+const isSet   = p => Array.isArray(p.items) && p.items.length > 0;
+const costOf  = p => isSet(p)
+  ? p.items.reduce((n, it) => n + (Number(it.cost) || 0) * itemQty(it), 0)
+  : (Number(p.cost) || 0);
+const mktOf   = p => isSet(p)
+  ? p.items.reduce((n, it) => n + ((Number(it.market) > 0 ? Number(it.market) : Number(it.cost) || 0)) * itemQty(it), 0)
+  : (p.market > 0 ? p.market : (Number(p.cost) || 0));
+const setLabel = p => isSet(p)
+  ? p.items.map(it => `${it.name || "?"}×${itemQty(it)}`).join("・")
+  : "";
 
 /* 同梱の在庫 CSV。「サンプルを作る」で読み込む。 */
 const BUILTIN_NAME = "デモ用オリパ（100口・1,100円）";
@@ -1052,7 +1076,13 @@ function normalizeOripa(o){
       cost: Math.max(0, Number(p.cost) || 0),
       market: Math.max(0, Number(p.market) || 0),
       count: Math.max(0, Math.round(Number(p.count) || 0)),
-      note: String(p.note || ""), normal: !!p.normal
+      note: String(p.note || ""), normal: !!p.normal,
+      items: (Array.isArray(p.items) ? p.items : []).map(it => ({
+        name: String(it.name || ""),
+        cost: Math.max(0, Number(it.cost) || 0),
+        market: Math.max(0, Number(it.market) || 0),
+        qty: Math.max(1, Math.round(Number(it.qty) || 1))
+      }))
     })),
     events: (Array.isArray(o.events) ? o.events : [])
       .filter(e => e && e.prizeId != null)
@@ -1312,7 +1342,7 @@ function csvToPrizes(text, opts){
   const NORMAL_RE = /通常枠|ノーマル枠|ハズレ|はずれ|外れ枠/;
   const prizes = out.map(o => ({
     id: uid++, name: o.name, cost: o.cost, market: o.market,
-    count: o.count, note: o.note || "", normal: NORMAL_RE.test(o.name)
+    count: o.count, note: o.note || "", normal: NORMAL_RE.test(o.name), items: []
   }));
   // 通常枠は1つだけに絞る（まとめ排出の対象を一意にするため）
   let seenNormal = false;
@@ -1322,7 +1352,7 @@ function csvToPrizes(text, opts){
     seenNormal = true;
   }
   const slots = prizes.reduce((n, p) => n + p.count, 0);
-  const cost  = prizes.reduce((n, p) => n + p.cost * p.count, 0);
+  const cost  = prizes.reduce((n, p) => n + costOf(p) * p.count, 0);
   return { prizes, slots, cost, hasMarket: idx.market != null };
 }
 
@@ -1342,7 +1372,8 @@ function prizesToCsv(){
   };
   const lines = [head.join(",")];
   for(const p of S.prizes){
-    lines.push([S.name, p.name, p.count, "", "", "", p.cost, p.cost * p.count, mktOf(p), p.note || ""]
+    lines.push([S.name, p.name, p.count, "", "", "", costOf(p), costOf(p) * p.count, mktOf(p),
+                  [setLabel(p), p.note].filter(Boolean).join(" / ")]
       .map(q).join(","));
   }
   return "﻿" + lines.join("\r\n") + "\r\n";
@@ -1368,7 +1399,7 @@ function compute(o){
   let costTotal = 0, mktTotal = 0;
   for(const p of o.prizes){
     const c = Math.max(0, p.count|0);
-    costTotal += (p.cost||0) * c;
+    costTotal += costOf(p) * c;
     mktTotal  += mktOf(p) * c;
   }
 
@@ -1379,7 +1410,7 @@ function compute(o){
     if(!p) continue;
     drawnBy.set(p.id, (drawnBy.get(p.id)||0) + 1);
     revenue   += e.price || 0;
-    costDrawn += p.cost || 0;
+    costDrawn += costOf(p);
     mktDrawn  += mktOf(p);
   }
 
@@ -1481,7 +1512,7 @@ function lotStats(o, lot){
   for(const e of evs){
     const p = byId.get(e.prizeId);
     if(!p) continue;
-    cost += p.cost || 0;
+    cost += costOf(p);
     mkt  += mktOf(p);
     names.push(p.name);
   }
@@ -1568,7 +1599,7 @@ function buildRecord(o, endedAt, memo){
                kind: l.kind, revenue: st.revenue, cost: st.cost, profit: st.profit };
     }),
     prizes: o.prizes.map(p => ({
-      name: p.name, cost: p.cost, market: mktOf(p),
+      name: p.name, cost: costOf(p), market: mktOf(p), items: (p.items || []).map(it => ({ ...it })),
       count: p.count, drawn: c.drawnBy.get(p.id) || 0
     }))
   };
@@ -1794,7 +1825,7 @@ function renderList(){
 
   const items = DB.oripas.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const flashed = flashId; flashId = null;
-  const stock = items.reduce((n, o) => n + o.prizes.reduce((m, p) => m + p.cost * p.count, 0), 0);
+  const stock = items.reduce((n, o) => n + o.prizes.reduce((m, p) => m + costOf(p) * p.count, 0), 0);
   $("listSummary").textContent = items.length
     ? `${items.length} 件 ／ 賞品の原価合計 ${yen(stock)}`
     : "";
@@ -2138,7 +2169,7 @@ function renderPrizes(c){
     el.innerHTML = `
       <span>
         <span class="nm">${i < 9 ? `<span class="key">${i+1}</span>` : ""}<span class="t">${esc(p.name || "（無名）")}</span></span>
-        <span class="meta">相場 <b>${yen(mktOf(p))}</b> ／ 原価 <b>${yen(p.cost||0)}</b>${p.note ? " ／ " + esc(p.note) : ""}</span>
+        <span class="meta">${isSet(p) ? esc(setLabel(p)) + " ／ " : ""}相場 <b>${yen(mktOf(p))}</b> ／ 原価 <b>${yen(costOf(p))}</b>${p.note ? " ／ " + esc(p.note) : ""}</span>
       </span>
       <span class="right">
         <span class="rem${out?" out":""}">残 ${rest}/${p.count|0}</span>
@@ -2397,21 +2428,38 @@ function renderEdit(c){
 
   const tb = $("editRows");
   tb.innerHTML = "";
+  for(const id of [...selRows]) if(!S.prizes.some(p => p.id === id)) selRows.delete(id);
+
   S.prizes.forEach(p => {
     const drawn = c.drawnBy.get(p.id) || 0;
+    const set = isSet(p);
     const tr = document.createElement("tr");
     tr.innerHTML = `
+      <td style="text-align:center"><input type="checkbox" data-f="sel" ${selRows.has(p.id) ? "checked" : ""}
+          aria-label="この行を選ぶ" style="width:auto;accent-color:var(--gold)"></td>
       <td><input type="text" data-f="name" value="${esc(p.name)}" aria-label="賞品名"></td>
-      <td><input type="number" data-f="cost" min="0" step="10" value="${p.cost|0}" aria-label="原価" inputmode="numeric"></td>
-      <td><input type="number" data-f="market" min="0" step="10" value="${p.market|0}" aria-label="相場" inputmode="numeric"></td>
+      <td>${set
+        ? `<span class="calc num">${yen(costOf(p))}</span>`
+        : `<input type="number" data-f="cost" min="0" step="10" value="${p.cost|0}" aria-label="原価" inputmode="numeric">`}</td>
+      <td>${set
+        ? `<span class="calc num">${yen(mktOf(p))}</span>`
+        : `<input type="number" data-f="market" min="0" step="10" value="${p.market|0}" aria-label="相場" inputmode="numeric">`}</td>
       <td><input type="number" data-f="count" min="0" step="1" value="${p.count|0}" aria-label="口数" inputmode="numeric"></td>
       <td><input type="text" data-f="note" value="${esc(p.note || "")}" aria-label="備考"></td>
       <td style="text-align:center"><input type="radio" name="normalRow" data-f="normal" ${p.normal?"checked":""} aria-label="通常枠にする" style="width:auto"></td>
       <td class="num" style="text-align:center;color:var(--ink-3)">${drawn}</td>
       <td><button type="button" class="rowdel" ${drawn>0?"disabled title='排出済みのため削除できない'":""} aria-label="この行を削除">×</button></td>`;
+
     tr.querySelectorAll("input").forEach(inp => {
+      const f = inp.dataset.f;
+      if(f === "sel"){
+        inp.addEventListener("change", () => {
+          if(inp.checked) selRows.add(p.id); else selRows.delete(p.id);
+          updateSetBar();
+        });
+        return;
+      }
       inp.addEventListener("change", () => {
-        const f = inp.dataset.f;
         if(f === "normal"){ S.prizes.forEach(q => q.normal = false); p.normal = inp.checked; }
         else if(f === "name" || f === "note") p[f] = inp.value;
         else p[f] = Math.max(0, Number(inp.value) || 0);
@@ -2421,10 +2469,55 @@ function renderEdit(c){
     tr.querySelector(".rowdel").addEventListener("click", () => {
       if(drawn > 0) return;
       S.prizes = S.prizes.filter(q => q.id !== p.id);
+      selRows.delete(p.id);
       render();
     });
     tb.appendChild(tr);
+
+    // --- セットの中身 ---
+    if(set){
+      p.items.forEach((it, i) => {
+        const sub = document.createElement("tr");
+        sub.className = "subrow";
+        sub.innerHTML = `
+          <td></td>
+          <td><span class="tree">└</span><input type="text" data-i="name" value="${esc(it.name)}" aria-label="中身の名前"></td>
+          <td><input type="number" data-i="cost" min="0" step="10" value="${it.cost|0}" aria-label="中身の原価" inputmode="numeric"></td>
+          <td><input type="number" data-i="market" min="0" step="10" value="${it.market|0}" aria-label="中身の相場" inputmode="numeric"></td>
+          <td><input type="number" data-i="qty" min="1" step="1" value="${itemQty(it)}" aria-label="1口あたりの数量" inputmode="numeric"></td>
+          <td colspan="3" class="hint">1 口に ${itemQty(it)} 個</td>
+          <td><button type="button" class="rowdel" ${drawn>0?"disabled":""} aria-label="この中身を外す">×</button></td>`;
+        sub.querySelectorAll("input").forEach(inp => {
+          inp.addEventListener("change", () => {
+            const f = inp.dataset.i;
+            if(f === "name") it.name = inp.value;
+            else it[f] = Math.max(f === "qty" ? 1 : 0, Number(inp.value) || 0);
+            render();
+          });
+        });
+        sub.querySelector(".rowdel").addEventListener("click", () => {
+          if(drawn > 0) return;
+          p.items.splice(i, 1);
+          render();
+        });
+        tb.appendChild(sub);
+      });
+
+      const act = document.createElement("tr");
+      act.className = "subrow";
+      act.innerHTML = `<td></td><td colspan="8">
+        <button type="button" class="linkbtn" data-a="add">＋ 中身を足す</button>
+        <button type="button" class="linkbtn" data-a="split" ${drawn>0?"disabled":""}>まとめを解除</button>
+        </td>`;
+      act.querySelector('[data-a="add"]').addEventListener("click", () => {
+        p.items.push({ name: "", cost: 0, market: 0, qty: 1 });
+        render();
+      });
+      act.querySelector('[data-a="split"]').addEventListener("click", () => { if(drawn === 0) unmakeSet(p); });
+      tb.appendChild(act);
+    }
   });
+  updateSetBar();
 
   $("sSlots").textContent  = `${c.N} 口`;
   $("sCost").textContent   = yen(c.costTotal);
@@ -2908,8 +3001,70 @@ $("fPrice").addEventListener("change", e => {
 });
 $("fName").addEventListener("change", e => { S.name = e.target.value; render(); });
 
+/* 「複数商品をまとめて1口」の操作 */
+const selRows = new Set();
+
+function updateSetBar(){
+  const btn = $("btnMakeSet");
+  if(!btn) return;
+  const n = selRows.size;
+  btn.disabled = n < 1;
+  btn.textContent = n < 1 ? "選んだ行を 1 口にまとめる" : `選んだ ${n} 行を 1 口にまとめる`;
+  $("setHint").textContent = n < 1
+    ? "総口数は口数の合計。ハズレ枠は通常枠の行を足してその口数を入れる"
+    : "まとめると、その中身がぜんぶ揃って 1 口になる（原価と相場は中身の合計）";
+}
+
+/** 選んだ行を1つのセットにする。中身の数量は元の口数を引き継ぐ */
+async function makeSet(){
+  if(!S || !selRows.size) return;
+  const c = compute();
+  const chosen = S.prizes.filter(p => selRows.has(p.id));
+  if(chosen.some(p => (c.drawnBy.get(p.id) || 0) > 0)){
+    await say("排出済みの賞品が含まれている。まとめる前に排出を取り消すこと。");
+    return;
+  }
+
+  const items = [];
+  for(const p of chosen){
+    if(isSet(p)) items.push(...p.items.map(it => ({ ...it })));
+    else items.push({ name: p.name, cost: Number(p.cost) || 0,
+                      market: Number(p.market) || 0, qty: Math.max(1, p.count | 0) });
+  }
+
+  const suggested = chosen.map(p => p.name).join(" ＋ ").slice(0, 60);
+  const name = await askText("この 1 口の名前を決める。\n中身はあとから足し引きできる。", suggested);
+  if(name === null) return;
+
+  const at = S.prizes.indexOf(chosen[0]);
+  const merged = {
+    id: uid++, name: (name || "").trim() || "セット",
+    cost: 0, market: 0, count: 1, note: "", normal: false, items
+  };
+  S.prizes = S.prizes.filter(p => !selRows.has(p.id));
+  S.prizes.splice(Math.min(at, S.prizes.length), 0, merged);
+  selRows.clear();
+  render();
+}
+
+/** セットを解除して、中身をそれぞれ独立した行に戻す */
+function unmakeSet(p){
+  if(!isSet(p)) return;
+  const at = S.prizes.indexOf(p);
+  const rows = p.items.map(it => ({
+    id: uid++, name: it.name || "無名", cost: Number(it.cost) || 0,
+    market: Number(it.market) || 0, count: itemQty(it) * Math.max(1, p.count | 0),
+    note: "", normal: false, items: []
+  }));
+  S.prizes.splice(at, 1, ...rows);
+  selRows.delete(p.id);
+  render();
+}
+
+$("btnMakeSet").addEventListener("click", makeSet);
+
 $("btnAddPrize").addEventListener("click", () => {
-  S.prizes.push({ id: uid++, name: "新しい賞品", cost: 0, market: 0, count: 1, note: "", normal: false });
+  S.prizes.push({ id: uid++, name: "新しい賞品", cost: 0, market: 0, count: 1, note: "", normal: false, items: [] });
   render();
 });
 
