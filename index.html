@@ -850,7 +850,7 @@ body.locked > header, body.locked > main { display:none; }
       <section class="panel">
         <header>
           <h2>落札と排出</h2>
-          <span class="hint">出たカードを押す → 落札金額を入れて記録</span>
+          <span class="hint">落札を登録 → 出たカードを押す（定価ならカードだけでよい）</span>
         </header>
         <div class="body">
           <div id="lotBar"></div>
@@ -1605,6 +1605,23 @@ function compute(o){
 
   const sold     = o.events.length;
   const left     = Math.max(0, N - sold);
+
+  // 落札は決まったがカードがまだ開いていない口。売上には入れない（出た賞品が
+  // 決まっていない＝原価が分からないため）。ただし「入れたのに何も動かない」と
+  // 見えないよう、開封待ちとして別に数えて画面に出す。
+  let pendingSlots = 0, pendingRev = 0;
+  {
+    const done = new Map();
+    for(const e of o.events) if(e.lotId) done.set(e.lotId, (done.get(e.lotId) || 0) + 1);
+    for(const l of o.lots){
+      const d = done.get(l.id) || 0;
+      for(let i = d; i < l.qty; i++){
+        pendingSlots++;
+        pendingRev += l.price + (i < (l.rem || 0) ? 1 : 0);
+      }
+    }
+    pendingSlots = Math.min(pendingSlots, left);
+  }
   const costLeft = Math.max(0, costTotal - costDrawn);
   const mktLeft  = Math.max(0, mktTotal  - mktDrawn);
   const evCost   = left > 0 ? costLeft / left : 0;
@@ -1645,7 +1662,8 @@ function compute(o){
   const salvageLeft = mktLeft * (o.recovery || 0);
 
   return {
-    o, N, price, sold, left, addNeeded, salvageLeft, recovery: o.recovery || 0,
+    o, N, price, sold, left, pendingSlots, pendingRev,
+    addNeeded, salvageLeft, recovery: o.recovery || 0,
     costTotal, mktTotal, costDrawn, mktDrawn, costLeft, mktLeft,
     revenue, profitNow, marginNow, evCost, evMkt, baseEvMkt, heat,
     returnLeft, returnAll, finalRev, finalProfit, finalMargin,
@@ -2028,7 +2046,10 @@ function buildCue(c){
   // --- 裏で見るだけの一言（読み上げ用ではない） ---
   const diff = c.price - c.rec;
   let act;
-  if(T.count === 0){
+  if(c.pendingSlots > 0){
+    act = `<b>開封待ちが ${c.pendingSlots} 口（${yen(c.pendingRev)}）。</b>`
+        + `出たカードを押すまで売上に入らない。`;
+  }else if(T.count === 0){
     act = `<b>目玉が残っていない。</b>ここは長く引っ張らず、値下げして捌くか、賞品を足して組み直す。`;
   }else if(diff > 0){
     act = `<b>推奨 ${yen(c.rec)}（現行から ${yen(diff)} 引き）。</b>いまの還元率だと手が止まりやすい。`;
@@ -2663,7 +2684,9 @@ function renderLive(c){
 
   $("mSold").textContent = `${c.sold}/${c.N}`;
   $("mSoldSub").textContent = c.left > 0
-    ? `残り ${c.left} 口・残り還元率 ${c.price>0 ? pct(c.returnLeft,0) : "—"}`
+    ? (c.pendingSlots > 0
+        ? `落札済みで開封待ち ${c.pendingSlots} 口（${yen(c.pendingRev)}）・残り ${c.left} 口`
+        : `残り ${c.left} 口・残り還元率 ${c.price>0 ? pct(c.returnLeft,0) : "—"}`)
     : `全口排出済み`;
 
   // 予想の着地ではなく、いま手元にある損益（売上 − 出た賞品の原価）
@@ -2673,8 +2696,9 @@ function renderLive(c){
   $("mFinal").textContent = syen(c.profitNow);
   $("mFinal").className = "v " + (c.profitNow >= 0 ? "pos" : "neg");
   $("mFinalSub").textContent = c.sold === 0
-    ? "まだ排出なし"
-    : `在庫込み ${syen(withStock)}（残り ${c.left} 口を回収 ${pct(c.recovery, 0)} で評価）`;
+    ? (c.pendingSlots > 0 ? `落札 ${yen(c.pendingRev)} は開封待ち（まだ売上に入れていない）` : "まだ排出なし")
+    : `在庫込み ${syen(withStock)}`
+      + (c.pendingSlots > 0 ? `／落札 ${yen(c.pendingRev)} が開封待ち` : `（残り ${c.left} 口を回収 ${pct(c.recovery, 0)} で評価）`);
 
   renderCue(c);
   renderLotBar(c);
@@ -2715,12 +2739,17 @@ function renderLotBar(c){
 
   if(S.closedAt){ bar.innerHTML = ""; return; }
 
-  // 落札の入力欄は常設しない。カードを押したときにダイアログで聞く。
-  // ここに出るのは「いま進行中の落札」だけ。
+  // 落札が決まってからカードが開くまでには間がある。金額を先に入れておけるよう
+  // 「落札を登録」を置く。カードを押してから聞く道も残してある（定価消化が速い）。
   if(!lot){
-    bar.innerHTML = `<div class="lotbox"><p class="hint" style="margin:0">`
-      + `出たカードを押すと、落札金額の入力が開く。定価で売れたときはそのまま「定価で記録」。`
-      + `</p></div>`;
+    bar.innerHTML = `
+      <div class="lotbox">
+        <div class="lotnow">
+          <button type="button" class="btn primary" id="btnNewLot">落札を登録（金額を先に入れる）</button>
+          <span class="hint">登録してから、出たカードを押す。定価で売れたときはカードを押すだけでよい。</span>
+        </div>
+      </div>`;
+    $("btnNewLot").addEventListener("click", registerLotOnly);
     return;
   }
 
@@ -2733,7 +2762,7 @@ function renderLotBar(c){
         ${lot.buyer ? `<span class="who">${esc(lot.buyer)}</span>` : ""}
         <span class="pipes">${Array.from({length: lot.qty}, (_, i) =>
           `<i class="${i < st.drawn ? "on" : ""}"></i>`).join("")}</span>
-        <span class="hint">残り <b class="num">${rest}</b> 口ぶんカードを押す（金額は聞かない）</span>
+        <span class="hint">開封待ち <b class="num">${rest}</b> 口。出たカードを押す（金額は聞かない）</span>
         <span class="spacer"></span>
         <button type="button" class="btn" id="btnCancelLot">この落札を取り消す</button>
       </div>
@@ -2748,6 +2777,7 @@ function renderLotBar(c){
    常設の入力欄だと「入れただけで何も減らない」状態が生まれるため置かない。
    ------------------------------------------------------------ */
 let drawDone = null;
+let drawForPrize = true;   // ダイアログがカード押下から開いたか、落札の先出しか
 
 /** 入力中の金額を「単価＋端数」に直す。合計入力でも1円のずれが出ない */
 function drawPricing(){
@@ -2769,9 +2799,13 @@ function updateDrawArm(c){
     `<b>${yen(d.price)}${d.rem ? "〜" + yen(d.price + 1) : ""}</b> × <b>${q}</b> 口`
     + (q > 1 ? `（合計 <b>${yen(shown)}</b>）` : "")
     + (buyer ? ` ／ ${esc(buyer)}` : "")
-    + ` を ${kind}として記録`
-    + (q > 1 ? `<br><span class="sub">残り ${q - 1} 口ぶんは、続けてカードを押す` +
-               (d.rem ? `／割り切れないぶんの ${d.rem} 円は先頭の口に乗せる` : "") + `</span>` : "");
+    + ` を ${kind}として${drawForPrize ? "記録" : "登録"}`
+    + `<br><span class="sub">`
+    + (drawForPrize
+        ? (q > 1 ? `残り ${q - 1} 口ぶんは、続けてカードを押す` : "押したカードを1口ぶん記録する")
+        : `このあと出たカードを ${q} 枚ぶん押すと記録される`)
+    + (d.rem ? `／割り切れないぶんの ${d.rem} 円は先頭の口に乗せる` : "")
+    + `</span>`;
 
   const parts = [];
   if(lotDraft.mode === "total") parts.push(`1口あたり <b class="num">${yen(d.price)}</b>`);
@@ -2783,15 +2817,23 @@ function updateDrawArm(c){
 }
 
 /** 賞品 p を n 口ぶん記録する前に金額を聞く。キャンセルなら null */
+/**
+ * 金額を聞く。p を渡せば「そのカードを押した」流れ、
+ * p が null なら「落札だけ先に登録する」流れ（カードは後から押す）。
+ */
 function askDraw(p, n, c){
-  const drawn = c.drawnBy.get(p.id) || 0;
-  const rest  = Math.max(0, (p.count | 0) - drawn);
-  const qty   = Math.max(1, Math.min(n, rest, c.left));
+  const rest = p ? Math.max(0, (p.count | 0) - (c.drawnBy.get(p.id) || 0)) : c.left;
+  const qty  = Math.max(1, Math.min(n, rest, c.left));
 
-  $("drawTitle").textContent = p.name || "（無名）";
-  $("drawSub").textContent =
-    (isSet(p) ? setLabel(p) + " ／ " : "")
-    + `相場 ${yen(mktOf(p))} ／ 原価 ${yen(costOf(p))} ／ 残 ${rest}/${p.count | 0}`;
+  drawForPrize = !!p;
+  $("drawTitle").textContent = p ? (p.name || "（無名）") : "落札を登録";
+  $("drawSub").textContent = p
+    ? (isSet(p) ? setLabel(p) + " ／ " : "")
+      + `相場 ${yen(mktOf(p))} ／ 原価 ${yen(costOf(p))} ／ 残 ${rest}/${p.count | 0}`
+    : `残り ${c.left} 口 ／ いまの販売単価 ${yen(c.price)}。金額を入れてから、出たカードを押す。`;
+  // 「定価で記録」は1口をその場で記録するボタンなので、カード無しのときは出さない
+  $("drawList").hidden = !p;
+  $("drawOk").textContent = p ? "記録する" : "この金額で登録";
 
   // 前回の入力を覚えておく。連続で同じ落札者・同じ刻みになることが多い
   $("drawPrice").value = String(lotDraft.price === "" ? c.price : lotDraft.price);
@@ -2806,6 +2848,20 @@ function askDraw(p, n, c){
     drawDone = resolve;
     setTimeout(() => { const el = $("drawPrice"); el.focus(); el.select(); }, 0);
   });
+}
+
+/** 落札だけ先に登録する。カードは後から押す */
+async function registerLotOnly(){
+  if(!S || S.closedAt || drawDone || activeLot()) return;
+  const c = compute();
+  if(c.left <= 0){ say("残りの口数がない。"); return; }
+  const r = await askDraw(null, 1, c);
+  if(!r) return;
+  const c2 = compute();
+  if(c2.left <= 0) return;
+  addLot(r.price, Math.max(1, Math.min(r.qty, c2.left)), r.buyer, r.kind, r.rem);
+  lotBarKey = "";
+  render();
 }
 
 function closeDraw(value){
@@ -3724,9 +3780,14 @@ function renderCloseSummary(){
       `<div><span class="label">落札</span><b>${a.lots} 件</b></div>`
       + `<div><span class="label">平均落札単価</span><b>${yen(a.avg)}</b></div>`);
   }
-  $("closeNote").textContent = c.left > 0
-    ? `未消化 ${c.left} 口（相場 ${yen(c.mktLeft)}）は在庫として残る。回収率 ${pct(c.recovery,0)} で ${yen(c.salvageLeft)} と見積もった数字が「在庫込み損益」。`
-    : "完売。在庫の持ち越しはなし。";
+  $("closeNote").textContent =
+    (c.pendingSlots > 0
+      ? `⚠ 落札済みでカードを押していない口が ${c.pendingSlots} 口（${yen(c.pendingRev)}）ある。`
+        + `このまま記録すると、この売上は入らない。先に出たカードを押すこと。 `
+      : "")
+    + (c.left > 0
+        ? `未消化 ${c.left} 口（相場 ${yen(c.mktLeft)}）は在庫として残る。回収率 ${pct(c.recovery,0)} で ${yen(c.salvageLeft)} と見積もった数字が「在庫込み損益」。`
+        : "完売。在庫の持ち越しはなし。");
 }
 
 function applyClose(){
@@ -4069,6 +4130,8 @@ document.addEventListener("keydown", e => {
   if(e.key >= "1" && e.key <= "9"){
     const p = livePrizeOrder(S.prizes)[Number(e.key) - 1];
     if(p){ draw(p.id); e.preventDefault(); }
+  }else if(e.key.toLowerCase() === "l" || e.key.toLowerCase() === "n"){
+    registerLotOnly(); e.preventDefault();          // 落札を先に登録
   }else if(e.key === "Backspace" || e.key.toLowerCase() === "u"){
     undo(); e.preventDefault();
   }
