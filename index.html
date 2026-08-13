@@ -1065,6 +1065,9 @@ const mktOf   = p => isSet(p)
 const setLabel = p => isSet(p)
   ? p.items.map(it => `${it.name || "?"}×${itemQty(it)}`).join("・")
   : "";
+/* 配信中は原価の高い順に並べる（TOP が上、通常枠が下）。
+   編集画面は入力した順のまま。数字キーの割り当てもこの並びに合わせる。 */
+const livePrizeOrder = ps => ps.slice().sort((a, b) => costOf(b) - costOf(a));
 
 /* 同梱の在庫 CSV。「サンプルを作る」で読み込む。 */
 const BUILTIN_NAME = "デモ用オリパ（100口・1,100円）";
@@ -2321,7 +2324,7 @@ function renderLotTable(){
 function renderPrizes(c){
   const wrap = $("prizeList");
   wrap.innerHTML = "";
-  S.prizes.forEach((p, i) => {
+  livePrizeOrder(S.prizes).forEach((p, i) => {
     const drawn = c.drawnBy.get(p.id) || 0;
     const rest  = Math.max(0, (p.count|0) - drawn);
     const out   = rest === 0;
@@ -3418,7 +3421,7 @@ document.addEventListener("keydown", e => {
   const t = e.target;
   if(t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) return;
   if(e.key >= "1" && e.key <= "9"){
-    const p = S.prizes[Number(e.key) - 1];
+    const p = livePrizeOrder(S.prizes)[Number(e.key) - 1];
     if(p){ draw(p.id); e.preventDefault(); }
   }else if(e.key === "Backspace" || e.key.toLowerCase() === "u"){
     undo(); e.preventDefault();
