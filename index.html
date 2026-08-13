@@ -577,6 +577,8 @@ body.locked > header, body.locked > main { display:none; }
 </header>
 
 <main>
+  <div id="dataNotice"></div>
+
   <!-- ========== オリパ一覧 ========== -->
   <section id="view-list" class="stack">
     <section class="panel">
@@ -590,6 +592,7 @@ body.locked > header, body.locked > main { display:none; }
           <button type="button" class="btn" id="btnNewFromCsv">CSV から作る</button>
           <button type="button" class="btn" id="btnLoadJson">JSON を読み込み</button>
           <button type="button" class="btn ghost" id="btnBackupAll">全体をバックアップ</button>
+          <button type="button" class="btn ghost" id="btnRestore">自動退避から復元</button>
           <button type="button" class="btn ghost" id="btnSample">サンプルを作る</button>
         </div>
         <p class="hint" style="margin:12px 0 0">
@@ -950,7 +953,13 @@ body.locked > header, body.locked > main { display:none; }
    ============================================================ */
 const STORE_KEY  = "oripa-app-v2";
 const LEGACY_KEY = "oripa-live-v1";
+const BACKUP_PREFIX = "oripa-backup-";
+const APP_DATA_VERSION = 2;   // 保存形式の版。上げるときは migrate() に段を足す
+const KEEP_BACKUPS = 5;
+
 let uid = 1;
+let dataState = "ok";   // ok | broken | quota | newer
+let brokenRaw = null;   // 読めなかった中身。捨てずに持っておく
 
 const clamp = (v,a,b)=> Math.min(b, Math.max(a, v));
 const mktOf = p => (p.market > 0 ? p.market : p.cost);
@@ -998,6 +1007,7 @@ function sampleOripa(){
 function normalizeOripa(o){
   const t = Date.now();
   return {
+    ...o,                       // 知らないフィールドも捨てずに持ち越す
     id: o.id || newId(),
     name: String(o.name || "無題のオリパ"),
     price: Math.max(0, Number(o.price) || 0),
@@ -1059,36 +1069,96 @@ function normalizeDB(d){
     .map(r => ({ ...r, id: r.id || newId(), endedAt: Number(r.endedAt) || Date.now() }))
     .sort((a, b) => b.endedAt - a.endedAt);
   const currentId = oripas.some(o => o.id === d.currentId) ? d.currentId : null;
-  return { oripas, records, currentId };
+  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId };
+}
+
+/** 上書きの前に、そのときの中身をそのまま別キーへ退避する */
+function snapshot(raw, why){
+  if(!raw) return;
+  try{
+    localStorage.setItem(BACKUP_PREFIX + why + "-" + Date.now(), raw);
+    const keys = Object.keys(localStorage)
+      .filter(k => k.startsWith(BACKUP_PREFIX))
+      .sort();
+    while(keys.length > KEEP_BACKUPS) localStorage.removeItem(keys.shift());
+  }catch(e){ /* 容量不足で退避できなくても、元データには触らない */ }
+}
+
+function backupKeys(){
+  try{
+    return Object.keys(localStorage).filter(k => k.startsWith(BACKUP_PREFIX)).sort().reverse();
+  }catch(e){ return []; }
+}
+
+/** 版を上げるときの移行。段を足していく形にして、古いデータを素通りさせない */
+function migrate(d){
+  const from = Number(d.version) || 1;
+  if(from >= APP_DATA_VERSION) return d;
+  // v1 → v2：lots が無い頃のイベントは backfillLots() が拾うので、ここでは版だけ上げる
+  d.version = APP_DATA_VERSION;
+  return d;
 }
 
 function loadDB(){
-  try{
-    const raw = localStorage.getItem(STORE_KEY);
-    if(raw){
-      const d = JSON.parse(raw);
-      if(d && Array.isArray(d.oripas)) return normalizeDB(d);
+  let raw = null;
+  try{ raw = localStorage.getItem(STORE_KEY); }catch(e){}
+
+  if(raw){
+    let d = null;
+    try{ d = JSON.parse(raw); }catch(e){ d = null; }
+
+    if(d && Array.isArray(d.oripas)){
+      const stored = Number(d.version) || 1;
+      // このアプリより新しい版で作られたデータ。落とさないよう控えを取ってから読む
+      if(stored > APP_DATA_VERSION){
+        dataState = "newer";
+        snapshot(raw, "newer");
+      }else if(stored < APP_DATA_VERSION){
+        snapshot(raw, "migrate");   // 移行前の姿を残す
+        d = migrate(d);
+      }
+      return normalizeDB(d);
     }
-    // 単一オリパだった頃のデータを1件目として引き継ぐ
+
+    // 読めなかった。**絶対に上書きしない**。退避して読み取り専用で立ち上げる
+    dataState = "broken";
+    brokenRaw = raw;
+    snapshot(raw, "broken");
+    return { version: APP_DATA_VERSION, oripas: [], records: [], currentId: null };
+  }
+
+  // 単一オリパだった頃のデータを1件目として引き継ぐ
+  try{
     const legacy = localStorage.getItem(LEGACY_KEY);
     if(legacy){
       const o = JSON.parse(legacy);
       if(o && Array.isArray(o.prizes)){
+        snapshot(legacy, "legacy");
         const db = normalizeDB({ oripas: [o], records: [] });
         db.currentId = db.oripas[0] ? db.oripas[0].id : null;
         return db;
       }
     }
   }catch(e){}
+
   return normalizeDB({ oripas: [sampleOripa()], records: [] });
 }
 
 function save(){
+  if(dataState === "broken") return;    // 読めなかった中身を潰さない
   try{
     if(S && mode !== "list") S.updatedAt = Date.now();
     DB.currentId = S ? S.id : null;
+    DB.version = APP_DATA_VERSION;
     localStorage.setItem(STORE_KEY, JSON.stringify(DB));
-  }catch(e){}
+    if(dataState === "quota"){ dataState = "ok"; renderDataNotice(); }
+  }catch(e){
+    // 容量超過など。黙って失うのがいちばん悪いので必ず知らせる
+    if(dataState !== "quota"){
+      dataState = "quota";
+      renderDataNotice();
+    }
+  }
 }
 
 /* ============================================================
@@ -1526,7 +1596,58 @@ const $ = id => document.getElementById(id);
 /* ============================================================
    描画
    ============================================================ */
+function renderDataNotice(){
+  const el = $("dataNotice");
+  if(!el) return;
+
+  if(dataState === "broken"){
+    el.innerHTML = `<div class="notice is-bad" style="margin-bottom:16px">
+      <span><b>保存データを読み込めなかった。</b>
+      中身は消さずに退避してある。まず書き出して中身を確保してから、続けるか決める。</span>
+      <span>
+        <button type="button" class="btn" id="btnDumpBroken">退避データを書き出す</button>
+        <button type="button" class="btn" id="btnStartOver">新しく始める</button>
+      </span></div>`;
+    $("btnDumpBroken").addEventListener("click", () => {
+      downloadAs(brokenRaw || "", "application/json", "配信オリパAI支援_退避データ.json");
+    });
+    $("btnStartOver").addEventListener("click", () => {
+      if(!confirm("退避データは残したまま、新しく始める。よろしいか？")) return;
+      dataState = "ok";
+      brokenRaw = null;
+      DB = normalizeDB({ oripas: [sampleOripa()], records: [] });
+      S = null;
+      go("list");
+    });
+    return;
+  }
+
+  if(dataState === "quota"){
+    el.innerHTML = `<div class="notice is-bad" style="margin-bottom:16px">
+      <span><b>保存できていない。</b>ブラウザの保存容量がいっぱいの可能性がある。
+      いまの内容を書き出して、不要なオリパを消すこと。</span>
+      <span><button type="button" class="btn" id="btnDumpNow">いまの内容を書き出す</button></span></div>`;
+    $("btnDumpNow").addEventListener("click", () => {
+      downloadAs(JSON.stringify(DB, null, 2), "application/json", "配信オリパAI支援_バックアップ.json");
+    });
+    return;
+  }
+
+  if(dataState === "newer"){
+    el.innerHTML = `<div class="notice" style="margin-bottom:16px">
+      <span>このデータは、いまより新しい版のアプリで作られている。
+      読めてはいるが、新しい版でしか扱えない項目があるかもしれない。</span>
+      <span><button type="button" class="btn" id="btnAckNewer">了解</button></span></div>`;
+    $("btnAckNewer").addEventListener("click", () => { dataState = "ok"; renderDataNotice(); });
+    return;
+  }
+
+  el.innerHTML = "";
+}
+
 function render(){
+  renderDataNotice();
+
   // 開いているオリパが消えていたら一覧へ戻す
   if(S && !DB.oripas.some(o => o.id === S.id)) S = null;
   if(!S) S = DB.oripas.find(o => o.id === DB.currentId) || null;
@@ -2608,6 +2729,40 @@ $("btnSample").addEventListener("click", () => {
 });
 $("btnBackupAll").addEventListener("click", () => {
   downloadAs(JSON.stringify(DB, null, 2), "application/json", "配信オリパAI支援_バックアップ.json");
+});
+
+/* 版を上げるときや読み込みに失敗したときに自動で退避した控えから戻す */
+$("btnRestore").addEventListener("click", () => {
+  const keys = backupKeys();
+  if(!keys.length){ alert("自動退避された控えはまだ無い。"); return; }
+  const list = keys.map((k, i) => {
+    const m = /^oripa-backup-(\w+)-(\d+)$/.exec(k);
+    const why = m ? ({ migrate:"版の更新前", broken:"読み込み失敗時", newer:"新しい版のデータ", legacy:"旧形式" }[m[1]] || m[1]) : "";
+    return `${i + 1}. ${m ? fmtDate(Number(m[2])) : k}（${why}）`;
+  }).join("\n");
+  const ans = prompt("戻す控えの番号を入れる。いまの内容は上書きされる。\n\n" + list, "1");
+  if(ans === null) return;
+  const key = keys[(parseInt(ans, 10) || 0) - 1];
+  if(!key){ alert("その番号の控えは無い。"); return; }
+
+  let raw = null;
+  try{ raw = localStorage.getItem(key); }catch(e){}
+  if(!raw){ alert("控えを読み出せなかった。"); return; }
+
+  try{
+    const d = JSON.parse(raw);
+    const incoming = Array.isArray(d && d.oripas) ? d : (d && Array.isArray(d.prizes) ? { oripas: [d], records: [] } : null);
+    if(!incoming) throw new Error("形式が違う");
+    snapshot(JSON.stringify(DB), "restore");   // 戻す前の姿も残す
+    dataState = "ok";
+    brokenRaw = null;
+    DB = normalizeDB(incoming);
+    S = null;
+    go("list");
+    alert("控えから戻した。");
+  }catch(err){
+    alert("この控えは読めなかった。別の番号を試すこと。");
+  }
 });
 
 $("btnDuplicate").addEventListener("click", () => duplicateCurrent("（複製）"));
