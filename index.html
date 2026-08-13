@@ -483,6 +483,26 @@ table.edit input:focus{ border-color:var(--gold); outline:none; }
   border:1px dashed var(--line-2); border-radius:var(--r);
 }
 
+/* ---- 画面内ダイアログ ---- */
+.modal{
+  position:fixed; inset:0; z-index:200; display:grid; place-items:center;
+  padding:20px; background:color-mix(in srgb, var(--ground) 78%, transparent);
+  backdrop-filter: blur(3px);
+}
+.modalbox{
+  width:min(420px, 100%); background:var(--surface);
+  border:1px solid var(--line-2); border-radius:var(--r); box-shadow:var(--shadow);
+  padding:20px; display:flex; flex-direction:column; gap:14px;
+}
+.modalbox p{ margin:0; font-size:14px; line-height:1.65; white-space:pre-line; overflow-wrap:anywhere; }
+.modalbox input{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:7px;
+  padding:9px 10px; font-family:var(--font-num); font-size:15px;
+}
+.modalbox input:focus{ border-color:var(--gold); outline:none; }
+.modalacts{ display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+.modal.is-danger #modalOk{ background:var(--bad); border-color:var(--bad); color:#fff; }
+
 .check{
   display:inline-flex; align-items:center; gap:7px; font-size:13px; color:var(--ink-2);
   background:var(--surface-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px;
@@ -934,6 +954,18 @@ body.locked > header, body.locked > main { display:none; }
   </section>
 
   <input type="file" id="fileInput" accept=".csv,.json,text/csv,application/json" hidden>
+
+  <!-- 確認・通知。埋め込み環境ではブラウザ標準のダイアログが無効化されるため自前で持つ -->
+  <div class="modal" id="modal" hidden>
+    <form class="modalbox" id="modalForm" role="dialog" aria-modal="true" aria-labelledby="modalMsg">
+      <p id="modalMsg"></p>
+      <input type="text" id="modalInput" hidden>
+      <div class="modalacts">
+        <button type="button" class="btn ghost" id="modalCancel">キャンセル</button>
+        <button type="submit" class="btn primary" id="modalOk">OK</button>
+      </div>
+    </form>
+  </div>
 
   <details class="explain">
     <summary>計算の考え方</summary>
@@ -1594,6 +1626,55 @@ const pct  = (v,d=1) => (v*100).toFixed(d) + "%";
 const spct = (v,d=1) => (v>=0?"":"−") + (Math.abs(v)*100).toFixed(d) + "%";
 const $ = id => document.getElementById(id);
 
+/* ------------------------------------------------------------
+   確認・通知ダイアログ
+
+   埋め込み（sandbox iframe）では window.confirm / alert / prompt が
+   無効化され「押しても何も起きない」状態になる。標準のものは使わない。
+   ------------------------------------------------------------ */
+let modalDone = null;
+
+function openModal(msg, opts){
+  const o = opts || {};
+  const wrap = $("modal"), input = $("modalInput");
+  $("modalMsg").textContent = msg;
+  $("modalOk").textContent = o.okLabel || "OK";
+  $("modalCancel").hidden = !!o.noCancel;
+  wrap.className = "modal" + (o.danger ? " is-danger" : "");
+  input.hidden = !o.prompt;
+  input.value = o.prompt ? (o.value == null ? "" : String(o.value)) : "";
+  wrap.hidden = false;
+  return new Promise(resolve => {
+    modalDone = resolve;
+    setTimeout(() => (o.prompt ? input : $("modalOk")).focus(), 0);
+  });
+}
+
+function closeModal(value){
+  $("modal").hidden = true;
+  const done = modalDone;
+  modalDone = null;
+  if(done) done(value);
+}
+
+/** はい／いいえ。true のときだけ実行する */
+function ask(msg, opts){ return openModal(msg, opts).then(v => v !== null); }
+/** 通知のみ */
+function say(msg){ return openModal(msg, { noCancel: true }).then(() => undefined); }
+/** 入力を求める。キャンセルなら null */
+function askText(msg, value){ return openModal(msg, { prompt: true, value }); }
+
+$("modalForm").addEventListener("submit", e => {
+  e.preventDefault();
+  closeModal($("modalInput").hidden ? true : $("modalInput").value);
+});
+$("modalCancel").addEventListener("click", () => closeModal(null));
+$("modal").addEventListener("mousedown", e => { if(e.target === $("modal")) closeModal(null); });
+document.addEventListener("keydown", e => {
+  if(!$("modal").hidden && e.key === "Escape"){ e.preventDefault(); closeModal(null); }
+}, true);
+
+
 /* ============================================================
    描画
    ============================================================ */
@@ -1612,8 +1693,8 @@ function renderDataNotice(){
     $("btnDumpBroken").addEventListener("click", () => {
       downloadAs(brokenRaw || "", "application/json", "配信オリパAI支援_退避データ.json");
     });
-    $("btnStartOver").addEventListener("click", () => {
-      if(!confirm("退避データは残したまま、新しく始める。よろしいか？")) return;
+    $("btnStartOver").addEventListener("click", async () => {
+      if(!await ask("退避データは残したまま、新しく始めますか？", { okLabel: "新しく始める" })) return;
       dataState = "ok";
       brokenRaw = null;
       DB = normalizeDB({ oripas: [sampleOripa()], records: [] });
@@ -1766,7 +1847,9 @@ function renderList(){
     el.querySelector('[data-act="edit"]').addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="live"]').addEventListener("click", () => openOripa(o.id, "live"));
     el.querySelector('[data-act="copy"]').addEventListener("click", () => duplicateOripa(o, "（複製）", false));
-    el.querySelector('[data-act="del"]').addEventListener("click", () => { if(deleteOripa(o)) render(); });
+    el.querySelector('[data-act="del"]').addEventListener("click", async () => {
+      if(await deleteOripa(o)) render();
+    });
     if(o.id === flashed) el.classList.add("just-added");
     wrap.appendChild(el);
   }
@@ -1801,8 +1884,9 @@ function renderRecords(){
       `<td class="n ${r.margin >= 0 ? "pos" : "neg"}">${r.revenue > 0 ? spct(r.margin) : "—"}</td>` +
       `<td class="n ${r.withStock >= 0 ? "pos" : "neg"}">${syen(r.withStock)}</td>` +
       `<td><button type="button" class="rowdel" aria-label="この記録を削除">×</button></td>`;
-    tr.querySelector(".rowdel").addEventListener("click", () => {
-      if(!confirm(`${fmtDate(r.endedAt)}「${r.name}」の記録を削除する。よろしいか？`)) return;
+    tr.querySelector(".rowdel").addEventListener("click", async () => {
+      if(!await ask(`${fmtDate(r.endedAt)}「${r.name}」の記録を削除しますか？`,
+                    { okLabel: "削除する", danger: true })) return;
       DB.records = DB.records.filter(x => x.id !== r.id);
       const o = DB.oripas.find(x => x.id === r.oripaId);
       if(o && !DB.records.some(x => x.oripaId === o.id)) o.closedAt = 0;
@@ -1974,24 +2058,25 @@ function updateLotHint(){
     + `<br>登録せずにカードを押すと、いまの単価 ${yen(S.price)} の即決として記録する。`;
 }
 
-function registerLot(){
+async function registerLot(){
   if(!S || S.closedAt || activeLot()) return;
   const c = compute();
   const unit = lotUnitPrice();
   let qty = Math.max(1, Math.round(Number(lotDraft.qty) || 1));
-  if(c.left <= 0){ alert("残りの口数がない。"); return; }
+  if(c.left <= 0){ say("残りの口数がない。"); return; }
   if(qty > c.left){ qty = c.left; }
-  if(unit <= 0 && !confirm("落札金額が 0 円になっている。このまま登録するか？")) return;
+  if(unit <= 0 && !await ask("落札金額が 0 円になっている。このまま登録しますか？")) return;
   addLot(unit, qty, lotDraft.buyer.trim(), "auction");
   lotDraft = { price: "", qty: 1, buyer: "", mode: lotDraft.mode };
   render();
 }
 
-function cancelLot(id){
+async function cancelLot(id){
   const lot = S.lots.find(l => l.id === id);
   if(!lot) return;
   const st = lotStats(S, lot);
-  if(st.drawn > 0 && !confirm(`この落札の排出 ${st.drawn} 件も取り消す。よろしいか？`)) return;
+  if(st.drawn > 0 && !await ask(`この落札の排出 ${st.drawn} 件も取り消しますか？`,
+                                { okLabel: "取り消す", danger: true })) return;
   S.events = S.events.filter(e => e.lotId !== id);
   S.lots = S.lots.filter(l => l.id !== id);
   render();
@@ -2480,11 +2565,12 @@ function renderImport(resetPrice){
   }
 }
 
-function applyImport(){
+async function applyImport(){
   if(!pending) return;
   const r = previewImport();
   if(!r || r.error) return;
-  if(S.events.length && !confirm(`記録済みの排出 ${S.events.length} 件を破棄して取り込む。よろしいか？`)) return;
+  if(S.events.length && !await ask(`記録済みの排出 ${S.events.length} 件を破棄して取り込みますか？`,
+                                   { okLabel: "取り込む", danger: true })) return;
 
   const fresh = csvToPrizes(pending.text, {
     marketRate: Number($("impMarket").value) || 1,
@@ -2564,7 +2650,7 @@ function loadJsonText(text){
       added.push(o);
     }
   }catch(err){
-    alert("読み込めなかった：このアプリが書き出した JSON か、在庫 CSV を選んでください。");
+    say("読み込めなかった。\nこのアプリが書き出した JSON か、在庫 CSV を選ぶこと。");
     return;
   }
   pending = null; draftId = null;
@@ -2579,7 +2665,7 @@ function loadJsonText(text){
 function openClosePanel(){
   if(!S || S.closedAt) return;
   const c = compute();
-  if(c.sold === 0){ alert("まだ1口も排出していない。"); return; }
+  if(c.sold === 0){ say("まだ1口も排出していない。"); return; }
 
   $("closeDate").value = dateInputValue(Date.now());
   $("closeMemo").value = "";
@@ -2619,13 +2705,14 @@ function applyClose(){
   S.closedAt = at;
   S.updatedAt = Date.now();
   $("closePanel").hidden = true;
-  alert(`記録した。現金損益 ${syen(rec.profit)}／在庫込み ${syen(rec.withStock)}。一覧の「配信の記録」から見られる。`);
   go("list");
+  say(`記録した。\n現金損益 ${syen(rec.profit)}／在庫込み ${syen(rec.withStock)}。\n一覧の「配信の記録」から見られる。`);
 }
 
-function reopenStream(){
+async function reopenStream(){
   if(!S || !S.closedAt) return;
-  if(!confirm("記録を取り消して排出の入力を再開する。この配信の記録は消える。よろしいか？")) return;
+  if(!await ask("記録を取り消して排出の入力を再開しますか？\nこの配信の記録は消えます。",
+                { okLabel: "取り消して再開", danger: true })) return;
   DB.records = DB.records.filter(r => r.oripaId !== S.id);
   S.closedAt = 0;
   render();
@@ -2735,22 +2822,22 @@ $("btnBackupAll").addEventListener("click", () => {
 });
 
 /* 版を上げるときや読み込みに失敗したときに自動で退避した控えから戻す */
-$("btnRestore").addEventListener("click", () => {
+$("btnRestore").addEventListener("click", async () => {
   const keys = backupKeys();
-  if(!keys.length){ alert("自動退避された控えはまだ無い。"); return; }
+  if(!keys.length){ await say("自動退避された控えはまだ無い。"); return; }
   const list = keys.map((k, i) => {
     const m = /^oripa-backup-(\w+)-(\d+)$/.exec(k);
     const why = m ? ({ migrate:"版の更新前", broken:"読み込み失敗時", newer:"新しい版のデータ", legacy:"旧形式" }[m[1]] || m[1]) : "";
     return `${i + 1}. ${m ? fmtDate(Number(m[2])) : k}（${why}）`;
   }).join("\n");
-  const ans = prompt("戻す控えの番号を入れる。いまの内容は上書きされる。\n\n" + list, "1");
+  const ans = await askText("戻す控えの番号を入れる。いまの内容は上書きされる。\n\n" + list, "1");
   if(ans === null) return;
   const key = keys[(parseInt(ans, 10) || 0) - 1];
-  if(!key){ alert("その番号の控えは無い。"); return; }
+  if(!key){ await say("その番号の控えは無い。"); return; }
 
   let raw = null;
   try{ raw = localStorage.getItem(key); }catch(e){}
-  if(!raw){ alert("控えを読み出せなかった。"); return; }
+  if(!raw){ await say("控えを読み出せなかった。"); return; }
 
   try{
     const d = JSON.parse(raw);
@@ -2762,19 +2849,20 @@ $("btnRestore").addEventListener("click", () => {
     DB = normalizeDB(incoming);
     S = null;
     go("list");
-    alert("控えから戻した。");
+    say("控えから戻した。");
   }catch(err){
-    alert("この控えは読めなかった。別の番号を試すこと。");
+    say("この控えは読めなかった。別の番号を試すこと。");
   }
 });
 
 $("btnDuplicate").addEventListener("click", () => duplicateCurrent("（複製）"));
 
-function deleteOripa(o){
+async function deleteOripa(o){
   if(!o) return false;
   const c = compute(o);
   const detail = c.sold > 0 ? `\n排出 ${c.sold} 件の入力内容も消える。` : "";
-  if(!confirm(`「${o.name}」を削除する。${detail}\n記録済みの実績は「配信の記録」に残る。よろしいか？`)) return false;
+  if(!await ask(`「${o.name}」を削除しますか？${detail}\n記録済みの実績は「配信の記録」に残ります。`,
+                { okLabel: "削除する", danger: true })) return false;
   DB.oripas = DB.oripas.filter(x => x.id !== o.id);
   if(S && S.id === o.id){
     S = null;
@@ -2784,14 +2872,16 @@ function deleteOripa(o){
   return true;
 }
 
-$("btnDelete").addEventListener("click", () => {
-  if(deleteOripa(S)) go("list");
+$("btnDelete").addEventListener("click", async () => {
+  if(await deleteOripa(S)) go("list");
 });
 
 $("btnUndo").addEventListener("click", undo);
-$("btnResetDraws").addEventListener("click", () => {
+$("btnResetDraws").addEventListener("click", async () => {
   if(!S.events.length && !S.lots.length) return;
-  if(confirm("排出と落札の記録をすべて消す。よろしいか？")){ S.events = []; S.lots = []; render(); }
+  if(await ask("排出と落札の記録をすべて消しますか？", { okLabel: "すべて消す", danger: true })){
+    S.events = []; S.lots = []; render();
+  }
 });
 
 $("btnApply").addEventListener("click", () => {
