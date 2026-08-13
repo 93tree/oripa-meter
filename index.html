@@ -1,0 +1,2751 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>オリパ収支メーター — 配信中のリアルタイム利益率と値下げ判断</title>
+<style>
+/* ============================================================
+   トークン
+   ============================================================ */
+:root{
+  color-scheme: light dark;
+
+  --ink:      #1B1A26;
+  --ink-2:    #4A4860;
+  --ink-3:    #7D7A94;
+  --ground:   #F4F3F8;
+  --surface:  #FFFFFF;
+  --surface-2:#EDEBF3;
+  --line:     #DEDBE8;
+  --line-2:   #C8C4D8;
+
+  --gold:     #A6761C;
+  --gold-ink: #6E4C08;
+  --gold-bg:  #F7EBD2;
+
+  --good:     #1E7D6B;
+  --good-bg:  #DDF0EA;
+  --bad:      #C2382C;
+  --bad-bg:   #FBE3E0;
+  --flat:     #57556E;
+  --flat-bg:  #E7E5EF;
+  --on-gold:  #FFF8EC;
+
+  --font-ui: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic Medium", "Yu Gothic", "Noto Sans JP", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-num: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Roboto Mono", "Cascadia Mono", monospace;
+
+  --r: 10px;
+  --shadow: 0 1px 2px rgba(27,26,38,.06), 0 8px 24px -16px rgba(27,26,38,.28);
+}
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --ink:      #ECEAF4;
+    --ink-2:    #A5A1BC;
+    --ink-3:    #756F8C;
+    --ground:   #131320;
+    --surface:  #1C1B2A;
+    --surface-2:#252435;
+    --line:     #2F2E42;
+    --line-2:   #413F58;
+
+    --gold:     #E0AE49;
+    --gold-ink: #F2CC85;
+    --gold-bg:  #362C17;
+
+    --good:     #3FB49B;
+    --good-bg:  #14312D;
+    --bad:      #EE6A5F;
+    --bad-bg:   #3A1E1C;
+    --flat:     #9B97B4;
+    --flat-bg:  #262536;
+    --on-gold:  #231A06;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.9);
+  }
+}
+
+:root[data-theme="light"]{
+  --ink:#1B1A26; --ink-2:#4A4860; --ink-3:#7D7A94;
+  --ground:#F4F3F8; --surface:#FFFFFF; --surface-2:#EDEBF3;
+  --line:#DEDBE8; --line-2:#C8C4D8;
+  --gold:#A6761C; --gold-ink:#6E4C08; --gold-bg:#F7EBD2;
+  --good:#1E7D6B; --good-bg:#DDF0EA;
+  --bad:#C2382C;  --bad-bg:#FBE3E0;
+  --flat:#57556E; --flat-bg:#E7E5EF; --on-gold:#FFF8EC;
+  --shadow: 0 1px 2px rgba(27,26,38,.06), 0 8px 24px -16px rgba(27,26,38,.28);
+}
+:root[data-theme="dark"]{
+  --ink:#ECEAF4; --ink-2:#A5A1BC; --ink-3:#756F8C;
+  --ground:#131320; --surface:#1C1B2A; --surface-2:#252435;
+  --line:#2F2E42; --line-2:#413F58;
+  --gold:#E0AE49; --gold-ink:#F2CC85; --gold-bg:#362C17;
+  --good:#3FB49B; --good-bg:#14312D;
+  --bad:#EE6A5F;  --bad-bg:#3A1E1C;
+  --flat:#9B97B4; --flat-bg:#262536; --on-gold:#231A06;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.9);
+}
+
+/* ============================================================
+   ベース
+   ============================================================ */
+*{ box-sizing:border-box; }
+[hidden]{ display:none !important; }
+html,body{ margin:0; padding:0; }
+body{
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-text-size-adjust:100%;
+}
+h1,h2,h3{ margin:0; text-wrap:balance; letter-spacing:-.01em; }
+button, input, select{ font:inherit; color:inherit; }
+button{ cursor:pointer; }
+:where(button,input,select,a,[tabindex]):focus-visible{
+  outline:2px solid var(--gold); outline-offset:2px; border-radius:6px;
+}
+.num{ font-family: var(--font-num); font-variant-numeric: tabular-nums; letter-spacing:-.02em; }
+.label{
+  font-size:11px; letter-spacing:.14em; color:var(--ink-3);
+  font-weight:600;
+}
+.hint{ font-size:12.5px; color:var(--ink-3); line-height:1.55; }
+
+/* ============================================================
+   ヘッダー
+   ============================================================ */
+.topbar{
+  position:sticky; top:0; z-index:20;
+  display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between;
+  padding:12px max(16px, env(safe-area-inset-left)) 12px 16px;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom:1px solid var(--line);
+}
+.brand{ display:flex; align-items:center; gap:11px; min-width:0; }
+.brand .mark{
+  width:30px; height:30px; flex:none; border-radius:7px;
+  background:
+    linear-gradient(140deg, var(--gold) 0%, color-mix(in srgb, var(--gold) 55%, var(--surface)) 52%, var(--gold) 100%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 60%, transparent);
+  position:relative;
+}
+.brand .mark::after{
+  content:""; position:absolute; inset:5px 9px 5px 5px; border-radius:3px;
+  background: color-mix(in srgb, var(--ground) 82%, transparent);
+  box-shadow: 5px 0 0 -1px color-mix(in srgb, var(--ground) 30%, transparent);
+  transform: rotate(-7deg);
+}
+.brand h1{ font-size:16px; font-weight:800; }
+.brand p{ margin:0; font-size:11.5px; color:var(--ink-3); }
+.topbar-right{ display:flex; align-items:center; gap:10px; }
+
+.modes{ display:flex; background:var(--surface-2); border-radius:8px; padding:3px; gap:2px; }
+.modes button{
+  border:0; background:transparent; color:var(--ink-2);
+  padding:6px 13px; border-radius:6px; font-size:13px; font-weight:700;
+}
+.modes button[aria-pressed="true"]{ background:var(--surface); color:var(--ink); box-shadow:var(--shadow); }
+
+.pill{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:5px 11px; border-radius:999px;
+  font-size:12.5px; font-weight:700; white-space:nowrap;
+  background:var(--flat-bg); color:var(--flat);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 22%, transparent);
+}
+.pill .dot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
+.pill.is-good{ background:var(--good-bg); color:var(--good); }
+.pill.is-bad{ background:var(--bad-bg); color:var(--bad); }
+.pill.is-warn{ background:var(--gold-bg); color:var(--gold-ink); }
+
+/* ============================================================
+   レイアウト
+   ============================================================ */
+main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
+.stack{ display:flex; flex-direction:column; gap:16px; min-width:0; }
+.stack > *{ min-width:0; }
+.panel{
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--r); box-shadow:var(--shadow);
+}
+.panel > header{
+  display:flex; align-items:baseline; justify-content:space-between; gap:8px 12px; flex-wrap:wrap;
+  padding:13px 16px; border-bottom:1px solid var(--line); min-width:0;
+}
+.panel > header > *{ min-width:0; }
+.panel > header h2{ font-size:13.5px; font-weight:800; }
+.panel .body{ padding:16px; }
+
+.cols{ display:grid; grid-template-columns: minmax(0,1fr); gap:16px; }
+@media (min-width: 900px){
+  .cols{ grid-template-columns: minmax(0,1.05fr) minmax(0,1fr); align-items:start; }
+}
+
+/* ============================================================
+   KPI 帯
+   ============================================================ */
+.kpis{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+@media (min-width:720px){ .kpis{ grid-template-columns:repeat(4,minmax(0,1fr)); } }
+.kpi{
+  position:relative; overflow:hidden;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+  padding:12px 14px 13px 16px; box-shadow:var(--shadow);
+}
+.kpi::before{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+  background:var(--line-2);
+}
+.kpi.is-good::before{ background:var(--good); }
+.kpi.is-bad::before{ background:var(--bad); }
+.kpi.is-warn::before{ background:var(--gold); }
+.kpi.is-key::before{ background:var(--gold); }
+.kpi .v{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:27px; font-weight:600; line-height:1.15; margin-top:3px; letter-spacing:-.03em;
+}
+.kpi .s{ display:block; font-size:12px; color:var(--ink-3); margin-top:3px; overflow-wrap:anywhere; }
+.kpi .v.pos{ color:var(--good); }
+.kpi .v.neg{ color:var(--bad); }
+
+/* ============================================================
+   排出パネル
+   ============================================================ */
+.prizes{ display:flex; flex-direction:column; gap:8px; min-width:0; }
+.prize{
+  display:grid; grid-template-columns: minmax(0,1fr) auto; align-items:center; gap:10px;
+  width:100%; text-align:left;
+  border:1px solid var(--line); border-radius:9px; background:var(--surface-2);
+  padding:10px 10px 10px 13px;
+  transition: border-color .12s, background .12s, transform .06s;
+}
+.prize:hover:not(:disabled){ border-color:var(--gold); background:color-mix(in srgb, var(--gold-bg) 55%, var(--surface-2)); }
+.prize:active:not(:disabled){ transform:scale(.994); }
+.prize:disabled{ opacity:.45; cursor:not-allowed; }
+.prize > span:first-child{ min-width:0; }
+.prize .nm{ font-weight:700; font-size:14.5px; display:flex; align-items:center; gap:7px; min-width:0; }
+.prize .nm .key{
+  font-family:var(--font-num); font-size:10.5px; font-weight:700;
+  color:var(--ink-3); border:1px solid var(--line-2); border-radius:4px;
+  padding:0 4px; flex:none;
+}
+.prize .nm span.t{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.prize .meta{ font-size:11.5px; color:var(--ink-3); margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.prize .meta b{ font-family:var(--font-num); font-variant-numeric:tabular-nums; font-weight:600; color:var(--ink-2); }
+.prize .right{ display:flex; align-items:center; gap:6px; }
+.prize .rem{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:13px; color:var(--ink-2); padding-right:2px;
+}
+.prize .rem.out{ color:var(--ink-3); }
+.plus{
+  border:1px solid var(--line-2); background:var(--surface); color:var(--ink);
+  border-radius:7px; min-width:38px; height:34px; padding:0 8px;
+  font-size:14px; font-weight:700; font-family:var(--font-num);
+  display:inline-flex; align-items:center; justify-content:center;
+}
+.plus:hover{ border-color:var(--gold); color:var(--gold-ink); }
+.plus.wide{ min-width:44px; }
+
+.drawbar{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:14px; }
+
+/* ---- 落札の入力／進行中の表示 ---- */
+.lotbox{
+  border:1px solid var(--line); border-radius:9px; background:var(--surface-2);
+  padding:12px 13px; margin-bottom:14px;
+}
+.lotbox.active{
+  background:var(--gold-bg);
+  border-color:color-mix(in srgb, var(--gold) 45%, transparent);
+}
+.lotform{ display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+.lotf{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+.lotf label{ font-size:10.5px; letter-spacing:.1em; color:var(--ink-3); font-weight:700; }
+.lotf input{
+  background:var(--surface); border:1px solid var(--line-2); border-radius:7px;
+  padding:8px 10px; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  width:100%;
+}
+.lotf input[type=text]{ font-family:var(--font-ui); }
+.lotf input:focus{ border-color:var(--gold); outline:none; }
+.lotf input[type=number]{ appearance:textfield; -moz-appearance:textfield; }
+.lotf input[type=number]::-webkit-outer-spin-button,
+.lotf input[type=number]::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+.lotf.w-price input{ width:110px; }
+.lotf.w-qty   input{ width:70px; }
+.lotf.w-buyer input{ width:140px; }
+.seg{ display:flex; background:var(--surface); border:1px solid var(--line-2); border-radius:7px; padding:2px; }
+.seg button{
+  border:0; background:none; color:var(--ink-3); border-radius:5px;
+  padding:5px 9px; font-size:12px; font-weight:700;
+}
+.seg button[aria-pressed="true"]{ background:var(--gold); color:var(--on-gold); }
+.lotbox .hint{ margin-top:9px; }
+
+.lotnow{ display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.lotnow .big{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:20px; font-weight:600; letter-spacing:-.02em; color:var(--gold-ink);
+}
+.lotnow .who{ font-size:13px; color:var(--ink-2); }
+.lotnow .spacer{ flex:1 1 auto; }
+.pipes{ display:flex; gap:4px; }
+.pipes i{
+  width:12px; height:12px; border-radius:3px; display:block;
+  background:color-mix(in srgb, var(--gold) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 45%, transparent);
+}
+.pipes i.on{ background:var(--gold); }
+.btn{
+  border:1px solid var(--line-2); background:var(--surface); color:var(--ink);
+  border-radius:8px; padding:8px 13px; font-size:13px; font-weight:700;
+}
+.btn:hover{ border-color:var(--gold); color:var(--gold-ink); }
+.btn.primary{ background:var(--gold); border-color:var(--gold); color:var(--on-gold); }
+.btn.primary:hover{ filter:brightness(1.06); border-color:var(--gold); color:var(--on-gold); }
+.btn.ghost{ background:transparent; border-color:var(--line); color:var(--ink-2); }
+.btn:disabled{ opacity:.4; cursor:not-allowed; }
+
+/* ============================================================
+   値下げ判断
+   ============================================================ */
+.verdict-box{
+  border:1px solid var(--line); border-radius:9px; overflow:hidden;
+  background:var(--surface-2);
+}
+.verdict-box .top{
+  display:flex; align-items:flex-end; justify-content:space-between; gap:14px; flex-wrap:wrap; min-width:0;
+  padding:14px 16px; border-left:3px solid var(--gold); background:var(--surface);
+}
+.verdict-box.is-bad .top{ border-left-color:var(--bad); }
+.verdict-box.is-good .top{ border-left-color:var(--good); }
+.verdict-box .price{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:38px; font-weight:600; line-height:1; letter-spacing:-.035em;
+}
+.verdict-box .top > div{ min-width:0; }
+.verdict-box .delta{ font-size:13px; color:var(--ink-2); margin-top:4px; }
+.verdict-box .msg{ padding:11px 16px; font-size:13px; color:var(--ink-2); border-top:1px solid var(--line); }
+
+.anchors{ display:flex; flex-direction:column; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:9px; overflow:hidden; margin-top:14px; }
+.anchor{
+  display:grid; grid-template-columns: minmax(0,1fr) auto auto; gap:10px; align-items:center;
+  background:var(--surface); border:0; width:100%; text-align:left;
+  padding:10px 13px; font-size:13px;
+}
+.anchor:hover{ background:var(--surface-2); }
+.anchor[aria-pressed="true"]{ background:var(--gold-bg); }
+.anchor > span:first-child{ min-width:0; }
+.anchor .an{ font-weight:700; }
+.anchor .ad{ font-size:11.5px; color:var(--ink-3); font-weight:400; }
+.anchor .ap{ font-family:var(--font-num); font-variant-numeric:tabular-nums; font-weight:600; font-size:15px; }
+.anchor .tag{ font-size:11px; font-weight:700; color:var(--ink-3); }
+
+.simrow{ display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap; }
+.simrow input[type=range]{ flex:1 1 200px; accent-color:var(--gold); min-width:160px; }
+.simprice{
+  display:inline-flex; align-items:baseline; gap:3px;
+  font-family:var(--font-num); font-variant-numeric:tabular-nums; font-weight:600; font-size:20px;
+}
+.simprice input{
+  width:6.2ch; background:transparent; border:0; border-bottom:2px solid var(--line-2);
+  font:inherit; text-align:right; padding:0 1px;
+}
+.simprice input:focus{ border-bottom-color:var(--gold); outline:none; }
+
+table.tbl{ width:100%; border-collapse:collapse; font-size:13px; }
+table.tbl th, table.tbl td{ padding:8px 9px; border-bottom:1px solid var(--line); text-align:right; }
+table.tbl th{ font-size:11px; letter-spacing:.06em; color:var(--ink-3); font-weight:700; white-space:nowrap; }
+table.tbl th:first-child, table.tbl td:first-child{ text-align:left; }
+table.tbl th.l, table.tbl td.l{ text-align:left; }
+#lotTable{ min-width:430px; }
+#lotTable .lotno{
+  display:inline-block; min-width:1.6em; margin-right:6px;
+  font-family:var(--font-num); font-size:11px; font-weight:700; color:var(--ink-3);
+}
+table.tbl td.n{ font-family:var(--font-num); font-variant-numeric:tabular-nums; white-space:nowrap; }
+table.tbl td:first-child{ white-space:nowrap; }
+table.tbl tr:last-child td{ border-bottom:0; }
+td.pos{ color:var(--good); } td.neg{ color:var(--bad); }
+.scroll-x{ overflow-x:auto; min-width:0; }
+
+/* ============================================================
+   チャート
+   ============================================================ */
+.chart-wrap{ position:relative; min-width:0; }
+canvas#spark{ width:100%; height:160px; display:block; }
+.chart-empty{ padding:26px 0; text-align:center; color:var(--ink-3); font-size:13px; }
+
+/* ============================================================
+   設定
+   ============================================================ */
+.fields{ display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:13px; }
+.field{ display:flex; flex-direction:column; gap:5px; }
+.field label{ font-size:11.5px; color:var(--ink-3); font-weight:700; letter-spacing:.04em; }
+.field input, .field select{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:7px;
+  padding:8px 10px; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+}
+.field input[type=text]{ font-family:var(--font-ui); }
+.field input:focus{ border-color:var(--gold); outline:none; }
+
+table.edit{ width:100%; border-collapse:collapse; font-size:13px; min-width:760px; }
+table.edit th{ font-size:11px; letter-spacing:.06em; color:var(--ink-3); font-weight:700; text-align:left; padding:0 7px 7px; white-space:nowrap; }
+table.edit td{ padding:3px 4px; }
+table.edit input[type=text]{ width:100%; }
+table.edit input{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:6px; padding:7px 8px;
+  font-family:var(--font-num); font-variant-numeric:tabular-nums; width:100%;
+}
+table.edit input[type=text]{ font-family:var(--font-ui); }
+table.edit input:focus{ border-color:var(--gold); outline:none; }
+.rowdel{
+  border:1px solid var(--line); background:transparent; color:var(--ink-3);
+  border-radius:6px; width:32px; height:32px; font-size:15px; line-height:1;
+}
+.rowdel:hover:not(:disabled){ border-color:var(--bad); color:var(--bad); }
+.rowdel:disabled{ opacity:.3; cursor:not-allowed; }
+
+.summary{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; }
+.summary div{ border-left:2px solid var(--line-2); padding-left:11px; }
+.summary b{ display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:19px; font-weight:600; margin-top:2px; }
+
+/* ---- パンくず（編集画面の上部） ---- */
+.crumb{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  padding:2px 0;
+}
+.crumb .crumb-name{ font-weight:800; font-size:15px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.crumb .spacer{ flex:1 1 auto; }
+
+.linkbtn{
+  border:0; background:none; padding:0 0 0 8px; color:var(--gold-ink);
+  font-size:12.5px; font-weight:700; text-decoration:underline; text-underline-offset:3px;
+}
+.linkbtn:hover{ color:var(--gold); }
+
+/* ---- オリパ一覧 ---- */
+.ocard{
+  display:grid; gap:12px; align-items:center;
+  grid-template-columns: minmax(0,1fr);
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:14px 16px; position:relative; overflow:hidden;
+}
+@media (min-width:820px){
+  .ocard{ grid-template-columns: minmax(0,1.4fr) minmax(0,2fr) auto; }
+}
+.ocard::before{
+  content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--line-2);
+}
+.ocard.is-live::before{ background:var(--gold); }
+.ocard.is-done::before{ background:var(--good); }
+.ocard.is-bad::before{ background:var(--bad); }
+.ocard .who{ min-width:0; }
+.oname{
+  border:0; background:none; padding:0; text-align:left;
+  font-size:16px; font-weight:800; color:var(--ink); line-height:1.35;
+  text-decoration:underline; text-decoration-color:color-mix(in srgb, var(--gold) 55%, transparent);
+  text-underline-offset:4px; text-decoration-thickness:2px;
+  max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block;
+}
+.oname:hover{ color:var(--gold-ink); text-decoration-color:var(--gold); }
+.ocard .meta{ font-size:12px; color:var(--ink-3); margin-top:3px; }
+.ostats{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.ostats div{ min-width:0; }
+.ostats .label{ display:block; font-size:10px; letter-spacing:.1em; }
+.ostats b{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:15px; font-weight:600; margin-top:1px;
+}
+.ostats b.pos{ color:var(--good); } .ostats b.neg{ color:var(--bad); }
+.ocard .acts{ display:flex; gap:6px; flex-wrap:wrap; }
+.ocard.just-added{ animation: added 1.6s ease-out 1; }
+@keyframes added{
+  0%   { box-shadow: var(--shadow), 0 0 0 2px var(--gold); }
+  70%  { box-shadow: var(--shadow), 0 0 0 2px var(--gold); }
+  100% { box-shadow: var(--shadow), 0 0 0 2px transparent; }
+}
+.ocard .acts .btn{ padding:6px 11px; font-size:12.5px; }
+
+.bar{
+  height:5px; border-radius:3px; background:var(--surface-2); overflow:hidden; margin-top:7px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.bar span{ display:block; height:100%; background:var(--gold); border-radius:3px; }
+
+.empty{
+  text-align:center; padding:40px 20px; color:var(--ink-3); font-size:14px;
+  border:1px dashed var(--line-2); border-radius:var(--r);
+}
+
+.check{
+  display:inline-flex; align-items:center; gap:7px; font-size:13px; color:var(--ink-2);
+  background:var(--surface-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px;
+}
+.check input{ width:auto; accent-color:var(--gold); }
+#importPanel{ border-color:var(--gold); }
+#importPanel > header{ background:var(--gold-bg); border-bottom-color:color-mix(in srgb, var(--gold) 35%, transparent); }
+#importPanel > header h2{ color:var(--gold-ink); }
+.dropping{ outline:3px dashed var(--gold); outline-offset:-8px; }
+.notice{
+  display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  border-radius:8px; padding:10px 13px; font-size:13px; margin-bottom:14px;
+  background:var(--gold-bg); color:var(--gold-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 30%, transparent);
+}
+.notice > span{ display:flex; gap:8px; flex-wrap:wrap; }
+.notice .btn{ background:var(--surface); border-color:color-mix(in srgb, currentColor 35%, transparent); color:inherit; }
+.notice .btn:hover{ border-color:currentColor; color:inherit; }
+.notice.is-bad{ background:var(--bad-bg); color:var(--bad); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 30%, transparent); }
+
+details.explain{ border-top:1px solid var(--line); margin-top:26px; padding-top:16px; }
+details.explain summary{ font-size:13px; font-weight:700; cursor:pointer; color:var(--ink-2); }
+details.explain .hint{ margin-top:11px; }
+details.explain dl{ margin:11px 0 0; display:grid; grid-template-columns:auto 1fr; gap:6px 14px; font-size:12.5px; }
+details.explain dt{ font-weight:700; color:var(--ink-2); white-space:nowrap; }
+details.explain dd{ margin:0; color:var(--ink-3); font-family:var(--font-num); font-variant-numeric:tabular-nums; }
+
+@media (prefers-reduced-motion: reduce){
+  *{ animation:none !important; transition:none !important; }
+}
+
+/* ---- 配布版の入口 ---- */
+body.locked > header, body.locked > main { display:none; }
+.gate{
+  position:fixed; inset:0; z-index:100; display:grid; place-items:center;
+  padding:24px; background:var(--ground);
+}
+.gatebox{
+  width:min(360px, 100%); background:var(--surface);
+  border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:26px 24px;
+  display:flex; flex-direction:column; gap:14px;
+}
+.gatebox h1{ font-size:17px; font-weight:800; }
+.gatebox p{ margin:0; font-size:12.5px; color:var(--ink-3); line-height:1.6; }
+.gatebox label{ display:flex; flex-direction:column; gap:5px; font-size:11.5px; font-weight:700; color:var(--ink-3); letter-spacing:.04em; }
+.gatebox input{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:7px;
+  padding:10px 11px; font-family:var(--font-num); font-size:15px;
+}
+.gatebox input:focus{ border-color:var(--gold); outline:none; }
+.gatebox button{
+  background:var(--gold); border:1px solid var(--gold); color:var(--on-gold);
+  border-radius:8px; padding:10px 14px; font-size:14px; font-weight:700;
+}
+.gatebox .err{ color:var(--bad); font-weight:700; min-height:1.2em; }
+</style>
+</head>
+<body>
+
+<div class="gate" id="gate">
+  <form class="gatebox" id="gateForm" autocomplete="on">
+    <h1>オリパ収支メーター</h1>
+    <p>関係者向けのテスト版です。配布された ID とパスワードを入れてください。</p>
+    <label>ID
+      <input id="gateId" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+    </label>
+    <label>パスワード
+      <input id="gatePw" name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">開く</button>
+    <p class="err" id="gateErr" role="alert"></p>
+    <p>入力内容はこの端末のブラウザにだけ保存されます。サーバには何も送信しません。</p>
+  </form>
+</div>
+
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1 id="titleText">オリパ収支メーター</h1>
+      <p id="subText">配信中のリアルタイム利益率と値下げ判断</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span class="pill" id="verdictPill" hidden><span class="dot"></span><span id="verdictText">—</span></span>
+    <nav class="modes" aria-label="表示切替">
+      <button type="button" data-mode="list" aria-pressed="true">オリパ一覧</button>
+      <button type="button" data-mode="live" aria-pressed="false" id="tabLive">配信中</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- ========== オリパ一覧 ========== -->
+  <section id="view-list" class="stack">
+    <section class="panel">
+      <header>
+        <h2>オリパ一覧</h2>
+        <span class="hint" id="listSummary"></span>
+      </header>
+      <div class="body">
+        <div class="drawbar" style="margin-top:0">
+          <button type="button" class="btn primary" id="btnNewOripa">＋ 新しいオリパ</button>
+          <button type="button" class="btn" id="btnNewFromCsv">CSV から作る</button>
+          <button type="button" class="btn" id="btnLoadJson">JSON を読み込み</button>
+          <button type="button" class="btn ghost" id="btnBackupAll">全体をバックアップ</button>
+          <button type="button" class="btn ghost" id="btnSample">サンプルを作る</button>
+        </div>
+        <p class="hint" style="margin:12px 0 0">
+          名前を押すとそのオリパの編集画面へ。在庫 CSV は画面のどこにドロップしても、
+          そのまま新しいオリパになる。
+        </p>
+      </div>
+    </section>
+
+    <div id="oripaList" class="stack"></div>
+
+    <section class="panel" id="recordsPanel">
+      <header>
+        <h2>配信の記録</h2>
+        <span class="hint" id="recSummary"></span>
+      </header>
+      <div class="body">
+        <div class="scroll-x">
+          <table class="tbl" id="recTable">
+            <thead>
+              <tr>
+                <th>配信日</th><th class="l">オリパ</th><th>消化</th>
+                <th>売上</th><th>排出原価</th><th>現金損益</th><th>利益率</th>
+                <th>在庫込み</th><th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="drawbar">
+          <button type="button" class="btn" id="btnRecCsv">記録を CSV で書き出し</button>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <!-- ========== 配信中 ========== -->
+  <section id="view-live" class="stack" hidden>
+    <div class="crumb">
+      <button type="button" class="btn ghost" id="btnLiveToList">← オリパ一覧</button>
+      <span class="crumb-name" id="liveName">—</span>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="btnEditFromLive">中身を編集</button>
+      <button type="button" class="btn primary" id="btnCloseStream">配信を終了して記録</button>
+    </div>
+
+    <!-- 締めの確認 -->
+    <section class="panel" id="closePanel" hidden>
+      <header>
+        <h2>この配信を記録する</h2>
+        <span class="hint">記録すると排出の入力は止まる（あとで取り消せる）</span>
+      </header>
+      <div class="body">
+        <div class="summary" id="closeSummary"></div>
+        <div class="fields" style="margin-top:18px">
+          <div class="field">
+            <label for="closeDate">配信日</label>
+            <input type="date" id="closeDate">
+          </div>
+          <div class="field" style="grid-column:span 2">
+            <label for="closeMemo">メモ（任意）</label>
+            <input type="text" id="closeMemo" placeholder="配信の所感、値下げの経緯など">
+          </div>
+        </div>
+        <p class="hint" id="closeNote" style="margin:13px 0 0"></p>
+        <div class="drawbar">
+          <button type="button" class="btn primary" id="btnCloseApply">この内容で記録する</button>
+          <button type="button" class="btn ghost" id="btnCloseCancel">やめる</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="liveNotice"></div>
+
+    <div class="kpis">
+      <div class="kpi is-key" id="kpiMargin">
+        <span class="label">現在の利益率</span>
+        <span class="v" id="mMargin">—</span>
+        <span class="s" id="mMarginSub">—</span>
+      </div>
+      <div class="kpi" id="kpiHeat">
+        <span class="label">残りの濃さ</span>
+        <span class="v" id="mHeat">—</span>
+        <span class="s" id="mHeatSub">—</span>
+      </div>
+      <div class="kpi">
+        <span class="label">販売済</span>
+        <span class="v" id="mSold">—</span>
+        <span class="s" id="mSoldSub">—</span>
+      </div>
+      <div class="kpi" id="kpiFinal">
+        <span class="label">推奨価格での着地</span>
+        <span class="v" id="mFinal">—</span>
+        <span class="s" id="mFinalSub">—</span>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div class="stack">
+      <!-- 排出 -->
+      <section class="panel">
+        <header>
+          <h2>落札と排出</h2>
+          <span class="hint">落札を登録 → その口数ぶんカードを押す</span>
+        </header>
+        <div class="body">
+          <div id="lotBar"></div>
+          <div class="prizes" id="prizeList"></div>
+          <div class="drawbar">
+            <button type="button" class="btn" id="btnUndo">← 1 件取り消し</button>
+            <button type="button" class="btn ghost" id="btnResetDraws">落札と排出をすべてクリア</button>
+            <span class="hint" id="drawCount"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 推移 -->
+      <section class="panel">
+        <header>
+          <h2>残り還元率の推移</h2>
+          <span class="hint" id="chartNote"></span>
+        </header>
+        <div class="body">
+          <div class="chart-wrap">
+            <canvas id="spark" role="img" aria-label="排出ごとの残り還元率の推移"></canvas>
+            <div class="chart-empty" id="chartEmpty" hidden>排出を 2 件以上記録すると推移が出ます</div>
+          </div>
+        </div>
+      </section>
+      </div>
+
+      <div class="stack">
+      <!-- 値下げ判断 -->
+      <section class="panel">
+        <header>
+          <h2>値下げ判断</h2>
+          <span class="hint" id="priceNow"></span>
+        </header>
+        <div class="body">
+          <div class="verdict-box" id="recBox">
+            <div class="top">
+              <div>
+                <span class="label">推奨価格</span>
+                <div class="price" id="recPrice">—</div>
+                <div class="delta" id="recDelta">—</div>
+              </div>
+              <button type="button" class="btn primary" id="btnApply">この価格に変更</button>
+            </div>
+            <p class="msg" id="recMsg">—</p>
+          </div>
+
+          <div class="anchors" id="anchors"></div>
+
+          <div class="simrow">
+            <span class="label">試算価格</span>
+            <span class="simprice">¥<input type="number" id="simPriceInput" min="0" step="10" inputmode="numeric"></span>
+            <input type="range" id="simPriceRange" min="0" max="100" step="1" aria-label="試算価格スライダー">
+          </div>
+
+          <div class="scroll-x" style="margin-top:12px">
+            <table class="tbl" id="scenarioTbl">
+              <thead>
+                <tr>
+                  <th>残りの消化</th>
+                  <th>追加売上</th>
+                  <th>現金損益</th>
+                  <th>在庫込み損益</th>
+                  <th>利益率</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p class="hint" id="beNote" style="margin:10px 0 0"></p>
+        </div>
+      </section>
+
+      <!-- オークションの経過 -->
+      <section class="panel">
+        <header>
+          <h2>オークションの記録</h2>
+          <span class="hint" id="lotSummary"></span>
+        </header>
+        <div class="body">
+          <div class="scroll-x">
+            <table class="tbl" id="lotTable">
+              <thead>
+                <tr>
+                  <th class="l">落札</th><th>口数</th><th>単価</th>
+                  <th>出た原価</th><th>損益</th><th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 設定 ========== -->
+  <section id="view-edit" class="stack" hidden>
+    <div class="crumb">
+      <button type="button" class="btn ghost" id="btnBackToList">← オリパ一覧</button>
+      <span class="crumb-name" id="editName">—</span>
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" id="btnGoLive">配信画面をひらく →</button>
+    </div>
+    <div id="setupNotice"></div>
+
+    <section class="panel" id="importPanel" hidden>
+      <header>
+        <h2>CSV の取り込み</h2>
+        <span class="hint" id="importFileName"></span>
+      </header>
+      <div class="body">
+        <div id="importError"></div>
+        <div class="fields" id="importOpts">
+          <div class="field">
+            <label for="impMarket">相場 ＝ 原価 ×</label>
+            <input type="number" id="impMarket" min="0" step="0.05" value="1">
+          </div>
+          <div class="field">
+            <label for="impPrice">販売単価（円）</label>
+            <input type="number" id="impPrice" min="0" step="100" inputmode="numeric">
+          </div>
+          <div class="field" style="justify-content:flex-end">
+            <label class="check"><input type="checkbox" id="impGroup" checked> 同じ名前・同じ単価をまとめる</label>
+          </div>
+        </div>
+
+        <div class="summary" style="margin:18px 0 4px">
+          <div><span class="label">行数</span><b id="impRows">—</b></div>
+          <div><span class="label">総口数</span><b id="impSlots">—</b></div>
+          <div><span class="label">総原価</span><b id="impCost">—</b></div>
+          <div><span class="label">1口平均</span><b id="impAvg">—</b></div>
+          <div><span class="label">この単価での利益率</span><b id="impMargin">—</b></div>
+        </div>
+        <p class="hint" id="impPriceHint" style="margin:0 0 14px"></p>
+
+        <div class="scroll-x" style="max-height:340px; overflow-y:auto">
+          <table class="tbl" id="impTable">
+            <thead><tr><th>賞品名</th><th>原価</th><th>相場</th><th>口数</th><th style="text-align:left">備考</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="drawbar">
+          <button type="button" class="btn primary" id="btnImportApply">この内容で取り込む</button>
+          <button type="button" class="btn ghost" id="btnImportCancel">やめる</button>
+          <span class="hint" id="impWarn"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <header>
+        <h2>賞品の内訳</h2>
+        <span class="hint">原価＝自分の仕入値、相場＝買い手から見える価値</span>
+      </header>
+      <div class="body">
+        <div class="scroll-x">
+          <table class="edit">
+            <thead>
+              <tr>
+                <th style="width:27%">賞品名</th>
+                <th style="width:13%">原価</th>
+                <th style="width:13%">相場</th>
+                <th style="width:10%">口数</th>
+                <th style="width:21%">備考</th>
+                <th style="width:8%">通常枠</th>
+                <th style="width:8%">排出済</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="editRows"></tbody>
+          </table>
+        </div>
+        <div class="drawbar">
+          <button type="button" class="btn" id="btnAddPrize">＋ 賞品を追加</button>
+          <span class="hint">総口数は口数の合計。ハズレ枠は通常枠の行を足してその口数を入れる</span>
+        </div>
+
+        <div class="summary" style="margin-top:20px">
+          <div><span class="label">総口数</span><b id="sSlots">—</b></div>
+          <div><span class="label">総原価</span><b id="sCost">—</b></div>
+          <div><span class="label">総相場</span><b id="sMkt">—</b></div>
+          <div><span class="label">設計還元率</span><b id="sReturn">—</b></div>
+          <div><span class="label">設計利益率</span><b id="sMargin">—</b></div>
+          <div><span class="label">完売時の利益</span><b id="sProfit">—</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <header>
+        <h2>オリパの条件</h2>
+        <span class="hint">変更できるのはオリパ名と販売単価のみ</span>
+      </header>
+      <div class="body">
+        <div class="fields">
+          <div class="field">
+            <label for="fName">オリパ名</label>
+            <input type="text" id="fName">
+          </div>
+          <div class="field">
+            <label for="fPrice">販売単価（円）</label>
+            <input type="number" id="fPrice" min="0" step="10" inputmode="numeric">
+          </div>
+        </div>
+
+
+      </div>
+    </section>
+
+    <section class="panel">
+      <header>
+        <h2>データ</h2>
+        <span class="hint">操作の対象はこのオリパだけ</span>
+      </header>
+      <div class="body">
+        <div class="drawbar" style="margin-top:0">
+          <button type="button" class="btn primary" id="btnImportCsv">CSV で賞品を差し替え</button>
+          <button type="button" class="btn" id="btnExportCsv">CSV で書き出し</button>
+          <button type="button" class="btn" id="btnExport">JSON で書き出し</button>
+          <button type="button" class="btn ghost" id="btnDuplicate">複製する</button>
+          <button type="button" class="btn ghost" id="btnDelete">このオリパを削除</button>
+        </div>
+        <p class="hint" style="margin:12px 0 0">
+          在庫 CSV は画面のどこにドロップしても読み込める。列は
+          <b>カード名／数量／仕入値(単価)</b> があれば足りる（<b>相場</b>・<b>備考</b>・<b>状態</b>
+          の列があれば一緒に取り込む）。<br>
+          入力内容はこのブラウザに自動保存される。配信を跨いで残したいときは書き出しておく。
+        </p>
+      </div>
+    </section>
+  </section>
+
+  <input type="file" id="fileInput" accept=".csv,.json,text/csv,application/json" hidden>
+
+  <details class="explain">
+    <summary>計算の考え方</summary>
+    <p class="hint">
+      利益率は「仕入原価」で、還元率は「相場」で計算している。この2つを分けないと、
+      値下げしたときに “自分が損しているか” と “買い手が得に見えるか” が混ざってしまう。
+      口数ごとの売上は、その口を売った時点の価格で積み上げるので、配信中に値段を変えても正しく集計される。
+    </p>
+    <dl id="formulas"></dl>
+  </details>
+</main>
+
+<script>
+"use strict";
+
+/* ============================================================
+   状態
+   ============================================================ */
+const STORE_KEY  = "oripa-app-v2";
+const LEGACY_KEY = "oripa-live-v1";
+let uid = 1;
+
+const clamp = (v,a,b)=> Math.min(b, Math.max(a, v));
+const mktOf = p => (p.market > 0 ? p.market : p.cost);
+
+/* 同梱の在庫 CSV。「サンプルを作る」で読み込む。 */
+const BUILTIN_NAME = "デモ用オリパ（100口・1,100円）";
+const BUILTIN_CSV = `カードゲーム,カード名,数量,仕様,型番,状態,仕入値(単価),仕入値(合計),相場,備考
+ポケカ,【1等】人気SAR,1,シングル,,A,28000,28000,35000,デモ用の架空データ
+ポケカ,【2等】SAR,2,シングル,,A,6400,12800,8000,
+ポケカ,【3等】SR,5,シングル,,A,2400,12000,3000,
+ポケカ,【4等】AR,12,シングル,,A,640,7680,800,
+ポケカ,通常枠,80,シングル,,A,120,9600,150,ハズレ枠`;
+
+let DB = { oripas: [], records: [], currentId: null };
+let S = null;              // いま開いているオリパ（一覧では null）
+let mode = "list";
+let simPrice = null;       // null = 推奨価格に追従
+let activeAnchor = "rec";
+let draftId = null;        // CSV から作りかけのオリパ
+let flashId = null;        // 作った直後に一度だけ光らせるカード
+
+function newId(){
+  return "o" + Date.now().toString(36) + Math.floor(Math.random() * 1679616).toString(36);
+}
+
+function blankOripa(name){
+  const t = Date.now();
+  return {
+    id: newId(), name: name || "新しいオリパ",
+    price: 0, targetMargin: 0.30, targetReturn: 0.80, recovery: 0.70,
+    prizes: [], events: [], lots: [], totalSlots: 0, createdAt: t, updatedAt: t
+  };
+}
+
+function sampleOripa(){
+  const o = blankOripa(BUILTIN_NAME);
+  const parsed = csvToPrizes(BUILTIN_CSV, { marketRate: 1, group: true });
+  o.prizes = parsed.prizes;
+  o.totalSlots = parsed.slots;
+  o.price = suggestPrice(parsed.cost, parsed.slots, o.targetMargin);
+  return o;
+}
+
+/** 読み込んだ値を必ず期待する形に整える（旧データ・手書き JSON 対策） */
+function normalizeOripa(o){
+  const t = Date.now();
+  return {
+    id: o.id || newId(),
+    name: String(o.name || "無題のオリパ"),
+    price: Math.max(0, Number(o.price) || 0),
+    targetMargin: clamp(Number(o.targetMargin ?? 0.30), 0, 0.95),
+    targetReturn: Math.max(0.01, Number(o.targetReturn ?? 0.80)),
+    recovery: clamp(Number(o.recovery ?? 0.70), 0, 1),
+    prizes: (Array.isArray(o.prizes) ? o.prizes : []).map(p => ({
+      id: p.id, name: String(p.name || ""),
+      cost: Math.max(0, Number(p.cost) || 0),
+      market: Math.max(0, Number(p.market) || 0),
+      count: Math.max(0, Math.round(Number(p.count) || 0)),
+      note: String(p.note || ""), normal: !!p.normal
+    })),
+    events: (Array.isArray(o.events) ? o.events : [])
+      .filter(e => e && e.prizeId != null)
+      .map(e => ({ prizeId: e.prizeId, price: Math.max(0, Number(e.price) || 0), lotId: e.lotId || null })),
+    lots: (Array.isArray(o.lots) ? o.lots : []).map(l => ({
+      id: l.id || newId(),
+      price: Math.max(0, Number(l.price) || 0),
+      qty: Math.max(1, Math.round(Number(l.qty) || 1)),
+      buyer: String(l.buyer || ""),
+      kind: l.kind === "auction" ? "auction" : "instant",
+      at: Number(l.at) || Date.now()
+    })),
+    totalSlots: 0,
+    createdAt: Number(o.createdAt) || t,
+    updatedAt: Number(o.updatedAt) || t,
+    closedAt: Number(o.closedAt) || 0        // 配信を記録した時刻。0 なら未終了
+  };
+}
+
+/** lots が無かった頃のイベントを、1口ずつの即決として拾い直す */
+function backfillLots(o){
+  if(!o.events.some(e => !e.lotId)) return o;
+  const lots = [];
+  for(const e of o.events){
+    if(e.lotId) continue;
+    const lot = { id: newId(), price: e.price, qty: 1, buyer: "", kind: "instant", at: o.createdAt || Date.now() };
+    lots.push(lot);
+    e.lotId = lot.id;
+  }
+  o.lots = lots.concat(o.lots);
+  return o;
+}
+
+function normalizeDB(d){
+  const oripas = (Array.isArray(d.oripas) ? d.oripas : [])
+    .filter(o => o && Array.isArray(o.prizes))
+    .map(normalizeOripa)
+    .map(backfillLots);
+  uid = 1;
+  for(const o of oripas)
+    for(const p of o.prizes){
+      if(!p.id) p.id = uid;
+      uid = Math.max(uid, (Number(p.id) || 0) + 1);
+    }
+  const records = (Array.isArray(d.records) ? d.records : [])
+    .filter(r => r && typeof r === "object")
+    .map(r => ({ ...r, id: r.id || newId(), endedAt: Number(r.endedAt) || Date.now() }))
+    .sort((a, b) => b.endedAt - a.endedAt);
+  const currentId = oripas.some(o => o.id === d.currentId) ? d.currentId : null;
+  return { oripas, records, currentId };
+}
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(STORE_KEY);
+    if(raw){
+      const d = JSON.parse(raw);
+      if(d && Array.isArray(d.oripas)) return normalizeDB(d);
+    }
+    // 単一オリパだった頃のデータを1件目として引き継ぐ
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if(legacy){
+      const o = JSON.parse(legacy);
+      if(o && Array.isArray(o.prizes)){
+        const db = normalizeDB({ oripas: [o], records: [] });
+        db.currentId = db.oripas[0] ? db.oripas[0].id : null;
+        return db;
+      }
+    }
+  }catch(e){}
+  return normalizeDB({ oripas: [sampleOripa()], records: [] });
+}
+
+function save(){
+  try{
+    if(S && mode !== "list") S.updatedAt = Date.now();
+    DB.currentId = S ? S.id : null;
+    localStorage.setItem(STORE_KEY, JSON.stringify(DB));
+  }catch(e){}
+}
+
+/* ============================================================
+   CSV 取り込み
+   ============================================================ */
+
+/* 列名のゆらぎを吸収する。左が内部名、右が受け付ける見出し */
+const CSV_COLS = {
+  name:   ["カード名", "商品名", "品名", "名称", "アイテム", "name", "item"],
+  qty:    ["数量", "口数", "個数", "枚数", "本数", "qty", "count"],
+  cost:   ["仕入値(単価)", "仕入単価", "仕入値", "単価", "原価", "cost", "price"],
+  total:  ["仕入値(合計)", "仕入合計", "合計", "小計", "total", "subtotal"],
+  market: ["相場", "相場価格", "市場価格", "市価", "販売価格", "参考価格", "market", "value"],
+  cond:   ["状態", "コンディション", "ランク", "condition", "grade"],
+  note:   ["備考", "メモ", "コメント", "note", "remark", "memo"],
+  spec:   ["仕様", "種別", "タイプ", "spec"],
+  game:   ["カードゲーム", "ゲーム", "タイトル", "カテゴリ", "category"]
+};
+
+function normHeader(h){
+  return String(h || "")
+    .replace(/^﻿/, "")
+    .replace(/[（）]/g, c => (c === "（" ? "(" : ")"))
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+function toNum(v){
+  const s = String(v == null ? "" : v)
+    .replace(/[０-９．－]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[^\d.\-]/g, "");
+  const n = parseFloat(s);
+  return isFinite(n) ? n : 0;
+}
+
+/* RFC4180 相当。引用符・改行入りセル・CRLF・BOM に対応 */
+function parseCSV(text){
+  const t = String(text).replace(/^﻿/, "");
+  const rows = [];
+  let row = [], cell = "", quoted = false;
+  for(let i = 0; i < t.length; i++){
+    const ch = t[i];
+    if(quoted){
+      if(ch === '"'){
+        if(t[i+1] === '"'){ cell += '"'; i++; }
+        else quoted = false;
+      }else cell += ch;
+    }else{
+      if(ch === '"') quoted = true;
+      else if(ch === ",") { row.push(cell); cell = ""; }
+      else if(ch === "\r") { /* skip */ }
+      else if(ch === "\n"){ row.push(cell); rows.push(row); row = []; cell = ""; }
+      else cell += ch;
+    }
+  }
+  if(cell !== "" || row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
+
+/** CSV テキスト → 賞品配列。opts: {marketRate, group} */
+function csvToPrizes(text, opts){
+  const rate = opts && opts.marketRate > 0 ? opts.marketRate : 1;
+  const group = !opts || opts.group !== false;
+
+  const rows = parseCSV(text);
+  if(rows.length < 2) throw new Error("行が足りない（見出し行＋1行以上が必要）");
+
+  const head = rows[0].map(normHeader);
+  const idx = {};
+  for(const [key, names] of Object.entries(CSV_COLS)){
+    const want = names.map(normHeader);
+    const i = head.findIndex(h => want.includes(h));
+    if(i >= 0) idx[key] = i;
+  }
+  if(idx.name == null) idx.name = 0;                       // 見出しが読めなければ1列目を名前とみなす
+  if(idx.cost == null && idx.total == null){
+    throw new Error("金額の列（仕入値(単価) など）が見つからない");
+  }
+
+  const items = [];
+  for(const r of rows.slice(1)){
+    const name = String(r[idx.name] || "").trim();
+    if(!name) continue;
+    const qty  = idx.qty != null ? Math.max(1, Math.round(toNum(r[idx.qty]))) : 1;
+    let cost   = idx.cost != null ? toNum(r[idx.cost]) : 0;
+    if(!cost && idx.total != null) cost = toNum(r[idx.total]) / qty;
+    const market = idx.market != null && toNum(r[idx.market]) > 0
+      ? toNum(r[idx.market])
+      : Math.round(cost * rate);
+    const note = [
+      idx.cond != null ? String(r[idx.cond] || "").trim() : "",
+      idx.note != null ? String(r[idx.note] || "").trim() : ""
+    ].filter(Boolean).join("・");
+    items.push({ name, cost: Math.round(cost), market: Math.round(market), count: qty, note });
+  }
+  if(!items.length) throw new Error("読み取れる行が無かった");
+
+  let out = items;
+  if(group){
+    const map = new Map();
+    for(const it of items){
+      const key = it.name + "|" + it.cost + "|" + it.market;
+      const hit = map.get(key);
+      if(hit){
+        hit.count += it.count;
+        if(it.note && !hit.notes.includes(it.note)) hit.notes.push(it.note);
+      }else{
+        map.set(key, { ...it, notes: it.note ? [it.note] : [] });
+      }
+    }
+    out = [...map.values()].map(g => ({
+      name: g.name, cost: g.cost, market: g.market, count: g.count,
+      note: g.notes.slice(0, 3).join(" / ")
+    }));
+  }
+
+  const NORMAL_RE = /通常枠|ノーマル枠|ハズレ|はずれ|外れ枠/;
+  const prizes = out.map(o => ({
+    id: uid++, name: o.name, cost: o.cost, market: o.market,
+    count: o.count, note: o.note || "", normal: NORMAL_RE.test(o.name)
+  }));
+  // 通常枠は1つだけに絞る（まとめ排出の対象を一意にするため）
+  let seenNormal = false;
+  for(const p of prizes){
+    if(!p.normal) continue;
+    if(seenNormal) p.normal = false;
+    seenNormal = true;
+  }
+  const slots = prizes.reduce((n, p) => n + p.count, 0);
+  const cost  = prizes.reduce((n, p) => n + p.cost * p.count, 0);
+  return { prizes, slots, cost, hasMarket: idx.market != null };
+}
+
+/** 目標利益率をちょうど満たす販売単価（100円単位で切り上げ） */
+function suggestPrice(costTotal, slots, targetMargin){
+  if(!slots) return 0;
+  const m = clamp(targetMargin || 0, 0, 0.95);
+  return Math.ceil(costTotal / (1 - m) / slots / 100) * 100;
+}
+
+/** CSV 書き出し（読み込みと同じ列で往復できる形） */
+function prizesToCsv(){
+  const head = ["カードゲーム","カード名","数量","仕様","型番","状態","仕入値(単価)","仕入値(合計)","相場","備考"];
+  const q = v => {
+    const t = String(v == null ? "" : v);
+    return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const lines = [head.join(",")];
+  for(const p of S.prizes){
+    lines.push([S.name, p.name, p.count, "", "", "", p.cost, p.cost * p.count, mktOf(p), p.note || ""]
+      .map(q).join(","));
+  }
+  return "﻿" + lines.join("\r\n") + "\r\n";
+}
+
+/* ============================================================
+   計算
+   ============================================================ */
+/** 総口数は賞品の口数合計。ずれようがないよう毎回同期する */
+function syncSlots(o){
+  o.totalSlots = o.prizes.reduce((n, p) => n + Math.max(0, p.count|0), 0);
+  return o.totalSlots;
+}
+
+/** 指標をまとめて出す。o を省略すると開いているオリパ。一覧では各オリパを渡す。 */
+function compute(o){
+  o = o || S;
+  if(!o) o = blankOripa("");
+  const byId = new Map(o.prizes.map(p=>[p.id,p]));
+  const N = syncSlots(o);
+  const price = Math.max(0, o.price||0);
+
+  let costTotal = 0, mktTotal = 0;
+  for(const p of o.prizes){
+    const c = Math.max(0, p.count|0);
+    costTotal += (p.cost||0) * c;
+    mktTotal  += mktOf(p) * c;
+  }
+
+  const drawnBy = new Map();
+  let revenue = 0, costDrawn = 0, mktDrawn = 0;
+  for(const e of o.events){
+    const p = byId.get(e.prizeId);
+    if(!p) continue;
+    drawnBy.set(p.id, (drawnBy.get(p.id)||0) + 1);
+    revenue   += e.price || 0;
+    costDrawn += p.cost || 0;
+    mktDrawn  += mktOf(p);
+  }
+
+  const sold     = o.events.length;
+  const left     = Math.max(0, N - sold);
+  const costLeft = Math.max(0, costTotal - costDrawn);
+  const mktLeft  = Math.max(0, mktTotal  - mktDrawn);
+  const evCost   = left > 0 ? costLeft / left : 0;
+  const evMkt    = left > 0 ? mktLeft  / left : 0;
+
+  const profitNow = revenue - costDrawn;
+  const marginNow = revenue > 0 ? profitNow / revenue : 0;
+
+  const baseEvMkt  = N > 0 ? mktTotal / N : 0;
+  const heat       = (baseEvMkt > 0 && left > 0) ? evMkt / baseEvMkt : 1;
+  const returnLeft = price > 0 ? evMkt / price : 0;
+  const returnAll  = (N > 0 && price > 0) ? mktTotal / (N * price) : 0;
+
+  const finalRev    = revenue + left * price;
+  const finalProfit = finalRev - costTotal;
+  const finalMargin = finalRev > 0 ? finalProfit / finalRev : 0;
+
+  const tm      = clamp(o.targetMargin || 0, 0, 0.95);
+  const pBE     = left > 0 ? (costTotal - revenue) / left : 0;
+  const pTarget = left > 0 ? (costTotal / (1 - tm) - revenue) / left : 0;
+  const pBuyer  = (o.targetReturn > 0) ? evMkt / o.targetReturn : 0;
+  const pFloor  = evMkt * (o.recovery || 0);
+
+  // 推奨：買い手が動く価格を狙いつつ、在庫キープ価値は下回らない。現行価格は超えない。
+  let rec = Math.min(price, Math.max(pBuyer, pFloor));
+  rec = Math.max(0, roundPrice(rec));
+
+  let state = "flat", verdict = "想定内";
+  if(left === 0){ state = "flat"; verdict = "完売"; }
+  else if(heat >= 1.05){ state = "good"; verdict = "上ぶれ（残り濃い）"; }
+  else if(heat < 0.80){ state = "bad";  verdict = "大きく下ぶれ"; }
+  else if(heat < 0.95){ state = "warn"; verdict = "下ぶれ（残り薄い）"; }
+
+  // 現行価格のまま目標還元率に戻すために追加投入が必要な賞品の相場合計
+  const addNeeded = Math.max(0, left * price * (o.targetReturn || 0) - mktLeft);
+  const salvageLeft = mktLeft * (o.recovery || 0);
+
+  return {
+    o, N, price, sold, left, addNeeded, salvageLeft, recovery: o.recovery || 0,
+    costTotal, mktTotal, costDrawn, mktDrawn, costLeft, mktLeft,
+    revenue, profitNow, marginNow, evCost, evMkt, baseEvMkt, heat,
+    returnLeft, returnAll, finalRev, finalProfit, finalMargin,
+    pBE, pTarget, pBuyer, pFloor, rec, tm, state, verdict, drawnBy
+  };
+}
+
+function roundPrice(v){
+  if(v <= 0) return 0;
+  const step = v >= 3000 ? 100 : (v >= 500 ? 50 : 10);
+  return Math.floor(v / step) * step;
+}
+
+/** 価格 p で残りの f 割が売れたときの着地 */
+function scenario(c, p, f){
+  const more    = Math.round(c.left * f);
+  const addRev  = more * p;
+  const unsold  = c.left - more;
+  const salvage = unsold * c.evMkt * c.recovery;
+  const rev     = c.revenue + addRev;
+  const cash    = rev - c.costTotal;
+  return { more, addRev, unsold, salvage, rev, cash, withStock: cash + salvage,
+           margin: rev > 0 ? cash / rev : 0 };
+}
+
+/* ============================================================
+   落札（オークションの1件＝ロット）
+   ============================================================ */
+
+/** ロットごとの排出数 */
+function lotDrawn(o){
+  const m = new Map();
+  for(const e of o.events) if(e.lotId) m.set(e.lotId, (m.get(e.lotId) || 0) + 1);
+  return m;
+}
+
+/** まだ排出しきっていないロット。無ければ null */
+function activeLot(o){
+  o = o || S;
+  if(!o) return null;
+  const done = lotDrawn(o);
+  for(let i = o.lots.length - 1; i >= 0; i--){
+    const l = o.lots[i];
+    if((done.get(l.id) || 0) < l.qty) return l;
+  }
+  return null;
+}
+
+/** 1ロットの内訳。落札額は「排出した口数ぶん」で数える（残りは未計上）*/
+function lotStats(o, lot){
+  const byId = new Map(o.prizes.map(p => [p.id, p]));
+  const evs = o.events.filter(e => e.lotId === lot.id);
+  let cost = 0, mkt = 0;
+  const names = [];
+  for(const e of evs){
+    const p = byId.get(e.prizeId);
+    if(!p) continue;
+    cost += p.cost || 0;
+    mkt  += mktOf(p);
+    names.push(p.name);
+  }
+  const drawn = evs.length;
+  return {
+    drawn, cost, mkt, names,
+    revenue: lot.price * drawn,
+    total: lot.price * lot.qty,
+    profit: lot.price * drawn - cost,
+    complete: drawn >= lot.qty
+  };
+}
+
+function addLot(price, qty, buyer, kind){
+  const lot = {
+    id: newId(),
+    price: Math.max(0, Math.round(price) || 0),
+    qty: Math.max(1, Math.round(qty) || 1),
+    buyer: String(buyer || ""),
+    kind: kind || "auction",
+    at: Date.now()
+  };
+  S.lots.push(lot);
+  return lot;
+}
+
+/** 落札の集計（配信全体） */
+function auctionSummary(o){
+  const done = lotDrawn(o);
+  const auctions = o.lots.filter(l => l.kind === "auction");
+  const drawnQty = o.lots.reduce((n, l) => n + (done.get(l.id) || 0), 0);
+  const revenue  = o.lots.reduce((n, l) => n + l.price * (done.get(l.id) || 0), 0);
+  const prices = o.lots.filter(l => (done.get(l.id) || 0) > 0).map(l => l.price);
+  return {
+    lots: o.lots.length,
+    auctions: auctions.length,
+    avg: drawnQty ? revenue / drawnQty : 0,
+    max: prices.length ? Math.max(...prices) : 0,
+    min: prices.length ? Math.min(...prices) : 0,
+    last: o.lots.length ? o.lots[o.lots.length - 1].price : 0
+  };
+}
+
+/* ============================================================
+   配信の記録
+   ============================================================ */
+
+/** 締めた時点のスナップショット。あとから数字を追えるだけの粒度で残す。 */
+function buildRecord(o, endedAt, memo){
+  const c = compute(o);
+  const byId = new Map(o.prizes.map(p => [p.id, p]));
+
+  const priceCount = new Map();
+  for(const e of o.events) priceCount.set(e.price, (priceCount.get(e.price) || 0) + 1);
+
+  return {
+    id: newId(),
+    oripaId: o.id,
+    name: o.name,
+    endedAt: endedAt,
+    memo: memo || "",
+    N: c.N, sold: c.sold, left: c.left,
+    priceFirst: o.events.length ? o.events[0].price : c.price,
+    priceLast: c.price,
+    priceBreakdown: [...priceCount.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([price, count]) => ({ price, count })),
+    revenue: c.revenue,
+    costDrawn: c.costDrawn,
+    costTotal: c.costTotal,
+    profit: c.profitNow,
+    margin: c.marginNow,
+    mktLeft: c.mktLeft,
+    salvage: c.salvageLeft,
+    withStock: c.profitNow + c.salvageLeft,
+    recovery: c.recovery,
+    auction: (() => {
+      const a = auctionSummary(o);
+      return { lots: a.lots, auctions: a.auctions, avg: a.avg, max: a.max, min: a.min };
+    })(),
+    lots: o.lots.map(l => {
+      const st = lotStats(o, l);
+      return { price: l.price, qty: l.qty, drawn: st.drawn, buyer: l.buyer,
+               kind: l.kind, revenue: st.revenue, cost: st.cost, profit: st.profit };
+    }),
+    prizes: o.prizes.map(p => ({
+      name: p.name, cost: p.cost, market: mktOf(p),
+      count: p.count, drawn: c.drawnBy.get(p.id) || 0
+    }))
+  };
+}
+
+function fmtDate(ms){
+  const d = new Date(ms);
+  const z = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${z(d.getMonth()+1)}/${z(d.getDate())}`;
+}
+function dateInputValue(ms){
+  const d = new Date(ms);
+  const z = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`;
+}
+/** date input の値を、その日の正午（ローカル）として扱う。時差でずれないように */
+function parseDateInput(v, fallback){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || ""));
+  if(!m) return fallback;
+  return new Date(+m[1], +m[2] - 1, +m[3], 12, 0, 0).getTime();
+}
+
+function recordsToCsv(){
+  const head = ["配信日","オリパ名","総口数","販売口数","消化率","最終単価","落札件数",
+                "平均落札単価","最高落札","最低落札","売上",
+                "排出原価","現金損益","利益率","未消化口数","未消化の相場",
+                "在庫回収見込み","在庫込み損益","メモ"];
+  const q = v => {
+    const t = String(v == null ? "" : v);
+    return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const lines = [head.join(",")];
+  for(const r of DB.records.slice().sort((a, b) => a.endedAt - b.endedAt)){
+    lines.push([
+      fmtDate(r.endedAt), r.name, r.N, r.sold,
+      r.N ? (r.sold / r.N * 100).toFixed(1) + "%" : "",
+      r.priceLast,
+      r.auction ? r.auction.lots : "", r.auction ? Math.round(r.auction.avg) : "",
+      r.auction ? r.auction.max : "", r.auction ? r.auction.min : "",
+      r.revenue, r.costDrawn, r.profit,
+      r.revenue > 0 ? (r.margin * 100).toFixed(1) + "%" : "",
+      r.left, Math.round(r.mktLeft), Math.round(r.salvage), Math.round(r.withStock),
+      r.memo
+    ].map(q).join(","));
+  }
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
+}
+
+/* ============================================================
+   表示ユーティリティ
+   ============================================================ */
+const yen  = v => "¥" + Math.round(v).toLocaleString("ja-JP");
+const syen = v => (v < 0 ? "−¥" : "¥") + Math.abs(Math.round(v)).toLocaleString("ja-JP");
+const pct  = (v,d=1) => (v*100).toFixed(d) + "%";
+const spct = (v,d=1) => (v>=0?"":"−") + (Math.abs(v)*100).toFixed(d) + "%";
+const $ = id => document.getElementById(id);
+
+/* ============================================================
+   描画
+   ============================================================ */
+function render(){
+  // 開いているオリパが消えていたら一覧へ戻す
+  if(S && !DB.oripas.some(o => o.id === S.id)) S = null;
+  if(!S) S = DB.oripas.find(o => o.id === DB.currentId) || null;
+  if(!S && mode !== "list") mode = "list";
+
+  document.querySelectorAll(".modes button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+  $("tabLive").disabled = !S;
+  $("view-list").hidden = mode !== "list";
+  $("view-live").hidden = mode !== "live";
+  $("view-edit").hidden = mode !== "edit";
+
+  const inList = mode === "list";
+  $("titleText").textContent = inList ? "オリパ収支メーター" : (S.name || "オリパ収支メーター");
+  $("subText").textContent   = inList
+    ? "保存したオリパの一覧"
+    : (mode === "edit" ? "オリパの中身を編集" : "配信中のリアルタイム利益率と値下げ判断");
+  document.title = (!inList && S && S.name ? S.name + " — " : "") + "オリパ収支メーター";
+
+  if(inList){
+    $("verdictPill").hidden = true;
+    renderList();
+    renderRecords();
+    save();
+    return;
+  }
+
+  const c = compute();
+  const pill = $("verdictPill");
+  pill.hidden = mode !== "live";
+  pill.className = "pill" + (c.state === "flat" ? "" : " is-" + c.state);
+  $("verdictText").textContent = c.verdict;
+
+  if(mode === "live") renderLive(c); else renderEdit(c);
+  renderFormulas(c);
+  save();
+}
+
+function go(m){
+  if(m !== "live"){ const cp = document.getElementById("closePanel"); if(cp) cp.hidden = true; }
+  mode = m;
+  render();
+  window.scrollTo({ top: 0 });
+}
+
+function openOripa(id, m){
+  const o = DB.oripas.find(x => x.id === id);
+  if(!o) return;
+  S = o;
+  DB.currentId = id;
+  simPrice = null;
+  activeAnchor = "rec";
+  go(m || "edit");
+}
+
+/* ============================================================
+   オリパ一覧
+   ============================================================ */
+function renderList(){
+  const wrap = $("oripaList");
+  wrap.innerHTML = "";
+
+  const items = DB.oripas.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const flashed = flashId; flashId = null;
+  const stock = items.reduce((n, o) => n + o.prizes.reduce((m, p) => m + p.cost * p.count, 0), 0);
+  $("listSummary").textContent = items.length
+    ? `${items.length} 件 ／ 賞品の原価合計 ${yen(stock)}`
+    : "";
+
+  if(!items.length){
+    wrap.innerHTML = `<div class="empty">まだオリパがない。「＋ 新しいオリパ」で作るか、在庫 CSV をこの画面にドロップする。</div>`;
+    return;
+  }
+
+  for(const o of items){
+    const c = compute(o);
+    const started = c.sold > 0;
+    const done    = c.N > 0 && c.left === 0;
+
+    let cls = "", badge = "未開始";
+    if(o.closedAt){ cls = "is-done"; badge = `記録済み ${fmtDate(o.closedAt)}・${c.sold}/${c.N}`; }
+    else if(c.N === 0){ badge = "賞品なし"; }
+    else if(done){ cls = "is-done"; badge = "完売"; }
+    else if(started){
+      cls = c.state === "bad" ? "is-bad" : "is-live";
+      badge = c.state === "bad" ? `下ぶれ ${c.sold}/${c.N}` : `配信中 ${c.sold}/${c.N}`;
+    }
+
+    const margin = started ? c.marginNow : c.finalMargin;
+    const el = document.createElement("article");
+    el.className = "ocard " + cls;
+    el.innerHTML = `
+      <div class="who">
+        <button type="button" class="oname">${esc(o.name || "無題のオリパ")}</button>
+        <div class="meta">賞品 ${o.prizes.length} 種・${badge}</div>
+        <div class="bar"><span style="width:${c.N ? Math.round(c.sold / c.N * 100) : 0}%"></span></div>
+      </div>
+      <div class="ostats">
+        <div><span class="label">販売単価</span><b>${yen(c.price)}</b></div>
+        <div><span class="label">総口数</span><b>${c.N}</b></div>
+        <div><span class="label">還元率</span><b>${c.price > 0 ? pct(c.returnAll, 0) : "—"}</b></div>
+        <div>
+          <span class="label">${started ? "現在利益率" : "設計利益率"}</span>
+          <b class="${c.price > 0 ? (margin >= 0 ? "pos" : "neg") : ""}">${c.price > 0 ? spct(margin, 0) : "—"}</b>
+        </div>
+      </div>
+      <div class="acts">
+        <button type="button" class="btn" data-act="live"${c.N ? "" : " disabled title='賞品が無いのでまだ配信できない'"}>配信</button>
+        <button type="button" class="btn ghost" data-act="edit">編集</button>
+        <button type="button" class="btn ghost" data-act="copy">複製</button>
+      </div>`;
+
+    el.querySelector(".oname").addEventListener("click", () => openOripa(o.id, "edit"));
+    el.querySelector('[data-act="edit"]').addEventListener("click", () => openOripa(o.id, "edit"));
+    el.querySelector('[data-act="live"]').addEventListener("click", () => openOripa(o.id, "live"));
+    el.querySelector('[data-act="copy"]').addEventListener("click", () => duplicateOripa(o, "（複製）", false));
+    if(o.id === flashed) el.classList.add("just-added");
+    wrap.appendChild(el);
+  }
+}
+
+/* ---------- 配信の記録 ---------- */
+function renderRecords(){
+  const tb = $("recTable").querySelector("tbody");
+  tb.innerHTML = "";
+  const rs = DB.records.slice().sort((a, b) => b.endedAt - a.endedAt);
+
+  const totalProfit = rs.reduce((n, r) => n + r.withStock, 0);
+  $("recSummary").textContent = rs.length
+    ? `${rs.length} 回 ／ 在庫込みの累計 ${syen(totalProfit)}`
+    : "";
+  $("btnRecCsv").disabled = !rs.length;
+
+  if(!rs.length){
+    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-3)">まだ記録がない。配信画面の「配信を終了して記録」で残る。</td></tr>`;
+    return;
+  }
+
+  for(const r of rs){
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="n">${fmtDate(r.endedAt)}</td>` +
+      `<td class="l">${esc(r.name)}${r.memo ? `<br><span class="hint">${esc(r.memo)}</span>` : ""}</td>` +
+      `<td class="n">${r.sold}/${r.N}</td>` +
+      `<td class="n">${yen(r.revenue)}</td>` +
+      `<td class="n">${yen(r.costDrawn)}</td>` +
+      `<td class="n ${r.profit >= 0 ? "pos" : "neg"}">${syen(r.profit)}</td>` +
+      `<td class="n ${r.margin >= 0 ? "pos" : "neg"}">${r.revenue > 0 ? spct(r.margin) : "—"}</td>` +
+      `<td class="n ${r.withStock >= 0 ? "pos" : "neg"}">${syen(r.withStock)}</td>` +
+      `<td><button type="button" class="rowdel" aria-label="この記録を削除">×</button></td>`;
+    tr.querySelector(".rowdel").addEventListener("click", () => {
+      if(!confirm(`${fmtDate(r.endedAt)}「${r.name}」の記録を削除する。よろしいか？`)) return;
+      DB.records = DB.records.filter(x => x.id !== r.id);
+      const o = DB.oripas.find(x => x.id === r.oripaId);
+      if(o && !DB.records.some(x => x.oripaId === o.id)) o.closedAt = 0;
+      render();
+    });
+    tb.appendChild(tr);
+  }
+}
+
+function renderLive(c){
+  $("liveName").textContent = S.name || "無題のオリパ";
+  const closed = !!S.closedAt;
+  $("btnCloseStream").hidden = closed;
+  $("btnCloseStream").disabled = c.sold === 0;
+  $("btnCloseStream").title = c.sold === 0 ? "まだ1口も排出していない" : "";
+
+  // --- 注意書き ---
+  const notes = [];
+  if(closed){
+    const r = DB.records.find(x => x.oripaId === S.id);
+    notes.push(`<div class="notice">この配信は <b>${fmtDate(S.closedAt)}</b> に記録済み。`
+      + `排出の入力は止めてある。`
+      + `<span><button type="button" class="btn ghost" id="btnReopen">記録を取り消して再開</button>`
+      + `<button type="button" class="btn" id="btnNextRound">同じ内容で次回を作る</button></span></div>`);
+  }
+  if(c.left === 0 && c.N > 0){
+    notes.push(`<div class="notice">完売。着地は ${syen(c.finalProfit)}（利益率 ${pct(c.finalMargin)}）。</div>`);
+  }
+  $("liveNotice").innerHTML = notes.join("");
+
+  // --- KPI ---
+  const kM = $("kpiMargin");
+  kM.className = "kpi " + (c.revenue === 0 ? "is-key" : c.marginNow >= c.tm ? "is-good" : c.marginNow >= 0 ? "is-warn" : "is-bad");
+  $("mMargin").textContent = c.revenue > 0 ? spct(c.marginNow) : "—";
+  $("mMargin").className = "v " + (c.revenue>0 && c.marginNow < 0 ? "neg" : "");
+  $("mMarginSub").textContent = c.revenue > 0
+    ? `${syen(c.profitNow)}（売上 ${yen(c.revenue)} − 原価 ${yen(c.costDrawn)}）`
+    : "まだ排出なし";
+
+  const kH = $("kpiHeat");
+  kH.className = "kpi " + (c.left === 0 ? "" : c.heat >= 1.05 ? "is-good" : c.heat < 0.80 ? "is-bad" : c.heat < 0.95 ? "is-warn" : "");
+  $("mHeat").textContent = c.left > 0 ? (c.heat).toFixed(2) + "×" : "—";
+  $("mHeatSub").textContent = c.left > 0
+    ? `残り1口の期待値 ${yen(c.evMkt)}（設計 ${yen(c.baseEvMkt)}）`
+    : "残りなし";
+
+  $("mSold").textContent = `${c.sold}/${c.N}`;
+  $("mSoldSub").textContent = c.left > 0
+    ? `残り ${c.left} 口・残り還元率 ${c.price>0 ? pct(c.returnLeft,0) : "—"}`
+    : `全口排出済み`;
+
+  const kF = $("kpiFinal");
+  const land = scenario(c, c.left ? c.rec : c.price, 1);
+  kF.className = "kpi " + (land.margin >= c.tm ? "is-good" : land.cash >= 0 ? "is-warn" : "is-bad");
+  $("mFinal").textContent = syen(land.cash);
+  $("mFinal").className = "v " + (land.cash >= 0 ? "pos" : "neg");
+  $("mFinalSub").textContent = c.left === 0
+    ? `完売実績・利益率 ${spct(land.margin)}`
+    : `残り ${c.left} 口を ${yen(c.rec)} で売り切った場合・利益率 ${spct(land.margin)}`;
+
+  renderLotBar(c);
+  renderPrizes(c);
+  renderLotTable();
+  renderPrice(c);
+  drawSpark(c);
+
+  const reopen = $("btnReopen");
+  if(reopen) reopen.addEventListener("click", reopenStream);
+  const next = $("btnNextRound");
+  if(next) next.addEventListener("click", () => duplicateCurrent("（次回）"));
+}
+
+let lotDraft = { price: "", qty: 1, buyer: "", mode: "unit" };
+let lotBarKey = "";
+
+function lotUnitPrice(){
+  const v = Number(lotDraft.price === "" ? S.price : lotDraft.price) || 0;
+  const q = Math.max(1, Math.round(Number(lotDraft.qty) || 1));
+  return lotDraft.mode === "total" ? Math.round(v / q) : Math.round(v);
+}
+
+function renderLotBar(c){
+  const bar = $("lotBar");
+  const lot = activeLot();
+  const st  = lot ? lotStats(S, lot) : null;
+  const key = [S.id, lot ? lot.id : "-", st ? st.drawn : 0, S.events.length,
+               S.price, lotDraft.mode, S.closedAt ? 1 : 0].join("|");
+  if(key === lotBarKey) return;
+  lotBarKey = key;
+
+  if(S.closedAt){ bar.innerHTML = ""; return; }
+
+  if(lot){
+    const rest = lot.qty - st.drawn;
+    bar.innerHTML = `
+      <div class="lotbox active">
+        <div class="lotnow">
+          <span class="big">${yen(lot.price)} × ${lot.qty} 口</span>
+          ${lot.buyer ? `<span class="who">${esc(lot.buyer)}</span>` : ""}
+          <span class="pipes">${Array.from({length: lot.qty}, (_, i) =>
+            `<i class="${i < st.drawn ? "on" : ""}"></i>`).join("")}</span>
+          <span class="hint">残り <b class="num">${rest}</b> 口ぶんカードを押す</span>
+          <span class="spacer"></span>
+          <button type="button" class="btn" id="btnCancelLot">この落札を取り消す</button>
+        </div>
+      </div>`;
+    $("btnCancelLot").addEventListener("click", () => cancelLot(lot.id));
+    return;
+  }
+
+  const unit = lotUnitPrice();
+  bar.innerHTML = `
+    <div class="lotbox">
+      <div class="lotform">
+        <div class="lotf w-price">
+          <label for="lotPrice">落札金額</label>
+          <input type="number" id="lotPrice" min="0" step="100" inputmode="numeric"
+                 value="${lotDraft.price === "" ? S.price : lotDraft.price}">
+        </div>
+        <div class="seg" role="group" aria-label="金額の入れ方">
+          <button type="button" data-m="unit"  aria-pressed="${lotDraft.mode === "unit"}">単価</button>
+          <button type="button" data-m="total" aria-pressed="${lotDraft.mode === "total"}">合計</button>
+        </div>
+        <div class="lotf w-qty">
+          <label for="lotQty">口数</label>
+          <input type="number" id="lotQty" min="1" step="1" inputmode="numeric" value="${lotDraft.qty}">
+        </div>
+        <div class="lotf w-buyer">
+          <label for="lotBuyer">落札者（任意）</label>
+          <input type="text" id="lotBuyer" value="${esc(lotDraft.buyer)}" placeholder="ID・名前">
+        </div>
+        <button type="button" class="btn primary" id="btnAddLot">落札を登録</button>
+      </div>
+      <p class="hint" id="lotHint"></p>
+    </div>`;
+
+  const upd = () => {
+    lotDraft.price = $("lotPrice").value;
+    lotDraft.qty   = $("lotQty").value;
+    lotDraft.buyer = $("lotBuyer").value;
+    updateLotHint();
+  };
+  ["lotPrice", "lotQty", "lotBuyer"].forEach(id => $(id).addEventListener("input", upd));
+  bar.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+    lotDraft.mode = b.dataset.m;
+    renderLotBar(compute());
+  }));
+  $("btnAddLot").addEventListener("click", registerLot);
+  $("lotPrice").addEventListener("keydown", e => { if(e.key === "Enter") registerLot(); });
+  $("lotQty").addEventListener("keydown", e => { if(e.key === "Enter") registerLot(); });
+  updateLotHint();
+}
+
+function updateLotHint(){
+  const el = $("lotHint");
+  if(!el) return;
+  const c = compute();
+  const unit = lotUnitPrice();
+  const q = Math.max(1, Math.round(Number(lotDraft.qty) || 1));
+  const parts = [];
+  if(lotDraft.mode === "total") parts.push(`1口あたり <b class="num">${yen(unit)}</b>`);
+  else parts.push(`合計 <b class="num">${yen(unit * q)}</b>`);
+  if(c.left > 0){
+    parts.push(`この時点の下限 <b class="num">${yen(c.pFloor)}</b>`);
+    parts.push(`損益分岐 <b class="num">${c.pBE > 0 ? yen(c.pBE) : "回収済"}</b>`);
+  }
+  if(q > c.left) parts.push(`<b>残りは ${c.left} 口</b>`);
+  el.innerHTML = parts.join(" ／ ")
+    + `<br>登録せずにカードを押すと、いまの単価 ${yen(S.price)} の即決として記録する。`;
+}
+
+function registerLot(){
+  if(!S || S.closedAt || activeLot()) return;
+  const c = compute();
+  const unit = lotUnitPrice();
+  let qty = Math.max(1, Math.round(Number(lotDraft.qty) || 1));
+  if(c.left <= 0){ alert("残りの口数がない。"); return; }
+  if(qty > c.left){ qty = c.left; }
+  if(unit <= 0 && !confirm("落札金額が 0 円になっている。このまま登録するか？")) return;
+  addLot(unit, qty, lotDraft.buyer.trim(), "auction");
+  lotDraft = { price: "", qty: 1, buyer: "", mode: lotDraft.mode };
+  render();
+}
+
+function cancelLot(id){
+  const lot = S.lots.find(l => l.id === id);
+  if(!lot) return;
+  const st = lotStats(S, lot);
+  if(st.drawn > 0 && !confirm(`この落札の排出 ${st.drawn} 件も取り消す。よろしいか？`)) return;
+  S.events = S.events.filter(e => e.lotId !== id);
+  S.lots = S.lots.filter(l => l.id !== id);
+  render();
+}
+
+function renderLotTable(){
+  const tb = $("lotTable").querySelector("tbody");
+  tb.innerHTML = "";
+  const a = auctionSummary(S);
+  $("lotSummary").innerHTML = S.lots.length
+    ? `${a.lots} 件（うちオークション ${a.auctions}）／ 平均 ${yen(a.avg)}`
+      + (S.price > 0 ? `（定価比 ${pct(a.avg / S.price, 0)}）` : "")
+      + (a.max ? ` ／ 最高 ${yen(a.max)}・最低 ${yen(a.min)}` : "")
+    : "";
+
+  if(!S.lots.length){
+    tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--ink-3)">まだ落札がない</td></tr>`;
+    return;
+  }
+
+  S.lots.forEach((lot, i) => {
+    const st = lotStats(S, lot);
+    const tr = document.createElement("tr");
+    const names = st.names.length
+      ? `<br><span class="hint">${esc(st.names.slice(0, 4).join("・"))}${st.names.length > 4 ? " ほか" : ""}</span>`
+      : (st.drawn === 0 ? `<br><span class="hint">排出待ち</span>` : "");
+    tr.innerHTML =
+      `<td class="l"><span class="lotno">${i + 1}</span>` +
+        `${lot.kind === "auction" ? "オークション" : "即決"}` +
+        `${lot.buyer ? " ／ " + esc(lot.buyer) : ""}${names}</td>` +
+      `<td class="n">${st.drawn}/${lot.qty}</td>` +
+      `<td class="n">${yen(lot.price)}</td>` +
+      `<td class="n">${yen(st.cost)}</td>` +
+      `<td class="n ${st.profit >= 0 ? "pos" : "neg"}">${syen(st.profit)}</td>` +
+      `<td>${S.closedAt ? "" : `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
+    const del = tr.querySelector(".rowdel");
+    if(del) del.addEventListener("click", () => cancelLot(lot.id));
+    tb.appendChild(tr);
+  });
+
+  // 新しいものが上に来るよう並べ替え
+  const rows = [...tb.children].reverse();
+  rows.forEach(r => tb.appendChild(r));
+}
+
+function renderPrizes(c){
+  const wrap = $("prizeList");
+  wrap.innerHTML = "";
+  S.prizes.forEach((p, i) => {
+    const drawn = c.drawnBy.get(p.id) || 0;
+    const rest  = Math.max(0, (p.count|0) - drawn);
+    const out   = rest === 0;
+
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "prize";
+    el.disabled = out || c.left === 0 || !!S.closedAt;
+    el.dataset.id = p.id;
+    el.innerHTML = `
+      <span>
+        <span class="nm">${i < 9 ? `<span class="key">${i+1}</span>` : ""}<span class="t">${esc(p.name || "（無名）")}</span></span>
+        <span class="meta">相場 <b>${yen(mktOf(p))}</b> ／ 原価 <b>${yen(p.cost||0)}</b>${p.note ? " ／ " + esc(p.note) : ""}</span>
+      </span>
+      <span class="right">
+        <span class="rem${out?" out":""}">残 ${rest}/${p.count|0}</span>
+        <span class="plus" aria-hidden="true">＋1</span>
+      </span>`;
+    el.addEventListener("click", () => draw(p.id));
+    wrap.appendChild(el);
+
+    if(p.normal && rest > 1){
+      const bar = document.createElement("div");
+      bar.className = "drawbar";
+      bar.style.margin = "0 0 2px 0";
+      const lab = document.createElement("span");
+      lab.className = "hint";
+      lab.textContent = "まとめて排出";
+      bar.appendChild(lab);
+      for(const n of [5, 10]){
+        if(rest < n) continue;
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "plus wide";
+        b.textContent = "＋" + n;
+        b.setAttribute("aria-label", `${p.name} をまとめて ${n} 口排出`);
+        b.addEventListener("click", () => draw(p.id, n));
+        bar.appendChild(b);
+      }
+      if(bar.children.length) wrap.appendChild(bar);
+    }
+  });
+
+  $("btnUndo").disabled = S.events.length === 0 || !!S.closedAt;
+  $("btnResetDraws").disabled = (S.events.length === 0 && S.lots.length === 0) || !!S.closedAt;
+  $("drawCount").textContent = S.events.length ? `記録 ${S.events.length} 件` : "";
+}
+
+function renderPrice(c){
+  const a = auctionSummary(S);
+  $("priceNow").textContent = `販売単価 ${yen(c.price)}`
+    + (a.lots ? ` ／ 直近の落札 ${yen(a.last)}・平均 ${yen(a.avg)}` : "");
+
+  const sold_out = c.left === 0;
+  const box = $("recBox");
+  const rec = c.rec;
+
+  let cls = "", msg = "", deltaTxt = "";
+  if(sold_out){
+    cls = "is-good";
+    msg = "完売。値下げの判断は不要。";
+    $("recPrice").textContent = "—";
+    $("recDelta").textContent = `${c.N} 口すべて排出済み`;
+  }else{
+    $("recPrice").textContent = yen(rec);
+    const diff = c.price - rec;
+    deltaTxt = diff <= 0
+      ? "現行価格のまま（下げる理由なし）"
+      : `現行から ${yen(diff)} 引き（${pct(diff/c.price,0)} オフ）`;
+
+    if(diff <= 0){
+      cls = "is-good";
+      msg = `残り ${c.left} 口の還元率は ${pct(c.returnLeft,0)}。まだ買い手から見て十分に強いので、値下げせずに売り切るのが最善。`;
+    }else if(rec < c.pBE){
+      cls = "is-bad";
+      const loss = (c.costTotal - c.revenue) - rec * c.left;
+      const retAtBE = c.pBE > 0 ? c.evMkt / c.pBE : 0;
+      msg = `残り ${c.left} 口の期待値は ${yen(c.evMkt)} まで落ちている。完売して黒字にするには ${yen(Math.ceil(c.pBE))} 以上が必要だが、`
+          + `その価格だと還元率 ${pct(retAtBE,0)} で買い手は付かない。${yen(rec)} まで下げて売り切っても現金ベースで ${syen(-loss)}。`
+          + `打ち手は2つ — 相場 ${yen(c.addNeeded)} ぶんの賞品を追加して価値を戻すか、`
+          + `ここで止めて残りを在庫（回収見込み ${yen(c.salvageLeft)}）に戻すか。`;
+    }else if(rec >= c.pTarget){
+      cls = "is-good";
+      msg = `この価格でも目標利益率 ${pct(c.tm,0)} を維持できる。還元率は ${pct(rec>0 ? c.evMkt/rec : 0, 0)} まで戻るので売れ行きは回復するはず。`;
+    }else{
+      cls = "";
+      msg = `目標利益率 ${pct(c.tm,0)} は割るが黒字は確保できる（完売時 ${pct((c.revenue + rec*c.left - c.costTotal)/(c.revenue + rec*c.left))}）。`
+          + `目標を守るなら ${yen(Math.ceil(c.pTarget))} が下限。`;
+    }
+    $("recDelta").textContent = deltaTxt;
+  }
+  box.className = "verdict-box" + (cls ? " " + cls : "");
+  $("recMsg").textContent = msg;
+  $("btnApply").disabled = sold_out || rec <= 0 || rec === c.price;
+
+  // アンカー
+  const anchors = [
+    { key:"rec",    name:"推奨価格",       desc:"買い手が動く水準まで下げる",     p: c.rec },
+    { key:"buyer",  name:"還元率ベース",   desc:`残り期待値 ÷ ${pct(S.targetReturn,0)}`, p: c.pBuyer },
+    { key:"target", name:"目標利益率の下限", desc:`完売して利益率 ${pct(c.tm,0)}`,  p: c.pTarget },
+    { key:"be",     name:"損益分岐",       desc:"完売してちょうどトントン",        p: c.pBE },
+    { key:"floor",  name:"これ以上下げない", desc:`在庫回収 ${pct(S.recovery,0)} と等価`, p: c.pFloor }
+  ];
+  const wrap = $("anchors");
+  wrap.innerHTML = "";
+  anchors.forEach(a => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "anchor";
+    b.setAttribute("aria-pressed", String(activeAnchor === a.key));
+    const p = Math.max(0, a.p);
+    const done = a.p <= 0 && (a.key === "be" || a.key === "target");
+    const shown = !c.left ? "—" : (done ? "回収済" : yen(p));
+    b.innerHTML = `<span><span class="an">${a.name}</span><br><span class="ad">${done ? "ここまでの売上で到達済み" : a.desc}</span></span>
+                   <span class="ap">${shown}</span>
+                   <span class="tag">${c.left && c.price>0 && !done ? pct(p/c.price,0) : ""}</span>`;
+    b.addEventListener("click", () => {
+      activeAnchor = a.key;
+      simPrice = Math.max(0, Math.round(p));
+      render();
+    });
+    wrap.appendChild(b);
+  });
+
+  // 試算
+  const simMax = Math.max(c.price, c.rec, c.pTarget, c.pBE, 100) * 1.4;
+  const sim = simPrice == null ? c.rec : simPrice;
+  const rng = $("simPriceRange");
+  rng.max = String(Math.round(simMax));
+  rng.step = String(Math.max(10, Math.round(simMax / 200 / 10) * 10));
+  rng.value = String(Math.min(sim, Math.round(simMax)));
+  $("simPriceInput").value = String(Math.round(sim));
+
+  const tb = $("scenarioTbl").querySelector("tbody");
+  tb.innerHTML = "";
+  if(c.left === 0){
+    tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--ink-3)">完売済み</td></tr>`;
+    $("beNote").textContent = "";
+  }else{
+    for(const f of [1, 0.8, 0.6, 0.4]){
+      const s = scenario(c, sim, f);
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td>${pct(f,0)}<span class="hint">（${s.more} 口）</span></td>` +
+        `<td class="n">${yen(s.addRev)}</td>` +
+        `<td class="n ${s.cash>=0?"pos":"neg"}">${syen(s.cash)}</td>` +
+        `<td class="n ${s.withStock>=0?"pos":"neg"}">${syen(s.withStock)}</td>` +
+        `<td class="n ${s.margin>=0?"pos":"neg"}">${spct(s.margin)}</td>`;
+      tb.appendChild(tr);
+    }
+    const need = sim > 0 ? Math.ceil((c.costTotal - c.revenue) / sim) : Infinity;
+    $("beNote").textContent = need <= 0
+      ? `${yen(sim)} なら、この時点ですでに原価を回収済み。`
+      : (need <= c.left
+          ? `${yen(sim)} で売るなら、あと ${need} 口（残り ${c.left} 口）で損益分岐。`
+          : `${yen(sim)} では残り ${c.left} 口を全部売っても原価に届かない（あと ${need} 口必要）。`);
+  }
+}
+
+/* ---------- スパークライン ---------- */
+function seriesData(){
+  const byId = new Map(S.prizes.map(p=>[p.id,p]));
+  let mktTotal = 0, N = Math.max(0, S.totalSlots|0);
+  for(const p of S.prizes) mktTotal += mktOf(p) * Math.max(0,p.count|0);
+  let mktD = 0;
+  const pts = [];
+  S.events.forEach((e, i) => {
+    const p = byId.get(e.prizeId); if(!p) return;
+    mktD += mktOf(p);
+    const left = N - (i + 1);
+    const price = e.price || S.price || 0;
+    pts.push(left > 0 && price > 0 ? ((mktTotal - mktD) / left) / price : null);
+  });
+  const design = (N > 0 && S.price > 0) ? mktTotal / (N * S.price) : 0;
+  return { pts: pts.filter(v => v != null), design };
+}
+
+function drawSpark(c){
+  const cv = $("spark");
+  const { pts, design } = seriesData();
+  const empty = $("chartEmpty");
+  if(pts.length < 2){
+    cv.hidden = true; empty.hidden = false;
+    $("chartNote").textContent = "";
+    return;
+  }
+  cv.hidden = false; empty.hidden = true;
+  $("chartNote").textContent = `設計値 ${pct(design,0)} → 現在 ${pct(pts[pts.length-1],0)}`;
+
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  const ink3 = col("--ink-3"), line = col("--line"), gold = col("--gold"), inkc = col("--ink-2");
+
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 600, H = 160;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  const padL = 44, padR = 16, padT = 20, padB = 20;
+  const w = W - padL - padR, h = H - padT - padB;
+
+  const maxV = Math.max(design, ...pts) * 1.12;
+  const hi = Math.max(maxV, 0.1);
+  const x = i => padL + (pts.length === 1 ? w/2 : (i / (pts.length - 1)) * w);
+  const y = v => padT + h - (v / hi) * h;
+
+  // グリッド
+  g.strokeStyle = line; g.lineWidth = 1;
+  g.fillStyle = ink3; g.font = "11px " + col("--font-num");
+  g.textAlign = "right"; g.textBaseline = "middle";
+  const stepG = hi > 1.2 ? 0.5 : 0.25;
+  for(let v = 0; v <= hi + 1e-9; v += stepG){
+    const yy = Math.round(y(v)) + .5;
+    g.beginPath(); g.moveTo(padL, yy); g.lineTo(W - padR, yy); g.stroke();
+    g.fillText(Math.round(v*100) + "%", padL - 8, yy);
+  }
+
+  // 設計値の基準線
+  if(design > 0 && design <= hi){
+    const yy = Math.round(y(design)) + .5;
+    g.save();
+    g.setLineDash([4, 4]); g.strokeStyle = inkc; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(padL, yy); g.lineTo(W - padR, yy); g.stroke();
+    g.restore();
+    g.textAlign = "left"; g.fillStyle = inkc; g.font = "10.5px " + col("--font-ui");
+    g.fillText("設計 " + Math.round(design*100) + "%", padL + 5, yy - 8);
+  }
+
+  // 面
+  const grad = g.createLinearGradient(0, padT, 0, padT + h);
+  grad.addColorStop(0, hexA(gold, .28));
+  grad.addColorStop(1, hexA(gold, .02));
+  g.beginPath();
+  g.moveTo(x(0), y(pts[0]));
+  pts.forEach((v, i) => g.lineTo(x(i), y(v)));
+  g.lineTo(x(pts.length - 1), padT + h); g.lineTo(x(0), padT + h); g.closePath();
+  g.fillStyle = grad; g.fill();
+
+  // 線
+  g.beginPath();
+  pts.forEach((v, i) => i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v)));
+  g.strokeStyle = gold; g.lineWidth = 2; g.lineJoin = "round"; g.lineCap = "round"; g.stroke();
+
+  // 終点を強調
+  const lx = x(pts.length - 1), ly = y(pts[pts.length - 1]);
+  g.beginPath(); g.arc(lx, ly, 5, 0, Math.PI*2);
+  g.fillStyle = gold; g.fill();
+  g.lineWidth = 2; g.strokeStyle = col("--surface"); g.stroke();
+
+  g.textAlign = "left"; g.textBaseline = "top"; g.fillStyle = ink3;
+  g.font = "10.5px " + col("--font-ui");
+  g.fillText("排出 " + pts.length + " 口目", padL, padT + h + 6);
+}
+
+function hexA(hex, a){
+  const m = hex.replace("#","");
+  const n = m.length === 3 ? m.split("").map(ch=>ch+ch).join("") : m;
+  const r = parseInt(n.slice(0,2),16), gg = parseInt(n.slice(2,4),16), b = parseInt(n.slice(4,6),16);
+  return `rgba(${r||0},${gg||0},${b||0},${a})`;
+}
+
+/* ---------- 設定画面 ---------- */
+function renderEdit(c){
+  $("editName").textContent = S.name || "無題のオリパ";
+  if(document.activeElement !== $("fName"))  $("fName").value  = S.name;
+  if(document.activeElement !== $("fPrice")) $("fPrice").value = S.price;
+
+  $("setupNotice").innerHTML = "";
+
+  const tb = $("editRows");
+  tb.innerHTML = "";
+  S.prizes.forEach(p => {
+    const drawn = c.drawnBy.get(p.id) || 0;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="text" data-f="name" value="${esc(p.name)}" aria-label="賞品名"></td>
+      <td><input type="number" data-f="cost" min="0" step="10" value="${p.cost|0}" aria-label="原価" inputmode="numeric"></td>
+      <td><input type="number" data-f="market" min="0" step="10" value="${p.market|0}" aria-label="相場" inputmode="numeric"></td>
+      <td><input type="number" data-f="count" min="0" step="1" value="${p.count|0}" aria-label="口数" inputmode="numeric"></td>
+      <td><input type="text" data-f="note" value="${esc(p.note || "")}" aria-label="備考"></td>
+      <td style="text-align:center"><input type="radio" name="normalRow" data-f="normal" ${p.normal?"checked":""} aria-label="通常枠にする" style="width:auto"></td>
+      <td class="num" style="text-align:center;color:var(--ink-3)">${drawn}</td>
+      <td><button type="button" class="rowdel" ${drawn>0?"disabled title='排出済みのため削除できない'":""} aria-label="この行を削除">×</button></td>`;
+    tr.querySelectorAll("input").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const f = inp.dataset.f;
+        if(f === "normal"){ S.prizes.forEach(q => q.normal = false); p.normal = inp.checked; }
+        else if(f === "name" || f === "note") p[f] = inp.value;
+        else p[f] = Math.max(0, Number(inp.value) || 0);
+        render();
+      });
+    });
+    tr.querySelector(".rowdel").addEventListener("click", () => {
+      if(drawn > 0) return;
+      S.prizes = S.prizes.filter(q => q.id !== p.id);
+      render();
+    });
+    tb.appendChild(tr);
+  });
+
+  $("sSlots").textContent  = `${c.N} 口`;
+  $("sCost").textContent   = yen(c.costTotal);
+  $("sMkt").textContent    = yen(c.mktTotal);
+  $("sReturn").textContent = c.N && c.price ? pct(c.returnAll) : "—";
+  const designMargin = (c.N * c.price) > 0 ? (c.N * c.price - c.costTotal) / (c.N * c.price) : 0;
+  $("sMargin").textContent = c.N && c.price ? spct(designMargin) : "—";
+  $("sProfit").textContent = syen(c.N * c.price - c.costTotal);
+}
+
+function renderFormulas(c){
+  const dl = $("formulas");
+  const rows = [
+    ["現在の利益率",     "（売上 − 排出済み原価）÷ 売上"],
+    ["残りの濃さ",       "残り1口の相場期待値 ÷ 設計時の1口平均"],
+    ["残り還元率",       "残り1口の相場期待値 ÷ 販売単価"],
+    ["損益分岐価格",     "（総原価 − ここまでの売上）÷ 残り口数"],
+    ["目標利益率の下限", "（総原価 ÷（1 − 目標利益率）− 売上）÷ 残り口数"],
+    ["還元率ベース価格", "残り1口の相場期待値 ÷ 目標還元率"],
+    ["これ以上下げない", "残り1口の相場期待値 × 在庫回収率"]
+  ];
+  dl.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
+}
+
+function esc(s){
+  return String(s == null ? "" : s).replace(/[&<>"']/g, ch =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]));
+}
+
+/* ============================================================
+   CSV 取り込み UI
+   ============================================================ */
+let pending = null;   // { text, fileName }
+
+function startImport(text, fileName){
+  if(!S) return;
+  pending = { text, fileName: fileName || "" };
+  mode = "edit";
+  render();
+  $("importPanel").hidden = false;
+  $("impMarket").value = "1";
+  $("impGroup").checked = true;
+  $("impPrice").value = "";
+  renderImport(true);
+  $("importPanel").scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+/** CSV から新しいオリパを起こす。取り込みをやめたら空のまま残さず消す。 */
+function startImportAsNew(text, fileName){
+  const o = blankOripa((fileName || "").replace(/\.csv$/i, "") || "新しいオリパ");
+  DB.oripas.push(o);
+  S = o; DB.currentId = o.id; draftId = o.id;
+  simPrice = null;
+  startImport(text, fileName);
+}
+
+function cancelImport(){
+  pending = null;
+  $("importPanel").hidden = true;
+  $("fileInput").value = "";
+  if(draftId){
+    const o = DB.oripas.find(x => x.id === draftId);
+    if(o && !o.prizes.length){
+      DB.oripas = DB.oripas.filter(x => x.id !== draftId);
+      S = null;
+      mode = "list";
+    }
+    draftId = null;
+  }
+  render();
+}
+
+function previewImport(){
+  if(!pending) return null;
+  try{
+    const r = csvToPrizes(pending.text, {
+      marketRate: Number($("impMarket").value) || 1,
+      group: $("impGroup").checked
+    });
+    uid -= r.prizes.length;           // プレビューでは id を消費しない
+    return r;
+  }catch(err){
+    return { error: err.message || String(err) };
+  }
+}
+
+function renderImport(resetPrice){
+  const r = previewImport();
+  if(!r) return;
+  const tb = $("impTable").querySelector("tbody");
+
+  if(r.error){
+    $("importError").innerHTML = `<div class="notice is-bad">読み込めなかった：${esc(r.error)}</div>`;
+    $("importOpts").hidden = true;
+    tb.innerHTML = "";
+    ["impRows","impSlots","impCost","impAvg","impMargin"].forEach(id => $(id).textContent = "—");
+    $("btnImportApply").disabled = true;
+    $("impPriceHint").textContent = "";
+    $("impWarn").textContent = "";
+    $("importFileName").textContent = pending.fileName;
+    return;
+  }
+  $("importError").innerHTML = "";
+  $("importOpts").hidden = false;
+  $("btnImportApply").disabled = false;
+  $("importFileName").textContent = pending.fileName;
+
+  if(resetPrice || !Number($("impPrice").value)){
+    $("impPrice").value = String(suggestPrice(r.cost, r.slots, S.targetMargin));
+  }
+  const price = Number($("impPrice").value) || 0;
+  const rev = price * r.slots;
+
+  $("impRows").textContent  = String(r.prizes.length);
+  $("impSlots").textContent = String(r.slots);
+  $("impCost").textContent  = yen(r.cost);
+  $("impAvg").textContent   = yen(r.slots ? r.cost / r.slots : 0);
+  $("impMargin").textContent = rev > 0 ? spct((rev - r.cost) / rev) : "—";
+  $("impPriceHint").textContent = r.slots
+    ? `目標利益率 ${pct(S.targetMargin,0)} に必要な単価は ${yen(suggestPrice(r.cost, r.slots, S.targetMargin))}。`
+      + `総口数は ${r.slots} 口になる（ハズレ枠を足すなら取り込んだ後に通常枠の行を追加する）。`
+      + (r.hasMarket ? "" : " この CSV に相場列が無いので、相場は原価×倍率で埋めている — 還元率の見え方に直結するので実売相場に近い倍率を入れる。")
+    : "";
+  $("impWarn").textContent = S.events.length
+    ? `※ 記録済みの排出 ${S.events.length} 件は破棄される`
+    : "";
+
+  tb.innerHTML = "";
+  for(const p of r.prizes){
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td>${esc(p.name)}</td>` +
+      `<td class="n">${yen(p.cost)}</td>` +
+      `<td class="n">${yen(p.market)}</td>` +
+      `<td class="n">${p.count}</td>` +
+      `<td class="hint" style="text-align:left">${esc(p.note || "")}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function applyImport(){
+  if(!pending) return;
+  const r = previewImport();
+  if(!r || r.error) return;
+  if(S.events.length && !confirm(`記録済みの排出 ${S.events.length} 件を破棄して取り込む。よろしいか？`)) return;
+
+  const fresh = csvToPrizes(pending.text, {
+    marketRate: Number($("impMarket").value) || 1,
+    group: $("impGroup").checked
+  });
+  S.prizes = fresh.prizes;
+  S.totalSlots = fresh.slots;
+  S.price = Number($("impPrice").value) || suggestPrice(fresh.cost, fresh.slots, S.targetMargin);
+  S.events = [];
+  if(pending.fileName && (!S.name || S.name === "新しいオリパ")){
+    S.name = pending.fileName.replace(/\.csv$/i, "");
+  }
+  simPrice = null;
+  pending = null;
+  draftId = null;
+  $("importPanel").hidden = true;
+  $("fileInput").value = "";
+  render();
+}
+
+["impMarket", "impPrice", "impGroup"].forEach(id => {
+  $(id).addEventListener("input", () => renderImport(false));
+  $(id).addEventListener("change", () => renderImport(false));
+});
+$("btnImportApply").addEventListener("click", applyImport);
+$("btnImportCancel").addEventListener("click", cancelImport);
+
+/* 画面のどこにでも CSV / JSON をドロップできる */
+["dragenter", "dragover"].forEach(t =>
+  document.addEventListener(t, e => { e.preventDefault(); document.body.classList.add("dropping"); }));
+["dragleave", "drop"].forEach(t =>
+  document.addEventListener(t, e => {
+    if(t === "dragleave" && e.relatedTarget) return;
+    document.body.classList.remove("dropping");
+  }));
+document.addEventListener("drop", e => {
+  e.preventDefault();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if(f) readDataFile(f, "new");
+});
+
+/** fileTarget: "new" = 新しいオリパを作る / "current" = 開いているオリパの賞品を差し替える */
+let fileTarget = "new";
+
+function pickFile(target){
+  fileTarget = target || "new";
+  $("fileInput").value = "";
+  $("fileInput").click();
+}
+
+function readDataFile(f, target){
+  const r = new FileReader();
+  r.onload = () => {
+    const text = String(r.result);
+    const isJson = /\.json$/i.test(f.name) || /^\s*[[{]/.test(text);
+    if(isJson) loadJsonText(text);
+    else if((target || fileTarget) === "current" && S) startImport(text, f.name);
+    else startImportAsNew(text, f.name);
+  };
+  r.readAsText(f);
+}
+
+/** 1件のオリパでも、全体バックアップでも読める。どちらも既存には足す形で取り込む。 */
+function loadJsonText(text){
+  let added = [];
+  try{
+    const d = JSON.parse(text);
+    const incoming = Array.isArray(d && d.oripas) ? d.oripas
+                   : (d && Array.isArray(d.prizes)) ? [d]
+                   : null;
+    if(!incoming || !incoming.length) throw new Error("形式が違う");
+    for(const raw of incoming){
+      const o = normalizeOripa(raw);
+      o.id = newId();                       // 既存とぶつからないよう振り直す
+      for(const pz of o.prizes){ if(!pz.id) pz.id = uid; uid = Math.max(uid, (pz.id|0) + 1); }
+      DB.oripas.push(o);
+      added.push(o);
+    }
+  }catch(err){
+    alert("読み込めなかった：このアプリが書き出した JSON か、在庫 CSV を選んでください。");
+    return;
+  }
+  pending = null; draftId = null;
+  $("importPanel").hidden = true;
+  if(added.length === 1) openOripa(added[0].id, "edit");
+  else { S = null; go("list"); }
+}
+
+/* ============================================================
+   配信を終了して記録する
+   ============================================================ */
+function openClosePanel(){
+  if(!S || S.closedAt) return;
+  const c = compute();
+  if(c.sold === 0){ alert("まだ1口も排出していない。"); return; }
+
+  $("closeDate").value = dateInputValue(Date.now());
+  $("closeMemo").value = "";
+  renderCloseSummary();
+  $("closePanel").hidden = false;
+  $("closePanel").scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+function renderCloseSummary(){
+  const c = compute();
+  const withStock = c.profitNow + c.salvageLeft;
+  $("closeSummary").innerHTML = [
+    ["消化",        `${c.sold}/${c.N}`, ""],
+    ["売上",        yen(c.revenue), ""],
+    ["排出原価",    yen(c.costDrawn), ""],
+    ["現金損益",    syen(c.profitNow), c.profitNow >= 0 ? "pos" : "neg"],
+    ["利益率",      c.revenue > 0 ? spct(c.marginNow) : "—", c.marginNow >= 0 ? "pos" : "neg"],
+    ["在庫込み損益", syen(withStock), withStock >= 0 ? "pos" : "neg"]
+  ].map(([k, v, cls]) => `<div><span class="label">${k}</span><b class="${cls}">${v}</b></div>`).join("");
+
+  const a = auctionSummary(S);
+  if(a.lots){
+    $("closeSummary").insertAdjacentHTML("beforeend",
+      `<div><span class="label">落札</span><b>${a.lots} 件</b></div>`
+      + `<div><span class="label">平均落札単価</span><b>${yen(a.avg)}</b></div>`);
+  }
+  $("closeNote").textContent = c.left > 0
+    ? `未消化 ${c.left} 口（相場 ${yen(c.mktLeft)}）は在庫として残る。回収率 ${pct(c.recovery,0)} で ${yen(c.salvageLeft)} と見積もった数字が「在庫込み損益」。`
+    : "完売。在庫の持ち越しはなし。";
+}
+
+function applyClose(){
+  if(!S || S.closedAt) return;
+  const at = parseDateInput($("closeDate").value, Date.now());
+  const rec = buildRecord(S, at, $("closeMemo").value.trim());
+  DB.records.push(rec);
+  S.closedAt = at;
+  S.updatedAt = Date.now();
+  $("closePanel").hidden = true;
+  alert(`記録した。現金損益 ${syen(rec.profit)}／在庫込み ${syen(rec.withStock)}。一覧の「配信の記録」から見られる。`);
+  go("list");
+}
+
+function reopenStream(){
+  if(!S || !S.closedAt) return;
+  if(!confirm("記録を取り消して排出の入力を再開する。この配信の記録は消える。よろしいか？")) return;
+  DB.records = DB.records.filter(r => r.oripaId !== S.id);
+  S.closedAt = 0;
+  render();
+}
+
+/** 「X（複製）」が埋まっていたら「X（複製2）」…と空きを探す */
+function uniqueName(stem, suffix){
+  let name = stem + suffix;
+  for(let i = 2; DB.oripas.some(o => o.name === name); i++){
+    name = stem + suffix.replace("）", i + "）");
+  }
+  return name;
+}
+
+/** 賞品と単価だけ引き継いだコピーを作る。排出の記録は引き継がない。 */
+function duplicateOripa(src, suffix, openIt){
+  const copy = normalizeOripa(JSON.parse(JSON.stringify(src)));
+  copy.id = newId();
+  copy.name = uniqueName(src.name, suffix || "（複製）");
+  copy.events = [];
+  copy.lots = [];
+  copy.closedAt = 0;
+  copy.createdAt = copy.updatedAt = Date.now();
+  DB.oripas.push(copy);
+  if(openIt) openOripa(copy.id, "edit");
+  else { flashId = copy.id; render(); }
+  return copy;
+}
+
+function duplicateCurrent(suffix){
+  duplicateOripa(S, suffix, true);
+}
+
+$("btnCloseStream").addEventListener("click", openClosePanel);
+$("btnCloseApply").addEventListener("click", applyClose);
+$("btnCloseCancel").addEventListener("click", () => { $("closePanel").hidden = true; });
+$("closeDate").addEventListener("change", renderCloseSummary);
+$("btnLiveToList").addEventListener("click", () => { $("closePanel").hidden = true; go("list"); });
+$("btnRecCsv").addEventListener("click", () => {
+  downloadAs(recordsToCsv(), "text/csv;charset=utf-8", "オリパ配信の記録.csv");
+});
+
+/* ============================================================
+   操作
+   ============================================================ */
+function draw(prizeId, n = 1){
+  if(!S || S.closedAt) return;
+  const c = compute();
+  const p = S.prizes.find(q => q.id === prizeId);
+  if(!p) return;
+  const drawn = c.drawnBy.get(prizeId) || 0;
+  let k = Math.min(n, (p.count|0) - drawn, c.left);
+  if(k <= 0) return;
+
+  let lot = activeLot();
+  if(lot) k = Math.min(k, lot.qty - lotStats(S, lot).drawn);   // 落札した口数を超えない
+  else lot = addLot(S.price, k, "", "instant");                // 登録なしなら即決として起こす
+  if(k <= 0) return;
+
+  for(let i = 0; i < k; i++) S.events.push({ prizeId, price: lot.price, lotId: lot.id });
+  if(simPrice != null && activeAnchor === "rec") simPrice = null;
+  render();
+}
+
+function undo(){
+  if(!S || S.closedAt || !S.events.length) return;
+  const e = S.events.pop();
+  // 排出のたびに起こした即決ロットは、空になったら一緒に消す
+  if(e && e.lotId && !S.events.some(x => x.lotId === e.lotId)){
+    const lot = S.lots.find(l => l.id === e.lotId);
+    if(lot && lot.kind === "instant") S.lots = S.lots.filter(l => l.id !== lot.id);
+    else if(lot) lot.qty = Math.max(1, lot.qty);
+  }else if(e && e.lotId){
+    const lot = S.lots.find(l => l.id === e.lotId);
+    if(lot && lot.kind === "instant") lot.qty = S.events.filter(x => x.lotId === lot.id).length;
+  }
+  render();
+}
+
+document.querySelectorAll(".modes button").forEach(b => {
+  b.addEventListener("click", () => {
+    if(b.dataset.mode === "live" && !S) return;
+    go(b.dataset.mode);
+  });
+});
+
+/* 画面間の行き来 */
+$("btnBackToList").addEventListener("click", () => { pending = null; $("importPanel").hidden = true; go("list"); });
+$("btnGoLive").addEventListener("click", () => go("live"));
+$("btnEditFromLive").addEventListener("click", () => go("edit"));
+
+/* オリパを作る・複製する・消す */
+$("btnNewOripa").addEventListener("click", () => {
+  const o = blankOripa();
+  DB.oripas.push(o);
+  openOripa(o.id, "edit");
+});
+$("btnNewFromCsv").addEventListener("click", () => pickFile("new"));
+$("btnLoadJson").addEventListener("click", () => pickFile("new"));
+$("btnSample").addEventListener("click", () => {
+  const o = sampleOripa();
+  DB.oripas.push(o);
+  openOripa(o.id, "edit");
+});
+$("btnBackupAll").addEventListener("click", () => {
+  downloadAs(JSON.stringify(DB, null, 2), "application/json", "オリパ収支メーター_バックアップ.json");
+});
+
+$("btnDuplicate").addEventListener("click", () => duplicateCurrent("（複製）"));
+
+$("btnDelete").addEventListener("click", () => {
+  if(!confirm(`「${S.name}」を削除する。排出の入力内容は消えるが、記録済みの実績は「配信の記録」に残る。よろしいか？`)) return;
+  DB.oripas = DB.oripas.filter(o => o.id !== S.id);
+  S = null;
+  pending = null; draftId = null;
+  $("importPanel").hidden = true;
+  go("list");
+});
+
+$("btnUndo").addEventListener("click", undo);
+$("btnResetDraws").addEventListener("click", () => {
+  if(!S.events.length && !S.lots.length) return;
+  if(confirm("排出と落札の記録をすべて消す。よろしいか？")){ S.events = []; S.lots = []; render(); }
+});
+
+$("btnApply").addEventListener("click", () => {
+  const c = compute();
+  if(c.rec > 0){ S.price = c.rec; simPrice = null; render(); }
+});
+
+$("simPriceInput").addEventListener("input", e => {
+  simPrice = Math.max(0, Number(e.target.value) || 0);
+  activeAnchor = "";
+  const c = compute();
+  renderPrice(c);
+});
+$("simPriceRange").addEventListener("input", e => {
+  simPrice = Math.max(0, Number(e.target.value) || 0);
+  activeAnchor = "";
+  const c = compute();
+  renderPrice(c);
+});
+
+$("fPrice").addEventListener("change", e => {
+  S.price = Math.max(0, Math.round(Number(e.target.value) || 0));
+  render();
+});
+$("fName").addEventListener("change", e => { S.name = e.target.value; render(); });
+
+$("btnAddPrize").addEventListener("click", () => {
+  S.prizes.push({ id: uid++, name: "新しい賞品", cost: 0, market: 0, count: 1, note: "", normal: false });
+  render();
+});
+
+function downloadAs(text, mime, filename){
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function download(text, mime, ext){
+  downloadAs(text, mime, (S && S.name ? S.name : "oripa").replace(/[\\/:*?"<>|]/g, "_") + ext);
+}
+$("btnExport").addEventListener("click", () => {
+  download(JSON.stringify(S, null, 2), "application/json", ".json");
+});
+$("btnImportCsv").addEventListener("click", () => pickFile("current"));
+$("fileInput").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  if(f) readDataFile(f);
+});
+
+$("btnExportCsv").addEventListener("click", () => {
+  download(prizesToCsv(), "text/csv;charset=utf-8", ".csv");
+});
+
+document.addEventListener("keydown", e => {
+  if(mode !== "live") return;
+  const t = e.target;
+  if(t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) return;
+  if(e.key >= "1" && e.key <= "9"){
+    const p = S.prizes[Number(e.key) - 1];
+    if(p){ draw(p.id); e.preventDefault(); }
+  }else if(e.key === "Backspace" || e.key.toLowerCase() === "u"){
+    undo(); e.preventDefault();
+  }
+});
+
+let rt;
+window.addEventListener("resize", () => {
+  clearTimeout(rt);
+  rt = setTimeout(() => { if(mode === "live") drawSpark(compute()); }, 120);
+});
+const mq = window.matchMedia("(prefers-color-scheme: dark)");
+mq.addEventListener("change", () => { if(mode === "live") drawSpark(compute()); });
+
+DB = loadDB();
+S = DB.oripas.find(o => o.id === DB.currentId) || null;
+mode = "list";
+render();
+</script>
+
+<script>
+(function(){
+  "use strict";
+  var HASH = "e3a6c22694cfc7533a04e9cb46b86c7c7e6304b0aec6247242b7b7068c89f35c";
+  var KEY  = "oripa-gate-ok";
+
+  function open_(){
+    document.body.classList.remove("locked");
+    var g = document.getElementById("gate");
+    if(g) g.remove();
+  }
+
+  if(localStorage.getItem(KEY) === HASH){ open_(); return; }
+  document.body.classList.add("locked");
+
+  document.getElementById("gateForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var err = document.getElementById("gateErr");
+    var id  = document.getElementById("gateId").value.trim();
+    var pw  = document.getElementById("gatePw").value;
+
+    if(!window.crypto || !crypto.subtle){
+      err.textContent = "この環境では確認できません。https:// で開いてください。";
+      return;
+    }
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(id + ":" + pw))
+      .then(function(buf){
+        var hex = Array.prototype.map.call(new Uint8Array(buf), function(b){
+          return b.toString(16).padStart(2, "0");
+        }).join("");
+        if(hex === HASH){
+          try{ localStorage.setItem(KEY, HASH); }catch(_){}
+          open_();
+        }else{
+          err.textContent = "ID かパスワードが違います。";
+          document.getElementById("gatePw").value = "";
+        }
+      });
+  });
+})();
+</script>
+</body>
+</html>
