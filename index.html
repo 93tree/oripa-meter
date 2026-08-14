@@ -2775,7 +2775,10 @@ function decideNow(c){
    配信は途中で止まる（休憩・トラブル・雑談）。壁時計をそのまま使うと
    ペースが実態より遅く出るので、長い空白は「中断」として実働から外す。
    ============================================================ */
-const PACE_PAUSE_MS = 10 * 60 * 1000;   // これ以上空いたら中断とみなす
+const PACE_PAUSE_MS = 10 * 60 * 1000;   // これ以上空いたら中断とみなす（ペース計算用）
+// 一覧の「配信中」バッジ用。ペースより緩くしてある。遅い配信（16口/時なら1口4分）で
+// たまたま10分空いただけで「途中のまま」に落ちるとかえって紛らわしいため。
+const LIVE_IDLE_MS = 20 * 60 * 1000;
 
 /** 排出1口ごとの {時刻, 単価}（昇順）。時刻が無い古いデータは落札の時刻で代用 */
 function eventTimes(o){
@@ -3282,8 +3285,14 @@ function renderList(){
     else if(c.N === 0){ badge = "賞品なし"; }
     else if(done){ cls = "is-done"; badge = "完売"; }
     else if(started){
-      cls = c.state === "bad" ? "is-bad" : "is-live";
-      badge = c.state === "bad" ? `下ぶれ ${c.sold}/${c.N}` : `配信中 ${c.sold}/${c.N}`;
+      // 「配信中」は“いま動いている”ときだけ。排出が1口でもあれば配信中と出していたので、
+      // 何日も前に途中でやめたオリパが配信中に見えていた。
+      const e = etaOf(o, c);
+      const live = !!e && e.idleMs < LIVE_IDLE_MS;
+      cls = c.state === "bad" ? "is-bad" : live ? "is-live" : "";
+      badge = `${live ? "配信中" : "途中のまま"} ${c.sold}/${c.N}`
+        + (c.state === "bad" ? "・下ぶれ" : "")
+        + (!live && e ? `・${fmtDur(e.idleMs)} 動きなし` : "");
     }
 
     const margin = started ? c.marginNow : c.finalMargin;
