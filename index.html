@@ -208,6 +208,7 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
   display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
   font-size:27px; font-weight:600; line-height:1.15; margin-top:3px; letter-spacing:-.03em;
 }
+.kpi .v.big{ font-size:34px; }
 .kpi .s{ display:block; font-size:12px; color:var(--ink-3); margin-top:3px; overflow-wrap:anywhere; }
 .kpi .v.pos{ color:var(--good); }
 .kpi .v.neg{ color:var(--bad); }
@@ -524,7 +525,7 @@ table.edit .calc{
   box-shadow:var(--shadow); padding:14px 16px; position:relative; overflow:hidden;
 }
 @media (min-width:820px){
-  .ocard{ grid-template-columns: minmax(0,1.4fr) minmax(0,2fr) auto; }
+  .ocard{ grid-template-columns: minmax(0,1.1fr) minmax(0,2.7fr) auto; }
 }
 .ocard::before{
   content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--line-2);
@@ -542,12 +543,19 @@ table.edit .calc{
 }
 .oname:hover{ color:var(--gold-ink); text-decoration-color:var(--gold); }
 .ocard .meta{ font-size:12px; color:var(--ink-3); margin-top:3px; }
-.ostats{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.ostats{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px 12px; }
+@media (min-width:1040px){ .ostats{ grid-template-columns:repeat(6,minmax(0,1fr)); } }
 .ostats div{ min-width:0; }
 .ostats .label{ display:block; font-size:10px; letter-spacing:.1em; }
 .ostats b{
   display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
   font-size:15px; font-weight:600; margin-top:1px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.ostats b .of{ font-size:11px; color:var(--ink-3); font-weight:400; }
+.ostats .of2{
+  display:block; font-size:10.5px; color:var(--ink-3); margin-top:1px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .ostats b.pos{ color:var(--good); } .ostats b.neg{ color:var(--bad); }
 .ocard .acts{ display:flex; gap:6px; flex-wrap:wrap; }
@@ -615,6 +623,17 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .syncbody .fields{ gap:10px; }
 .syncbody input{ font-family:var(--font-ui); font-size:13px; }
 .syncbody .drawbar{ margin-top:0; }
+
+/* ---- 時間とペース ---- */
+.pacegrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:13px; }
+.pacegrid > div{ border-left:2px solid var(--line-2); padding-left:11px; min-width:0; }
+.pacegrid > div.is-key{ border-left-color:var(--gold); }
+.pacegrid > div.is-stale{ border-left-color:var(--bad); }
+.pacegrid b{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:19px; font-weight:600; margin-top:2px; letter-spacing:-.02em;
+}
+.pacegrid .sub{ display:block; font-size:11.5px; color:var(--ink-3); margin-top:2px; overflow-wrap:anywhere; }
 
 /* ---- ブリッジ（見るだけ） ----
    配信中の画面をそのまま流用して、書き込む操作だけ消す。
@@ -864,6 +883,7 @@ body.locked > header, body.locked > main { display:none; }
             <thead>
               <tr>
                 <th>配信日</th><th class="l">オリパ</th><th>消化</th>
+                <th>実働</th><th>時給 GMV</th>
                 <th>売上</th><th>排出原価</th><th>現金損益</th><th>利益率</th>
                 <th>在庫込み</th><th></th>
               </tr>
@@ -959,9 +979,9 @@ body.locked > header, body.locked > main { display:none; }
         <span class="v" id="mRev">—</span>
         <span class="s" id="mRevSub">—</span>
       </div>
-      <div class="kpi">
-        <span class="label">販売済</span>
-        <span class="v" id="mSold">—</span>
+      <div class="kpi" id="kpiLeft">
+        <span class="label">残り口数</span>
+        <span class="v big" id="mSold">—</span>
         <span class="s" id="mSoldSub">—</span>
       </div>
       <div class="kpi" id="kpiFinal">
@@ -987,6 +1007,18 @@ body.locked > header, body.locked > main { display:none; }
             <button type="button" class="btn ghost" id="btnResetDraws">落札と排出をすべてクリア</button>
             <span class="hint" id="drawCount"></span>
           </div>
+        </div>
+      </section>
+
+      <!-- 時間とペース -->
+      <section class="panel">
+        <header>
+          <h2>時間とペース</h2>
+          <span class="hint" id="paceNote"></span>
+        </header>
+        <div class="body">
+          <div class="pacegrid" id="paceGrid"></div>
+          <p class="hint" id="paceMsg" style="margin:13px 0 0"></p>
         </div>
       </section>
 
@@ -1398,7 +1430,8 @@ function normalizeOripa(o){
     })),
     events: (Array.isArray(o.events) ? o.events : [])
       .filter(e => e && e.prizeId != null)
-      .map(e => ({ prizeId: e.prizeId, price: Math.max(0, Number(e.price) || 0), lotId: e.lotId || null })),
+      .map(e => ({ prizeId: e.prizeId, price: Math.max(0, Number(e.price) || 0), lotId: e.lotId || null,
+                   at: Number(e.at) || 0 })),   // 0 = 時刻不明。落札の時刻で代用する
     lots: (Array.isArray(o.lots) ? o.lots : []).map(l => {
       const q = Math.max(1, Math.round(Number(l.qty) || 1));
       return {
@@ -2737,9 +2770,91 @@ function decideNow(c){
    ============================================================ */
 
 /** 締めた時点のスナップショット。あとから数字を追えるだけの粒度で残す。 */
+/* ============================================================
+   時間とペース
+   配信は途中で止まる（休憩・トラブル・雑談）。壁時計をそのまま使うと
+   ペースが実態より遅く出るので、長い空白は「中断」として実働から外す。
+   ============================================================ */
+const PACE_PAUSE_MS = 10 * 60 * 1000;   // これ以上空いたら中断とみなす
+
+/** 排出1口ごとの {時刻, 単価}（昇順）。時刻が無い古いデータは落札の時刻で代用 */
+function eventTimes(o){
+  const lotAt = new Map((o.lots || []).map(l => [l.id, l.at]));
+  const out = [];
+  for(const e of o.events){
+    const t = Number(e.at) || lotAt.get(e.lotId) || 0;
+    if(t) out.push({ at: t, price: e.price });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+const perHour = (slots, ms) => ms > 0 ? slots * 3600000 / ms : 0;
+
+/** 実働時間・ペース・時給GMV。2口以上そろわないと出せないので null を返す */
+function paceOf(o){
+  const ev = eventTimes(o);
+  const n = ev.length;
+  if(n < 2) return null;
+
+  // 口と口のあいだの時間。中断は頭打ちにして実働から外す
+  const gaps = [];
+  for(let i = 1; i < n; i++) gaps.push(Math.min(ev[i].at - ev[i-1].at, PACE_PAUSE_MS));
+  const activeMs = gaps.reduce((a, b) => a + b, 0);
+
+  // 直近のペース。値下げすれば速くなるので、全体平均より直近を信じる
+  const k = Math.min(n - 1, Math.max(8, Math.min(30, Math.ceil((n - 1) / 2))));
+  const recentMs  = gaps.slice(-k).reduce((a, b) => a + b, 0);
+  const recentRev = ev.slice(-k).reduce((a, e) => a + e.price, 0);
+  const revAll    = ev.reduce((a, e) => a + e.price, 0);
+
+  return {
+    slots: n,
+    startedAt: ev[0].at,
+    lastAt: ev[n-1].at,
+    activeMs,
+    wallMs: ev[n-1].at - ev[0].at,
+    pausedMs: Math.max(0, (ev[n-1].at - ev[0].at) - activeMs),
+    pace:       perHour(n - 1, activeMs),   // 口/時（全体）
+    recentPace: perHour(k, recentMs),       // 口/時（直近）
+    // 時給GMV。実働時間は「最初の1口ぶん」を含まないので、口数が少ないうちは強めに出る
+    gmv:       activeMs > 0 ? revAll * 3600000 / activeMs : 0,
+    recentGmv: recentMs > 0 ? recentRev * 3600000 / recentMs : 0,
+  };
+}
+
+/** 残りをいまのペースで売り切ったら何時になるか。中断中なら止まっていることを示す */
+function etaOf(o, c, slotsLeft){
+  const p = paceOf(o);
+  if(!p) return null;
+  const left = slotsLeft == null ? c.left : slotsLeft;
+  const idleMs = Date.now() - p.lastAt;
+  const stalled = idleMs > PACE_PAUSE_MS;
+  if(left <= 0 || !(p.recentPace > 0)) return { ...p, left, ms: 0, at: 0, stalled, idleMs, done: left <= 0 };
+  const ms = left / p.recentPace * 3600000;
+  return { ...p, left, ms, at: Date.now() + ms, stalled, idleMs, done: false };
+}
+
+function fmtDur(ms){
+  if(!(ms > 0) || !isFinite(ms)) return "—";
+  const m = Math.round(ms / 60000);
+  if(m < 60) return `${m}分`;
+  return `${Math.floor(m / 60)}時間${String(m % 60).padStart(2, "0")}分`;
+}
+
+/** 予測時刻。日をまたぐときは「翌 02:10」のように出す */
+function fmtWhen(t){
+  if(!t) return "—";
+  const d = new Date(t), now = new Date();
+  const dayOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((dayOf(d) - dayOf(now)) / 86400000);
+  const hhmm = fmtClock(t);
+  return diff <= 0 ? hhmm : diff === 1 ? "翌 " + hhmm : `${diff}日後 ${hhmm}`;
+}
+
 function buildRecord(o, endedAt, memo){
   const c = compute(o);
   const byId = new Map(o.prizes.map(p => [p.id, p]));
+  const p = paceOf(o);
 
   const priceCount = new Map();
   for(const e of o.events) priceCount.set(e.price, (priceCount.get(e.price) || 0) + 1);
@@ -2750,6 +2865,13 @@ function buildRecord(o, endedAt, memo){
     name: o.name,
     endedAt: endedAt,
     memo: memo || "",
+    // 時間。中断を外した実働で、時給GMV もこれで割っている
+    startedAt: p ? p.startedAt : 0,
+    lastAt:    p ? p.lastAt : 0,
+    activeMs:  p ? p.activeMs : 0,
+    pausedMs:  p ? p.pausedMs : 0,
+    pace:      p ? p.pace : 0,
+    gmvPerHour: p ? p.gmv : 0,
     N: c.N, sold: c.sold, left: c.left,
     priceFirst: o.events.length ? o.events[0].price : c.price,
     priceLast: c.price,
@@ -2799,7 +2921,8 @@ function parseDateInput(v, fallback){
 }
 
 function recordsToCsv(){
-  const head = ["配信日","オリパ名","総口数","販売口数","消化率","最終単価","落札件数",
+  const head = ["配信日","オリパ名","開始","終了","実働(分)","中断(分)","ペース(口/時)","時給GMV",
+                "総口数","販売口数","消化率","最終単価","落札件数",
                 "平均落札単価","最高落札","最低落札","売上",
                 "排出原価","現金損益","利益率","未消化口数","未消化の相場",
                 "在庫回収見込み","在庫込み損益","メモ"];
@@ -2810,7 +2933,13 @@ function recordsToCsv(){
   const lines = [head.join(",")];
   for(const r of DB.records.slice().sort((a, b) => a.endedAt - b.endedAt)){
     lines.push([
-      fmtDate(r.endedAt), r.name, r.N, r.sold,
+      fmtDate(r.endedAt), r.name,
+      r.startedAt ? fmtClock(r.startedAt) : "", r.lastAt ? fmtClock(r.lastAt) : "",
+      r.activeMs ? Math.round(r.activeMs / 60000) : "",
+      r.pausedMs ? Math.round(r.pausedMs / 60000) : "",
+      r.pace ? r.pace.toFixed(1) : "",
+      r.gmvPerHour ? Math.round(r.gmvPerHour) : "",
+      r.N, r.sold,
       r.N ? (r.sold / r.N * 100).toFixed(1) + "%" : "",
       r.priceLast,
       r.auction ? r.auction.lots : "", r.auction ? Math.round(r.auction.avg) : "",
@@ -3111,6 +3240,21 @@ function openOripa(id, m){
 /* ============================================================
    オリパ一覧
    ============================================================ */
+/** 一覧カード用の 完売予測 と 時給GMV。出せないときは理由のほうを短く出す */
+function listEta(o, c){
+  const none = { when: "—", sub: "", gmv: "—", gmvSub: "" };
+  const e = etaOf(o, c);
+  if(!e) return { ...none, sub: c.sold ? "口数が足りない" : "未開始" };
+
+  const gmv = { gmv: yen(Math.round(e.recentGmv)), gmvSub: `実働 ${fmtDur(e.activeMs)}` };
+
+  if(o.closedAt) return { ...gmv, when: "記録済み", sub: `${fmtDur(e.activeMs)} で ${e.slots} 口` };
+  if(e.done)     return { ...gmv, when: "完売", sub: `${fmtDur(e.activeMs)} で ${e.slots} 口` };
+  if(e.stalled)  return { ...gmv, when: "中断中", sub: `${fmtDur(e.idleMs)} 動きなし` };
+  if(!(e.ms > 0))return { ...gmv, when: "—", sub: "ペースが出ない" };
+  return { ...gmv, when: fmtWhen(e.at), sub: `あと ${fmtDur(e.ms)}・${e.recentPace.toFixed(1)} 口/時` };
+}
+
 function renderList(){
   renderSyncBox();
   const wrap = $("oripaList");
@@ -3143,6 +3287,7 @@ function renderList(){
     }
 
     const margin = started ? c.marginNow : c.finalMargin;
+    const eta = listEta(o, c);
     const el = document.createElement("article");
     el.className = "ocard " + cls;
     el.innerHTML = `
@@ -3153,12 +3298,14 @@ function renderList(){
       </div>
       <div class="ostats">
         <div><span class="label">販売単価</span><b>${yen(c.price)}</b></div>
-        <div><span class="label">総口数</span><b>${c.N}</b></div>
+        <div><span class="label">残り口数</span><b>${c.left}<span class="of">/${c.N}</span></b></div>
         <div><span class="label">還元率</span><b>${c.price > 0 ? pct(c.returnAll, 0) : "—"}</b></div>
         <div>
           <span class="label">${started ? "現在利益率" : "設計利益率"}</span>
           <b class="${c.price > 0 ? (margin >= 0 ? "pos" : "neg") : ""}">${c.price > 0 ? spct(margin, 0) : "—"}</b>
         </div>
+        <div><span class="label">完売予測</span><b>${eta.when}</b><span class="of2">${eta.sub}</span></div>
+        <div><span class="label">時給 GMV</span><b>${eta.gmv}</b><span class="of2">${eta.gmvSub}</span></div>
       </div>
       <div class="acts">
         <button type="button" class="btn" data-act="live"${c.N ? "" : " disabled title='賞品が無いのでまだ配信できない'"}>配信</button>
@@ -3192,7 +3339,7 @@ function renderRecords(){
   $("btnRecCsv").disabled = !rs.length;
 
   if(!rs.length){
-    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-3)">まだ記録がない。配信画面の「配信を終了して記録」で残る。</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--ink-3)">まだ記録がない。配信画面の「配信を終了して記録」で残る。</td></tr>`;
     return;
   }
 
@@ -3202,6 +3349,10 @@ function renderRecords(){
       `<td class="n">${fmtDate(r.endedAt)}</td>` +
       `<td class="l">${esc(r.name)}${r.memo ? `<br><span class="hint">${esc(r.memo)}</span>` : ""}</td>` +
       `<td class="n">${r.sold}/${r.N}</td>` +
+      `<td class="n">${r.activeMs ? fmtDur(r.activeMs) : "—"}` +
+        `${r.startedAt ? `<br><span class="hint">${fmtClock(r.startedAt)}〜${fmtClock(r.lastAt)}</span>` : ""}</td>` +
+      `<td class="n">${r.gmvPerHour ? yen(Math.round(r.gmvPerHour)) : "—"}` +
+        `${r.pace ? `<br><span class="hint">${r.pace.toFixed(1)} 口/時</span>` : ""}</td>` +
       `<td class="n">${yen(r.revenue)}</td>` +
       `<td class="n">${yen(r.costDrawn)}</td>` +
       `<td class="n ${r.profit >= 0 ? "pos" : "neg"}">${syen(r.profit)}</td>` +
@@ -3260,12 +3411,14 @@ function renderLive(c){
       + (c.price > 0 ? `（定価比 ${pct(avgSold / c.price, 0)}）` : "")
       + (c.pendingSlots > 0 ? `／開封待ち ${yen(c.pendingRev)}` : "");
 
-  $("mSold").textContent = `${c.sold}/${c.N}`;
+  // 残り口数はいちばん見たい数字なので、ここを主役にする（販売済は下に回す）
+  $("kpiLeft").className = "kpi " + (c.left === 0 ? "is-good" : c.left <= 10 ? "is-warn" : "");
+  $("mSold").textContent = c.left > 0 ? String(c.left) : "完売";
   $("mSoldSub").textContent = c.left > 0
-    ? (c.pendingSlots > 0
-        ? `開封待ち ${c.pendingSlots} 口・残り ${c.left} 口・残り還元率 ${c.price>0 ? pct(c.returnLeft,0) : "—"}`
-        : `残り ${c.left} 口・残り還元率 ${c.price>0 ? pct(c.returnLeft,0) : "—"}`)
-    : `全口排出済み`;
+    ? `販売済 ${c.sold}/${c.N}`
+      + (c.pendingSlots > 0 ? `・開封待ち ${c.pendingSlots} 口` : "")
+      + `・残り還元率 ${c.price > 0 ? pct(c.returnLeft, 0) : "—"}`
+    : `${c.N} 口すべて排出済み`;
 
   // 予想の着地ではなく、いま手元にある損益（売上 − 出た賞品の原価）
   const kF = $("kpiFinal");
@@ -3283,6 +3436,7 @@ function renderLive(c){
   renderPrizes(c);
   renderLotTable();
   renderPrice(c);
+  renderPace(c);
   drawSpark(c);
 
   const reopen = $("btnReopen");
@@ -3769,6 +3923,79 @@ function seriesData(){
   });
   const design = (N > 0 && S.price > 0) ? mktTotal / (N * S.price) : 0;
   return { pts: pts.filter(v => v != null), design };
+}
+
+/* ============================================================
+   時間とペース（配信中）
+   完売見込みは「このまま最後まで売れたら」の話。うちのオリパは途中で
+   解体するのが前提なので、解体までの見込みも並べて出す。
+   ============================================================ */
+function renderPace(c){
+  const grid = $("paceGrid");
+  const e = etaOf(S, c);
+
+  if(!e){
+    $("paceNote").textContent = "";
+    grid.innerHTML = `<div><span class="label">まだ出せない</span>`
+      + `<b>—</b><span class="sub">2 口以上売れるとペースが出る</span></div>`;
+    $("paceMsg").textContent = S.events.length === 1
+      ? "1 口目を記録した。もう 1 口でペースが出る。"
+      : "排出を記録するとここに時間が出る。";
+    return;
+  }
+
+  const cells = [];
+  const cell = (label, value, sub, cls) =>
+    cells.push(`<div class="${cls || ""}"><span class="label">${label}</span>`
+      + `<b>${value}</b><span class="sub">${sub || ""}</span></div>`);
+
+  // --- 実績 ---
+  cell("開始", fmtClock(e.startedAt),
+    `実働 ${fmtDur(e.activeMs)}` + (e.pausedMs > 60000 ? `／中断 ${fmtDur(e.pausedMs)}` : ""));
+  cell("ペース", `${e.recentPace.toFixed(1)} 口/時`,
+    `全体 ${e.pace.toFixed(1)} 口/時`, "is-key");
+  cell("時給 GMV", yen(Math.round(e.recentGmv)),
+    `全体 ${yen(Math.round(e.gmv))}/時`, "is-key");
+
+  // --- 見込み ---
+  if(e.stalled){
+    cell("完売見込み", "中断中",
+      `${fmtDur(e.idleMs)} 動いていない`, "is-stale");
+  }else if(e.done){
+    cell("完売見込み", "完売", "全口出た");
+  }else{
+    cell("完売見込み", fmtWhen(e.at), `残り ${e.left} 口・あと ${fmtDur(e.ms)}`);
+  }
+
+  // 解体まで。判断エンジンが「続ける」と言っている価格での見込み口数を使う
+  const d = c.left > 0 ? decideNow(c) : null;
+  const more = d && d.best && d.best.r ? d.best.r.moreMean : null;
+  if(more != null && more >= 0.5 && e.recentPace > 0 && !e.stalled){
+    const ms = more / e.recentPace * 3600000;
+    cell("解体まで", fmtWhen(Date.now() + ms),
+      `あと約 ${Math.round(more)} 口・${fmtDur(ms)}`);
+  }else if(d && d.verdict === "stop"){
+    cell("解体まで", "いま", "もう回らない", "is-stale");
+  }
+
+  grid.innerHTML = cells.join("");
+
+  $("paceNote").textContent = `${e.slots} 口ぶんの時刻から算出`;
+
+  // 完売と解体で着地時刻がだいぶ違うときは、そこを言葉で補う
+  const parts = [];
+  if(e.stalled){
+    parts.push(`最後の排出から ${fmtDur(e.idleMs)} 空いている。`
+      + `${Math.round(PACE_PAUSE_MS/60000)} 分を超えた空白は実働から外しているので、再開すればペースはそのまま使える。`);
+  }else if(!e.done){
+    parts.push(`いまの直近ペース（${e.recentPace.toFixed(1)} 口/時）が続けばの話。値下げすれば速くなる。`);
+  }
+  if(more != null && more >= 0.5 && more < c.left * 0.8){
+    parts.push(`ただし完売する前に解体条件に達する見込みなので、`
+      + `実際に配信が終わるのは「解体まで」のほうに近い。`);
+  }
+  parts.push(`時給 GMV は売上ベース（原価を引く前）。`);
+  $("paceMsg").textContent = parts.join("");
 }
 
 function drawSpark(c){
@@ -4400,6 +4627,12 @@ function renderCloseSummary(){
       `<div><span class="label">落札</span><b>${a.lots} 件</b></div>`
       + `<div><span class="label">平均落札単価</span><b>${yen(a.avg)}</b></div>`);
   }
+  const p = paceOf(S);
+  if(p){
+    $("closeSummary").insertAdjacentHTML("beforeend",
+      `<div><span class="label">実働</span><b>${fmtDur(p.activeMs)}</b></div>`
+      + `<div><span class="label">時給 GMV</span><b>${yen(Math.round(p.gmv))}</b></div>`);
+  }
   $("closeNote").textContent =
     (c.pendingSlots > 0
       ? `⚠ 落札済みでカードを押していない口が ${c.pendingSlots} 口（${yen(c.pendingRev)}）ある。`
@@ -4500,8 +4733,9 @@ async function draw(prizeId, n = 1){
 
   // 合計で入れたときの端数（1円）は、ロットの先頭の口から順に乗せる
   const already = S.events.filter(e => e.lotId === lot.id).length;
+  const now = Date.now();
   for(let i = 0; i < k; i++){
-    S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id });
+    S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id, at: now });
   }
   if(simPrice != null && activeAnchor === "rec") simPrice = null;
   render();
