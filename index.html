@@ -410,31 +410,53 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
   font-size:10px; font-weight:800; letter-spacing:.06em; background:var(--gold); color:var(--on-gold);
 }
 
-.anchors{ display:flex; flex-direction:column; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:9px; overflow:hidden; margin-top:14px; }
-.anchor{
-  display:grid; grid-template-columns: minmax(0,1fr) auto auto; gap:10px; align-items:center;
-  background:var(--surface); border:0; width:100%; text-align:left;
-  padding:10px 13px; font-size:13px;
+.verdict-box .pricelabel{
+  display:inline-block; margin-left:8px; padding:1px 8px; border-radius:999px;
+  font-size:10.5px; font-weight:800; letter-spacing:.08em;
+  background:var(--line); color:var(--ink-3); vertical-align:2px;
 }
-.anchor:hover{ background:var(--surface-2); }
-.anchor[aria-pressed="true"]{ background:var(--gold-bg); }
-.anchor > span:first-child{ min-width:0; }
-.anchor .an{ font-weight:700; }
-.anchor .ad{ font-size:11.5px; color:var(--ink-3); font-weight:400; }
-.anchor .ap{ font-family:var(--font-num); font-variant-numeric:tabular-nums; font-weight:600; font-size:15px; }
-.anchor .tag{ font-size:11px; font-weight:700; color:var(--ink-3); }
 
-.simrow{ display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap; }
-.simrow input[type=range]{ flex:1 1 200px; accent-color:var(--gold); min-width:160px; }
-.simprice{
-  display:inline-flex; align-items:baseline; gap:3px;
-  font-family:var(--font-num); font-variant-numeric:tabular-nums; font-weight:600; font-size:20px;
+/* ---- まだ沈んでいる大物 ---- */
+.tops{ margin-top:14px; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+.tops .head{
+  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+  padding:9px 13px; background:var(--surface-2); border-bottom:1px solid var(--line);
+  font-size:12px; font-weight:800;
 }
-.simprice input{
-  width:6.2ch; background:transparent; border:0; border-bottom:2px solid var(--line-2);
-  font:inherit; text-align:right; padding:0 1px;
+.tops .head .sub{ font-size:11.5px; font-weight:400; color:var(--ink-3); }
+.tops .row{
+  display:grid; grid-template-columns: minmax(0,1fr) auto auto; gap:4px 12px; align-items:center;
+  padding:9px 13px; border-bottom:1px solid var(--line);
 }
-.simprice input:focus{ border-bottom-color:var(--gold); outline:none; }
+.tops .row:last-child{ border-bottom:0; }
+.tops .row .nm{ font-size:13.5px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tops .row .mk{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:14px; font-weight:600; color:var(--gold-ink); white-space:nowrap;
+}
+.tops .row .rest{ font-size:11.5px; color:var(--ink-3); font-family:var(--font-num); white-space:nowrap; }
+.tops .row .odds{
+  grid-column:1 / -1; font-size:11.5px; color:var(--ink-3);
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+}
+.tops .row .odds b{ color:var(--ink-2); font-weight:700; }
+.tops .none{ padding:13px; font-size:13px; color:var(--ink-3); }
+
+/* ---- 次の1口と直近の調子 ---- */
+.pulse{
+  margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:13px;
+  border:1px solid var(--line); border-radius:9px; padding:14px 15px;
+}
+.pulse > div{ border-left:2px solid var(--line-2); padding-left:11px; min-width:0; }
+.pulse > div.is-good{ border-left-color:var(--good); }
+.pulse > div.is-bad{ border-left-color:var(--bad); }
+.pulse > div.is-key{ border-left-color:var(--gold); }
+.pulse b{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:19px; font-weight:600; margin-top:2px; letter-spacing:-.02em;
+}
+.pulse b.pos{ color:var(--good); } .pulse b.neg{ color:var(--bad); }
+.pulse .sub{ display:block; font-size:11.5px; color:var(--ink-3); margin-top:2px; overflow-wrap:anywhere; }
 
 table.tbl{ width:100%; border-collapse:collapse; font-size:13px; }
 table.tbl th, table.tbl td{ padding:8px 9px; border-bottom:1px solid var(--line); text-align:right; }
@@ -699,15 +721,40 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .guide th, .guide td{ padding:7px 9px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
 .guide th{ font-size:11.5px; letter-spacing:.06em; color:var(--ink-3); font-weight:700; white-space:nowrap; }
 .guide tr:last-child td{ border-bottom:0; }
-.guide .toc{
-  display:flex; flex-wrap:wrap; gap:7px; margin:0 0 4px; padding:0; list-style:none;
+/* 上のいちばん使う部分だけ大きく。下は details で畳む */
+.g-hero{ margin-bottom:8px; }
+.g-hero h3{ font-size:17px; margin:0 0 16px; padding:0; border:0; }
+.g-step{
+  display:grid; grid-template-columns:auto minmax(0,1fr); gap:0 14px;
+  padding:16px 0; border-top:1px solid var(--line);
 }
-.guide .toc a{
-  display:inline-block; padding:5px 11px; border-radius:999px; font-size:12.5px; font-weight:700;
-  background:var(--surface-2); color:var(--ink-2); text-decoration:none;
-  box-shadow: inset 0 0 0 1px var(--line);
+.g-step:first-of-type{ border-top:0; padding-top:0; }
+.g-num{
+  width:30px; height:30px; border-radius:50%; flex:none;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-family:var(--font-num); font-size:15px; font-weight:700;
+  background:var(--gold); color:var(--on-gold);
 }
-.guide .toc a:hover{ background:var(--gold-bg); color:var(--gold-ink); }
+.g-step h4{ margin:3px 0 8px; font-size:16.5px; font-weight:800; color:var(--ink); }
+.g-step > div{ min-width:0; }
+.guide p.g-big{ font-size:16.5px; line-height:1.8; margin:0 0 9px; }
+.guide p.g-big code{ font-size:14px; }
+.g-step p:not(.g-big){ font-size:13.5px; color:var(--ink-2); line-height:1.7; margin:0; }
+
+.guide details{
+  border:1px solid var(--line); border-radius:9px; margin-bottom:8px; background:var(--surface-2);
+}
+.guide details[open]{ background:var(--surface); }
+.guide details > summary{
+  cursor:pointer; padding:11px 14px; font-size:14px; font-weight:800; list-style:none;
+  display:flex; align-items:center; gap:9px;
+}
+.guide details > summary::-webkit-details-marker{ display:none; }
+.guide details > summary::before{ content:"▶"; font-size:9px; color:var(--ink-3); }
+.guide details[open] > summary::before{ content:"▼"; }
+.guide details > :not(summary){ margin-left:14px; margin-right:14px; }
+.guide details > :last-child{ margin-bottom:14px; }
+
 .guide .keys{ display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:13.5px; margin:0 0 12px; }
 .guide .keys dt{ font-family:var(--font-num); font-weight:700; white-space:nowrap; }
 .guide .keys dd{ margin:0; color:var(--ink-2); }
@@ -1166,6 +1213,7 @@ body.locked > header, body.locked > main { display:none; }
             <div class="top">
               <div>
                 <span class="label" id="recLabel">おすすめ</span>
+                <span class="pricelabel" id="recPriceLabel">参考金額</span>
                 <div class="price" id="recPrice">—</div>
                 <div class="delta" id="recDelta">—</div>
               </div>
@@ -1175,29 +1223,11 @@ body.locked > header, body.locked > main { display:none; }
             <p class="msg" id="recMsg">—</p>
           </div>
 
-          <div class="anchors" id="anchors"></div>
+          <!-- まだ出ていない大物。煽る材料であり、続ける根拠でもある -->
+          <div class="tops" id="topsBox"></div>
 
-          <div class="simrow">
-            <span class="label">試算価格</span>
-            <span class="simprice">¥<input type="number" id="simPriceInput" min="0" step="1" inputmode="numeric"></span>
-            <input type="range" id="simPriceRange" min="0" max="100" step="1" aria-label="試算価格スライダー">
-          </div>
-
-          <div class="scroll-x" style="margin-top:12px">
-            <table class="tbl" id="scenarioTbl">
-              <thead>
-                <tr>
-                  <th>解体までの販売</th>
-                  <th>追加売上</th>
-                  <th>現金損益</th>
-                  <th>在庫込み損益</th>
-                  <th>利益率</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <p class="hint" id="beNote" style="margin:10px 0 0"></p>
+          <!-- 次の1口と直近の調子 -->
+          <div class="pulse" id="pulseBox"></div>
         </div>
       </section>
 
@@ -1229,209 +1259,224 @@ body.locked > header, body.locked > main { display:none; }
   <!-- ========== 使い方 ========== -->
   <section id="view-help" class="stack" hidden>
     <section class="panel guide">
-      <header>
-        <h2>使い方</h2>
-        <span class="hint">この版のアプリに合わせて書いてある</span>
-      </header>
       <div class="body">
-        <p class="lead">
-          配信でオリパを売っている最中に、<b>いまいくら儲かっているか</b>と
-          <b>このまま続けるべきか</b>を出すツール。カードが出るたびに押していくだけで、
-          残りの口数・利益率・値下げの判断・終わる時刻が更新される。
-        </p>
 
-        <ul class="toc">
-          <li><a href="#g-flow">配信の流れ</a></li>
-          <li><a href="#g-cue">カンペ</a></li>
-          <li><a href="#g-decide">続けるか、解体するか</a></li>
-          <li><a href="#g-pace">時間とペース</a></li>
-          <li><a href="#g-seat">配信の席</a></li>
-          <li><a href="#g-bridge">ブリッジ</a></li>
-          <li><a href="#g-market">相場想定</a></li>
-          <li><a href="#g-sync">端末間の同期</a></li>
-          <li><a href="#g-data">データ</a></li>
-          <li><a href="#g-keys">キーボード</a></li>
-          <li><a href="#g-trouble">困ったとき</a></li>
-        </ul>
+        <!-- いちばん使うものだけ、大きく -->
+        <div class="g-hero">
+          <h3>配信中にやること</h3>
 
-        <h3 id="g-screens">4 つの画面</h3>
+          <div class="g-step">
+            <span class="g-num">1</span>
+            <div>
+              <h4>売れたら記録する</h4>
+              <p class="g-big">
+                <b>定価で売れた</b> → 出たカードを押す → <code>定価で記録</code>。<br>
+                <b>オークション</b> → <code>落札を登録</code> で先に金額を入れる →
+                カードが開いたらその賞品を押す。
+              </p>
+              <p>
+                落札を先に入れておけば、カードを押すときに金額は聞かれない。
+                金額は 1 円単位。残りが 5 口以上ある行には <code>＋5</code> <code>＋10</code> が出る。
+                取り消しは <code>← 1 件取り消し</code>。
+              </p>
+            </div>
+          </div>
+
+          <div class="g-step">
+            <span class="g-num">2</span>
+            <div>
+              <h4>上のカンペを読む</h4>
+              <p class="g-big">
+                <code>「」</code> が付いた行は<b>そのまま読み上げていい</b>。
+                いちばん下の <code>自分用</code> は読まない。
+              </p>
+              <p>
+                読み上げ行に出る数字は<b>残り口数と相場だけ</b>。単価・還元率・確率は出さない。
+                口調は <code>たたき売り</code> と <code>ふつう</code>。
+                <b>口調を変えても数字は 1 つも変わらない。</b>
+              </p>
+            </div>
+          </div>
+
+          <div class="g-step">
+            <span class="g-num">3</span>
+            <div>
+              <h4>右の「続けるか、解体するか」を見る</h4>
+              <p class="g-big">
+                <b>続けた場合</b>と<b>いま解体</b>を同じ物差しで比べて、
+                高いほうに <code>こちら</code> が付く。<br>
+                <b>参考金額</b>は、続けるならいくらにすべきかをアプリが探した額。
+              </p>
+              <p>
+                価格をこちらで決める必要はない。値上げの提案はしない。
+                差が小さいときは「どちらでも大差ない」と出る。
+              </p>
+            </div>
+          </div>
+
+          <div class="g-step">
+            <span class="g-num">4</span>
+            <div>
+              <h4>終わったら <code>配信を終了して記録</code></h4>
+              <p class="g-big">日付とメモを添えると、その回の結果が一覧の下に残る。</p>
+              <p>売り切らなくてよい。途中で切り上げてもそこまでの結果が記録される。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 画面の見かた -->
+        <h3 id="g-read">画面の見かた</h3>
+
+        <h4>右側のパネル</h4>
         <table>
-          <tr><th>オリパ一覧</th><td>入口。作ったオリパが並ぶ。過去の配信の記録もここの下</td></tr>
-          <tr><th>編集</th><td>賞品（原価・相場・口数）と販売単価を決める。一覧で<b>名前を押す</b>と入る</td></tr>
-          <tr><th>配信中</th><td>売れるたびに記録する。<b>同時に 1 台だけ</b></td></tr>
-          <tr><th>ブリッジ</th><td>配信中の進行を<b>別の PC から見るだけ</b>。記録はできない</td></tr>
+          <tr><th>続けるか、解体するか</th>
+              <td>2 択を期待値で比べる。参考金額は<b>キリのいい額</b>に丸めてある</td></tr>
+          <tr><th>まだ沈んでいる大物</th>
+              <td>まだ出ていない目玉と相場、<b>次の 1 口で当たる確率</b>。
+                  煽る材料であり、続ける根拠でもある</td></tr>
+          <tr><th>次の1口</th>
+              <td>いまの価格で 1 口売ると平均いくら残るか（価格 − 残り 1 口の平均原価）。
+                  <b>マイナスなら売るほど現金が減る</b></td></tr>
+          <tr><th>直近 10 口</th>
+              <td>ここ 10 口の損益。<b>値下げの効き目がいちばん早く出る場所</b></td></tr>
         </table>
 
-        <h3 id="g-flow">配信の流れ</h3>
-        <ol>
-          <li><b>オリパを作る。</b>一覧の <code>＋ 新しいオリパ</code>、または <code>CSV から作る</code>
-            （在庫 CSV は画面のどこにドロップしてもいい）。</li>
-          <li><b>中身を確かめる。</b>賞品の原価・相場・口数と販売単価。
-            総口数は口数の合計から自動で決まる。ハズレ枠は行を足して口数を入れる。</li>
-          <li><b><code>配信画面をひらく</code>。</b>ここで席を取る。他の PC が配信中なら入れない。</li>
-          <li><b>売れたら記録する。</b>下の 2 通りのどちらか。</li>
-          <li><b>終わったら <code>配信を終了して記録</code>。</b>日付とメモを添えるとその回の結果が残る。</li>
-        </ol>
-
-        <h4>売れたときの記録のしかた</h4>
+        <h4>上の 4 つの数字</h4>
         <table>
-          <tr><th>定価で売れた</th><td>出たカードを押す →&nbsp;<code>定価で記録</code>。2 手で終わり</td></tr>
-          <tr><th>オークション</th><td><code>落札を登録</code> で先に金額・口数・落札者を入れる →
-            カードが開いたらその賞品を押す（<b>このとき金額はもう聞かれない</b>）</td></tr>
+          <tr><th>現在の利益率</th><td>売上 − 出た賞品の原価 ÷ 売上</td></tr>
+          <tr><th>現在の売上</th><td>実際に入った額。開封待ちは含まない</td></tr>
+          <tr><th>残り口数</th><td>まだ売れていない口</td></tr>
+          <tr><th>現時点での利益</th><td>いまの現金損益。下段が在庫込み</td></tr>
         </table>
-        <ul>
-          <li>金額は <b>1 円単位</b>。「合計」で入れて口数で割り切れないときは、
-            余りの円を先頭の口に乗せるので合計はぴったり入力どおりになる。</li>
-          <li>登録しただけでカードを押していない口は「<b>開封待ち</b>」として別に出る。
-            売上に入るのはカードを押してから（出た賞品が決まらないと原価が分からないため）。</li>
-          <li>カードは<b>原価の高い順</b>に並ぶ。残りが 5 口以上ある行には
-            <code>＋5</code> <code>＋10</code> が出るので、ハズレはまとめて押せる。</li>
-          <li>取り消しは <code>← 1 件取り消し</code>。落札の金額と落札者は次のダイアログに戻る。</li>
-        </ul>
-
-        <h3 id="g-cue">カンペ（画面のいちばん上）</h3>
-        <p>
-          いまの残りから作った<b>そのまま読み上げられる文</b>。カードを押すたびに作り直される。
-        </p>
-        <ul>
-          <li><code>「」</code> が付いた行が読み上げ用。いちばん下の <code>自分用</code> の行は判断メモで、
-            読み上げるものではない。</li>
-          <li><b>読み上げ行に出る数字は「残り口数」と「相場」だけ。</b>
-            単価・還元率・確率は出さない。熱さは <code>激熱！</code> <code>のこ熱！</code> のような言葉で出る。</li>
-          <li>口調は <code>たたき売り</code>（既定・高速に捌く用）と <code>ふつう</code> から選べる。
-            <b>口調を変えても数字は 1 つも変わらない。</b>渋い局面では たたき売りでも
-            「正直ちょい渋い！だから安くいくよ！」と出る。</li>
-          <li><code>別の言い方</code> で言い回しを入れ替えられる。<code>たたむ</code> で隠せる。</li>
-        </ul>
-
-        <h3 id="g-decide">続けるか、解体するか（右側）</h3>
-        <p>
-          値下げ幅を決める道具ではなく、<b>2 択を期待値で比べる画面</b>。
-          いくらにすべきかはアプリが探して出すので、価格をこちらで決める必要はない。
-        </p>
-        <ul>
-          <li><b>続けた場合</b>と<b>いま解体</b>を同じ式（売上 − 総原価 ＋ 残りの回収額）で並べ、
-            高いほうに <code>こちら</code> が付く。</li>
-          <li>価格は「現行価格」と「買い手が動く上限」の低いほうを天井に、その 15% までを探す。
-            <b>値上げの提案はしない</b>（需要のモデルを持っていないため）。</li>
-          <li>差が小さいときは「どちらでも大差ない」。目玉が出尽くしていれば「もう回らない」。</li>
-          <li>下の表は<b>解体前提</b>の着地（中央値／良いほう 1 割／悪いほう 1 割）。
-            完売は参考として薄く 1 行だけ。</li>
-        </ul>
         <p>
           <b>現金損益</b>は売れ残りを 0 円と見た数字。<b>在庫込み損益</b>は売れ残りを
-          回収率で評価した数字（＝売上 − 総原価 ＋ 残りの相場 × 回収率）。
+          回収率で評価した数字（売上 − 総原価 ＋ 残りの相場 × 回収率）。
         </p>
 
-        <h3 id="g-pace">時間とペース</h3>
-        <ul>
-          <li><b>実働</b>は休憩を除いた時間。口と口のあいだが 10 分を超えたぶんは中断として外す。
-            そうしないと雑談や休憩でペースが実態より遅く出る。</li>
-          <li><b>予測には直近のペースを使う</b>。値下げすれば速くなるので、全体平均だと反応しない。</li>
-          <li><b>完売見込み</b>と<b>解体まで</b>は別物。オリパは途中で解体するのが前提なので、
-            実際に終わるのはたいてい「解体まで」に近い。</li>
-          <li><b>時給 GMV は売上ベース</b>（原価を引く前）。粗利ではない。</li>
-          <li>10 分以上動きがないと「中断中」になって予測を止める。</li>
-        </ul>
-
-        <h3 id="g-seat">配信の席（同時に 1 台だけ）</h3>
-        <div class="warn">
-          <b>記録する PC は必ず 1 台だけ。</b>2 台で同じオリパを打つと、
-          あとから保存したほうで<b>片方の記録が丸ごと消える</b>。
-          それを防ぐために、配信中は 1 台しか入れないようにしてある。
-        </div>
-        <ul>
-          <li>他の PC が配信中のオリパを開こうとすると
-            <b>「別の PC で配信中です」</b>と出て、ブリッジを勧められる。</li>
-          <li><b>配信中は中身を編集できない。</b>単価や賞品を途中で変えると、
-            すでに記録した排出の原価と 食い違うため。直すときは一覧に戻る。</li>
-          <li><b>30 分操作がないと自動で席を立つ</b>（一覧へ戻る）。
-            5 分前から見出しに「あと ◯ 分で抜ける」と出る。
-            <b>記録が消えることはない</b>し、勝手に「配信を終了して記録」もしない。
-            開き直せば続きから打てる。</li>
-          <li>PC が落ちても、合図が 3 分途切れれば席は自動で空く。</li>
-          <li>端末の名前は一覧の <code>端末間で同期</code> の中の <code>この端末の名前</code> で変えられる。</li>
-        </ul>
-
-        <h3 id="g-bridge">ブリッジ（見るだけ）</h3>
-        <ul>
-          <li>サブモニタや別室から進行を眺めるための画面。
-            中身は配信中とまったく同じだが、<b>記録する操作が一切ない</b>。</li>
-          <li>5 秒ごとに自動で最新を取りに行く。右上が最後に受け取った時刻で、
-            30 秒以上届かないと赤くなる。</li>
-          <li>映すオリパは既定で「まだ記録していないもののうち、直近に動いたもの」。
-            セレクトで固定もできる。</li>
-          <li><b>ブリッジは席を取らない。</b>誰が配信しているかは見出しに出る。</li>
-        </ul>
-
-        <h3 id="g-market">相場想定（一覧のいちばん上）</h3>
+        <h4>時間とペース</h4>
         <p>
-          在庫 CSV には相場の列が無いことが多い。その場合 <b>相場 ＝ 原価 × 倍率</b> で埋めていて、
-          その倍率をあとから入れ直すのがこのバー。
-        </p>
-        <ul>
-          <li><b>手で入れた相場は書き換えない。</b>効くのは自動の行だけ
-            （編集画面の相場欄が<b>破線＋灰色</b>なら自動）。そこに数字を打つとその行は固定になる。</li>
-          <li>この 1 つの数字で、<b>還元率・在庫の回収額・目玉の判定・ハズレ枠の線・
-            カンペが読み上げる「相場¥◯」</b>が動く。</li>
-          <li>低すぎると「いま解体」が不当に不利に見えて、判断が「もっと下げろ」に寄る。
-            実勢に近づけておくこと。</li>
-        </ul>
-
-        <h4>ハズレ枠</h4>
-        <p>
-          <b>相場が販売単価の 20% 以下</b>なら自動で「ハズレ」。印を付ける操作はない。
-          まとめ排出（<code>＋5</code> <code>＋10</code>）はこの印とは無関係で、
-          <b>残りが 5 口以上の行</b>に出る。
+          <b>実働</b>は休憩を除いた時間（10 分を超える空白は中断として外す）。
+          予測には<b>直近のペース</b>を使う。値下げすれば速くなるため。
+          <b>完売見込み</b>と<b>解体まで</b>は別物で、実際に終わるのはたいてい後者に近い。
+          <b>時給 GMV は売上ベース</b>で、粗利ではない。
         </p>
 
-        <h3 id="g-sync">端末間の同期</h3>
-        <ul>
-          <li><b>設定しなければ通信は一切起きない。</b>この端末のブラウザにだけ保存される。</li>
-          <li>同じ<b>同期コード</b>を入れた端末どうしで、オリパと配信の記録が揃う。</li>
-          <li>取りに行く間隔は画面ごとに違う。ブリッジ 5 秒／一覧 60 秒／
-            配信中は行かない（自分が正なので）。</li>
-          <li>通信に失敗してもこの端末の内容は消えない。次の機会に送り直す。</li>
-        </ul>
-
-        <h3 id="g-data">データ</h3>
-        <ul>
-          <li>保存先はそのブラウザの中（localStorage）。
-            <b>アプリが更新されても入力したデータは残る。</b></li>
-          <li><b>URL ごとに別の保存領域になる。</b>公開ページ・ローカルに置いた HTML は別物。
-            移すときは一覧の <code>全体をバックアップ</code> で JSON に書き出し、
-            移った先で <code>JSON を読み込み</code>。オリパだけでなく<b>配信の記録も一緒に運べる</b>。</li>
-          <li>読み込みに失敗したときは<b>絶対に上書きしない</b>。退避したうえで画面で知らせる
-            （<code>自動退避から復元</code> で戻せる）。</li>
-          <li>ブラウザの「サイトデータを削除」では消える。大事な回は書き出しておく。</li>
-        </ul>
-
-        <h3 id="g-keys">キーボード（配信中）</h3>
+        <h4>キーボード</h4>
         <dl class="keys">
           <dt>1 〜 9</dt><dd>並びどおり上から 9 枚のカードを押す</dd>
           <dt>L / N</dt><dd>落札を登録する</dd>
           <dt>Backspace / U</dt><dd>1 件取り消す</dd>
-          <dt>Esc</dt><dd>開いているダイアログを閉じる</dd>
+          <dt>Esc</dt><dd>ダイアログを閉じる</dd>
         </dl>
 
-        <h3 id="g-trouble">困ったとき</h3>
-        <table>
-          <tr><th>金額を入れても記録されない</th>
-              <td>金額欄の下に理由が出ているはず。空欄・0 円・残り口数を超える口数など</td></tr>
-          <tr><th>「別の PC で配信中です」と出る</th>
-              <td>他の PC が席を持っている。ブリッジで見るか、向こうで一覧に戻ってもらう。
-                  PC が落ちている場合は 3 分待てば空く</td></tr>
-          <tr><th>勝手に一覧に戻った</th>
-              <td>30 分操作がなかったので席を空けた。記録は消えていないので開き直す</td></tr>
-          <tr><th>編集できない</th>
-              <td>そのオリパが配信中。一覧に戻って席を空けてから</td></tr>
-          <tr><th>還元率がやけに低い</th>
-              <td>相場想定の倍率が 1.0 のままかもしれない。一覧のいちばん上で直す</td></tr>
-          <tr><th>ハズレを 1 口ずつ押している</th>
-              <td>残り 5 口以上なら <code>＋5</code> <code>＋10</code> が出ているはず</td></tr>
-          <tr><th>他の PC の入力が反映されない</th>
-              <td>一覧は 60 秒間隔。急ぐなら同期パネルの <code>いま同期する</code></td></tr>
-        </table>
+        <!-- ここから下は、毎回は触らないもの -->
+        <h3 id="g-more">たまに触るもの</h3>
+        <p class="hint" style="margin:-4px 0 12px">見出しを押すと開きます。</p>
+
+        <details>
+          <summary>配信中は 1 台だけ／自動で抜ける</summary>
+          <div class="warn">
+            <b>記録する PC は必ず 1 台だけ。</b>2 台で同じオリパを打つと、
+            あとから保存したほうで<b>片方の記録が丸ごと消える</b>。
+          </div>
+          <ul>
+            <li>他の PC が配信中のオリパを開こうとすると
+              <b>「別の PC で配信中です」</b>と出て、ブリッジを勧められる。</li>
+            <li><b>配信中は中身を編集できない。</b>単価や賞品を途中で変えると、
+              記録済みの排出の原価と食い違うため。直すときは一覧に戻る。</li>
+            <li><b>30 分操作がないと自動で席を立つ</b>（一覧へ戻る）。5 分前から予告が出る。
+              <b>記録は消えないし、勝手に「配信を終了して記録」もしない。</b>
+              開き直せば続きから打てる。</li>
+            <li>PC が落ちても、合図が 3 分途切れれば席は自動で空く。</li>
+          </ul>
+        </details>
+
+        <details>
+          <summary>ブリッジ（別の PC から見るだけ）</summary>
+          <ul>
+            <li>サブモニタや別室から進行を眺める画面。中身は配信中と同じだが、
+              <b>記録する操作が一切ない</b>。</li>
+            <li>5 秒ごとに自動で最新を取りに行く。右上が最後に受け取った時刻で、
+              30 秒以上届かないと赤くなる。</li>
+            <li>映すオリパは既定で「まだ記録していないもののうち直近に動いたもの」。
+              セレクトで固定もできる。</li>
+            <li><b>ブリッジは席を取らない。</b></li>
+          </ul>
+        </details>
+
+        <details>
+          <summary>オリパを作る（CSV の取り込み）</summary>
+          <ol>
+            <li>一覧の <code>＋ 新しいオリパ</code>、または <code>CSV から作る</code>
+              （在庫 CSV は画面のどこにドロップしてもいい）。</li>
+            <li>賞品の原価・相場・口数と販売単価を入れる。
+              総口数は口数の合計から自動で決まる。</li>
+            <li><code>配信画面をひらく</code>。</li>
+          </ol>
+          <p>
+            見出し行を見て列を判別するので、列の順番は問わない。
+            賞品を差し替えると<b>そのオリパの排出記録は破棄される</b>（確認あり）。
+          </p>
+        </details>
+
+        <details>
+          <summary>相場想定とハズレ枠</summary>
+          <p>
+            在庫 CSV には相場の列が無いことが多い。その場合 <b>相場 ＝ 原価 × 倍率</b> で
+            埋めていて、その倍率をあとから入れ直すのが<b>一覧のいちばん上のバー</b>。
+          </p>
+          <ul>
+            <li><b>手で入れた相場は書き換えない。</b>効くのは自動の行だけ
+              （編集画面の相場欄が破線＋灰色なら自動）。</li>
+            <li>この 1 つの数字で<b>還元率・在庫の回収額・目玉の判定・ハズレ枠の線・
+              カンペが読み上げる相場</b>が動く。低すぎると判断が「もっと下げろ」に寄る。</li>
+            <li><b>ハズレ枠は自動</b>（相場が販売単価の 20% 以下）。印を付ける操作はない。
+              まとめ排出はこの印とは無関係で、残りが 5 口以上の行に出る。</li>
+          </ul>
+        </details>
+
+        <details>
+          <summary>端末間の同期</summary>
+          <ul>
+            <li><b>設定しなければ通信は一切起きない。</b>この端末のブラウザにだけ保存される。</li>
+            <li>同じ<b>同期コード</b>を入れた端末どうしで、オリパと配信の記録が揃う。</li>
+            <li>取りに行く間隔は ブリッジ 5 秒／一覧 60 秒／配信中は行かない。</li>
+            <li>通信に失敗してもこの端末の内容は消えない。次の機会に送り直す。</li>
+          </ul>
+        </details>
+
+        <details>
+          <summary>データの持ち方・バックアップ</summary>
+          <ul>
+            <li>保存先はそのブラウザの中。<b>アプリが更新されてもデータは残る。</b></li>
+            <li><b>URL ごとに別の保存領域になる。</b>移すときは一覧の
+              <code>全体をバックアップ</code> で JSON に書き出し、移った先で
+              <code>JSON を読み込み</code>。<b>配信の記録も一緒に運べる。</b></li>
+            <li>読み込みに失敗したときは<b>絶対に上書きしない</b>。退避して画面で知らせる
+              （<code>自動退避から復元</code> で戻せる）。</li>
+            <li>ブラウザの「サイトデータを削除」では消える。大事な回は書き出しておく。</li>
+          </ul>
+        </details>
+
+        <details>
+          <summary>困ったとき</summary>
+          <table>
+            <tr><th>金額を入れても記録されない</th>
+                <td>金額欄の下に理由が出ている。空欄・0 円・残り口数を超える口数など</td></tr>
+            <tr><th>「別の PC で配信中です」</th>
+                <td>他の PC が席を持っている。ブリッジで見るか、向こうで一覧に戻ってもらう。
+                    PC が落ちている場合は 3 分待てば空く</td></tr>
+            <tr><th>勝手に一覧に戻った</th>
+                <td>30 分操作がなかったので席を空けた。記録は消えていないので開き直す</td></tr>
+            <tr><th>編集できない</th>
+                <td>そのオリパが配信中。一覧に戻って席を空けてから</td></tr>
+            <tr><th>還元率がやけに低い</th>
+                <td>相場想定の倍率が 1.0 のままかもしれない。一覧のいちばん上で直す</td></tr>
+            <tr><th>他の PC の入力が反映されない</th>
+                <td>一覧は 60 秒間隔。急ぐなら同期パネルの <code>いま同期する</code></td></tr>
+          </table>
+        </details>
+
       </div>
     </section>
   </section>
@@ -1702,8 +1747,6 @@ const BUILTIN_CSV = `カードゲーム,カード名,数量,仕様,型番,状態
 let DB = { oripas: [], records: [], currentId: null };
 let S = null;              // いま開いているオリパ（一覧では null）
 let mode = "list";
-let simPrice = null;       // null = 推奨価格に追従
-let activeAnchor = "rec";
 let draftId = null;        // CSV から作りかけのオリパ
 let flashId = null;        // 作った直後に一度だけ光らせるカード
 
@@ -2508,10 +2551,18 @@ function compute(o){
   };
 }
 
+/* 配信で口に出す数字なので、半端な額は出さない。
+   ¥4,863 のような値を出されても「じゃあ 4,863 円で」とは言えない。 */
 function roundPrice(v){
   if(v <= 0) return 0;
-  const step = v >= 3000 ? 100 : (v >= 500 ? 50 : 10);
-  return Math.floor(v / step) * step;
+  const step = v >= 50000 ? 1000
+             : v >= 10000 ? 500
+             : v >= 1000  ? 100
+             : v >= 300   ? 50
+             : 10;
+  // 切り下げではなく四捨五入。切り下げだと刻みが粗いところで
+  // 期待値を無駄に落とす（¥4,863 → ¥4,500 で 4% 損した）
+  return Math.round(v / step) * step;
 }
 
 /** 価格 p で残りの f 割が売れたときの着地 */
@@ -3198,10 +3249,13 @@ function decideNow(c){
   for(const d of [-0.5, -0.25, 0.25, 0.5]) probe(best.p + step * d);
   best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
 
-  // 読み上げる価格なので丸める。丸めた価格で評価し直して数字を合わせる
-  const rounded = Math.max(10, roundPrice(best.p) || best.p);
+  // 出す価格は必ずキリのいい額にする。配信で口に出す数字なので ¥2,088 では使えない。
+  // 丸めたぶん期待値は少し動くが、動いたあとの数字をそのまま表示するので画面の中では辻褄が合う。
+  // 上限（買い手が動く額）は超えられないので、はみ出したら 1 段下げる
+  let rounded = Math.max(10, roundPrice(best.p) || best.p);
+  if(rounded > hi) rounded = Math.max(10, roundPrice(hi) <= hi ? roundPrice(hi) : roundPrice(hi * 0.98));
   const rr = simAtPrice(c, rounded, topMult, minReturn);
-  if(rr && rr.stockMean >= best.ev - Math.abs(best.ev) * 0.02) best = { p: rounded, ev: rr.stockMean, r: rr };
+  if(rr) best = { p: rounded, ev: rr.stockMean, r: rr };
 
   const gain = best.ev - stop;
   // 誤差レベルの差で「続けろ」と言い切らない
@@ -3734,8 +3788,6 @@ function openOripa(id, m){
   if(!o) return;
   S = o;
   DB.currentId = id;
-  simPrice = null;
-  activeAnchor = "rec";
   resetLotDraft();
   lotBarKey = "";
   if(m === "live"){ goLive(o); return; }
@@ -3864,7 +3916,7 @@ function renderList(){
     el.querySelector(".oname").addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="edit"]').addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="live"]').addEventListener("click", () => {
-      S = o; DB.currentId = o.id; simPrice = null; activeAnchor = "rec";
+      S = o; DB.currentId = o.id;
       resetLotDraft(); lotBarKey = "";
       goLive(o);                       // 席の確認を挟む
     });
@@ -4290,15 +4342,6 @@ function liveBreakup(c){
   return liveSimCache.bk;
 }
 
-/** 価格 p での解体着地（表示用に試行数を多めにして引き直す） */
-function liveSimAt(c, p){
-  const { topMult, minReturn } = liveSimSync(c);
-  const k = Math.max(0, Math.round(p));
-  if(!liveSimCache.at.has(k)){
-    liveSimCache.at.set(k, simFromHere(c, k, topMult, minReturn, LIVE_TRIALS));
-  }
-  return liveSimCache.at.get(k);
-}
 
 function renderPrice(c){
   const a = auctionSummary(S);
@@ -4383,84 +4426,90 @@ function renderPrice(c){
   $("recMsg").innerHTML = msg;
   $("btnApply").disabled = sold_out || goPrice <= 0 || goPrice === c.price;
 
-  // アンカー。損益分岐と目標利益率は解体前提（＝残りを全部さばける前提にしない）
-  const anchors = [
-    { key:"rec",    name:"おすすめの価格", desc:"続けるならここ（期待値がいちばん高い）", p: goPrice },
-    { key:"buyer",  name:"還元率ベース",   desc:`残り期待値 ÷ ${pct(S.targetReturn,0)}`, p: c.pBuyer },
-    { key:"target", name:"目標利益率の下限", desc:`解体まで売って利益率 ${pct(c.tm,0)}`, p: bTgt },
-    { key:"be",     name:"損益分岐",       desc:"解体までにちょうどトントン",      p: bBE },
-    { key:"floor",  name:"これ以上下げない", desc:`在庫回収 ${pct(S.recovery,0)} と等価`, p: c.pFloor }
-  ];
-  const wrap = $("anchors");
-  wrap.innerHTML = "";
-  anchors.forEach(a => {
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "anchor";
-    b.setAttribute("aria-pressed", String(activeAnchor === a.key));
-    const solved = a.key === "be" || a.key === "target";
-    const unreachable = solved && a.p === Infinity;
-    const done = solved && a.p <= 0;
-    const p = unreachable ? 0 : Math.max(0, a.p);
-    const shown = !c.left ? "—" : (done ? "回収済" : unreachable ? "届かない" : yen(p));
-    const desc = done ? "ここまでの売上で到達済み"
-               : unreachable ? "価格を上げても解体までには届かない" : a.desc;
-    b.innerHTML = `<span><span class="an">${a.name}</span><br><span class="ad">${desc}</span></span>
-                   <span class="ap">${shown}</span>
-                   <span class="tag">${c.left && c.price>0 && !done && !unreachable ? pct(p/c.price,0) : ""}</span>`;
-    b.disabled = unreachable;
-    b.addEventListener("click", () => {
-      if(unreachable) return;
-      activeAnchor = a.key;
-      simPrice = Math.max(0, Math.round(p));
-      render();
-    });
-    wrap.appendChild(b);
-  });
+  renderTops(c);
+  renderPulse(c, dec);
+}
 
-  // 試算
-  const finite = v => (v === Infinity || !isFinite(v)) ? 0 : v;
-  const simMax = Math.max(c.price, goPrice, finite(bTgt), finite(bBE), 100) * 1.4;
-  const sim = simPrice == null ? (goPrice || c.price) : simPrice;
-  const rng = $("simPriceRange");
-  rng.max = String(Math.round(simMax));
-  rng.step = "1";                       // 落札は1円単位なので試算も1円単位で動かせる
-  rng.value = String(Math.min(sim, Math.round(simMax)));
-  $("simPriceInput").value = String(Math.round(sim));
+/* まだ出ていない大物。煽る材料であり、続ける根拠でもある。
+   確率は非復元（口は有限）で出す。 */
+function renderTops(c){
+  const box = $("topsBox");
+  if(c.left <= 0){ box.innerHTML = ""; return; }
+  const T = topsLeft(c);
 
-  const tb = $("scenarioTbl").querySelector("tbody");
-  tb.innerHTML = "";
-  if(c.left === 0){
-    tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--ink-3)">完売済み</td></tr>`;
-    $("beNote").textContent = "";
-  }else{
-    const s = liveSimAt(c, sim);
-    const row = (label, sub, more, cash, stock, margin, dim) => {
-      const tr = document.createElement("tr");
-      if(dim) tr.style.opacity = ".62";
-      tr.innerHTML =
-        `<td>${label}<span class="hint">（${sub}）</span></td>` +
-        `<td class="n">${yen(more * sim)}</td>` +
-        `<td class="n ${cash>=0?"pos":"neg"}">${syen(cash)}</td>` +
-        `<td class="n ${stock>=0?"pos":"neg"}">${syen(stock)}</td>` +
-        `<td class="n ${margin>=0?"pos":"neg"}">${spct(margin)}</td>`;
-      tb.appendChild(tr);
-    };
-    if(s){
-      row("解体（中央値）", `あと ${s.moreMed} 口`, s.moreMed, s.cashMed, s.stockMed, s.marMed);
-      row("良いほう 1割",   `あと ${s.moreP90} 口`, s.moreP90, s.cashP90, s.stockP90, s.marP90);
-      row("悪いほう 1割",   `あと ${s.moreP10} 口`, s.moreP10, s.cashP10, s.stockP10, s.marP10);
-    }
-    const full = scenario(c, sim, 1);
-    row("参考：完売", `あと ${c.left} 口`, c.left, full.cash, full.withStock, full.margin, true);
-
-    // 「あと何口で損益分岐」は完売前提の数え方なので出さない。
-    // 解体前提では出た賞品の原価しか乗らず、口数と損益が1対1で対応しないため。
-    $("beNote").textContent = s
-      ? `${yen(sim)} で解体まで売ったとき、現金がプラスで終わるのは ${pct(1 - s.cashNegRate, 0)}。`
-        + `解体までの口数は ${s.moreP10}〜${s.moreP90} 口（中央値 ${s.moreMed}）。`
-        + `${s.trials.toLocaleString()} 回ぶんの引き順で試算。`
-      : "";
+  if(!T.list.length){
+    box.innerHTML = `<div class="head">まだ沈んでいる大物`
+      + `<span class="sub">相場 ${yen(T.line)} 以上</span></div>`
+      + `<div class="none">もう残っていない。続ける根拠は「安さ」だけになる。</div>`;
+    return;
   }
+
+  const rows = T.list.slice(0, 6).map(x => {
+    const next = pWithin(c.left, x.rest, 1);
+    const ten  = pWithin(c.left, x.rest, Math.min(10, c.left));
+    return `<div class="row">
+      <span class="nm">${esc(x.p.name || "（無名）")}</span>
+      <span class="mk">${yen(x.mkt)}</span>
+      <span class="rest">残 ${x.rest}</span>
+      <span class="odds">次の1口 <b>${pct(next, 1)}</b>　／　あと10口引けば <b>${pct(ten, 0)}</b></span>
+    </div>`;
+  }).join("");
+
+  const anyNext = pWithin(c.left, T.count, 1);
+  box.innerHTML = `<div class="head">まだ沈んでいる大物`
+    + `<span class="sub">相場 ${yen(T.line)} 以上・合計 ${T.count} 口／残り ${c.left} 口`
+    + `・次の1口でどれか当たる ${pct(anyNext, 1)}</span></div>` + rows
+    + (T.list.length > 6 ? `<div class="none">ほか ${T.list.length - 6} 種</div>` : "");
+}
+
+/* いまの1口の採算と、直近の調子。
+   グラフは還元率の推移で「買い手から見た濃さ」、こちらは「自分の財布」を見る。 */
+function renderPulse(c, dec){
+  const box = $("pulseBox");
+  if(c.left <= 0){ box.innerHTML = ""; return; }
+
+  const cells = [];
+  const cell = (label, value, sub, cls, vcls) =>
+    cells.push(`<div class="${cls || ""}"><span class="label">${label}</span>`
+      + `<b class="${vcls || ""}">${value}</b><span class="sub">${sub || ""}</span></div>`);
+
+  // 次の1口の期待採算。いまの価格で1口売ると、平均していくら残るか。
+  // マイナスなら売るほど現金が減る（在庫は減るので在庫込みでは別の話になる）
+  const avgCostLeft = c.left > 0 ? c.costLeft / c.left : 0;
+  const edge = c.price - avgCostLeft;
+  cell("次の1口", syen(Math.round(edge)),
+    `${yen(c.price)} − 残り1口の平均原価 ${yen(Math.round(avgCostLeft))}`,
+    edge >= 0 ? "is-good" : "is-bad", edge >= 0 ? "pos" : "neg");
+
+  // 直近10口の実績。値下げの効き目がいちばん早く出る場所
+  const ev = eventTimes(S);
+  const k = Math.min(10, ev.length);
+  if(k >= 2){
+    const recent = S.events.slice(-k);
+    const rev = recent.reduce((n, e) => n + e.price, 0);
+    const byId = new Map(S.prizes.map(p => [p.id, p]));
+    const cost = recent.reduce((n, e) => n + costOf(byId.get(e.prizeId) || { cost: 0 }), 0);
+    const pl = rev - cost;
+    cell(`直近 ${k} 口`, syen(pl),
+      `売上 ${yen(rev)} − 原価 ${yen(cost)}／1口平均 ${syen(Math.round(pl / k))}`,
+      pl >= 0 ? "is-good" : "is-bad", pl >= 0 ? "pos" : "neg");
+  }
+
+  // 買い手から見た残りの魅力。カンペで煽れるかの目安
+  cell("残り還元率", c.price > 0 ? pct(c.returnLeft, 0) : "—",
+    `残り1口の期待 ${yen(Math.round(c.evMkt))}`,
+    c.returnLeft >= 1 ? "is-good" : c.returnLeft >= 0.7 ? "is-key" : "is-bad");
+
+  // 続けるならこの先どれだけ回るか。時間の見当がつく
+  if(dec && dec.best && dec.best.r && dec.verdict !== "stop"){
+    const more = dec.best.r.moreMed;
+    const e = etaOf(S, c, more);
+    cell("この先さばける口数", `${more} 口`,
+      e && e.ms > 0 && !e.stalled ? `いまのペースで ${fmtDur(e.ms)}` : `解体条件に達するまで`,
+      "is-key");
+  }
+
+  box.innerHTML = cells.join("");
 }
 
 /* ---------- スパークライン ---------- */
@@ -5006,7 +5055,6 @@ function startImportAsNew(text, fileName){
   const o = blankOripa((fileName || "").replace(/\.csv$/i, "") || "新しいオリパ");
   DB.oripas.push(o);
   S = o; DB.currentId = o.id; draftId = o.id;
-  simPrice = null;
   startImport(text, fileName);
 }
 
@@ -5117,7 +5165,6 @@ async function applyImport(){
   if(pending.fileName && (!S.name || S.name === "新しいオリパ")){
     S.name = pending.fileName.replace(/\.csv$/i, "");
   }
-  simPrice = null;
   pending = null;
   draftId = null;
   $("importPanel").hidden = true;
@@ -5356,7 +5403,6 @@ async function draw(prizeId, n = 1){
   for(let i = 0; i < k; i++){
     S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id, at: now });
   }
-  if(simPrice != null && activeAnchor === "rec") simPrice = null;
   render();
 }
 
@@ -5540,21 +5586,8 @@ $("btnResetDraws").addEventListener("click", async () => {
 $("btnApply").addEventListener("click", () => {
   touchLive();
   if(decidedPrice > 0 && decidedPrice !== S.price){
-    S.price = decidedPrice; simPrice = null; render();
+    S.price = decidedPrice; render();
   }
-});
-
-$("simPriceInput").addEventListener("input", e => {
-  simPrice = Math.max(0, Number(e.target.value) || 0);
-  activeAnchor = "";
-  const c = compute();
-  renderPrice(c);
-});
-$("simPriceRange").addEventListener("input", e => {
-  simPrice = Math.max(0, Number(e.target.value) || 0);
-  activeAnchor = "";
-  const c = compute();
-  renderPrice(c);
 });
 
 $("fPrice").addEventListener("change", e => {
