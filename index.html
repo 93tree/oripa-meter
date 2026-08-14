@@ -392,6 +392,23 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 .verdict-box .delta{ font-size:13px; color:var(--ink-2); margin-top:4px; }
 .verdict-box .msg{ padding:11px 16px; font-size:13px; color:var(--ink-2); border-top:1px solid var(--line); }
 
+/* 続ける／解体する の比較 */
+.cmp{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; background:var(--line); border-top:1px solid var(--line); }
+.cmp > div{ background:var(--surface-2); padding:11px 14px; min-width:0; }
+.cmp .k{ display:block; font-size:11px; letter-spacing:.1em; color:var(--ink-3); font-weight:700; }
+.cmp .v{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:20px; font-weight:600; margin-top:3px; letter-spacing:-.02em;
+}
+.cmp .s{ display:block; font-size:11.5px; color:var(--ink-3); margin-top:2px; overflow-wrap:anywhere; }
+.cmp > div.win{ background:var(--gold-bg); }
+.cmp > div.win .k{ color:var(--gold-ink); }
+.cmp > div.win .v{ color:var(--gold-ink); }
+.cmp .tag{
+  display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px; vertical-align:2px;
+  font-size:10px; font-weight:800; letter-spacing:.06em; background:var(--gold); color:var(--on-gold);
+}
+
 .anchors{ display:flex; flex-direction:column; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:9px; overflow:hidden; margin-top:14px; }
 .anchor{
   display:grid; grid-template-columns: minmax(0,1fr) auto auto; gap:10px; align-items:center;
@@ -946,19 +963,20 @@ body.locked > header, body.locked > main { display:none; }
       <!-- 値下げ判断 -->
       <section class="panel">
         <header>
-          <h2>値下げ判断</h2>
+          <h2>続けるか、解体するか</h2>
           <span class="hint" id="priceNow"></span>
         </header>
         <div class="body">
           <div class="verdict-box" id="recBox">
             <div class="top">
               <div>
-                <span class="label">推奨価格</span>
+                <span class="label" id="recLabel">おすすめ</span>
                 <div class="price" id="recPrice">—</div>
                 <div class="delta" id="recDelta">—</div>
               </div>
               <button type="button" class="btn primary" id="btnApply">この価格に変更</button>
             </div>
+            <div class="cmp" id="recCmp"></div>
             <p class="msg" id="recMsg">—</p>
           </div>
 
@@ -2131,8 +2149,8 @@ function simulateBreakup(o, topMult, minReturn){
     }
 
     const rev = k * price;
-    const c = rev - costDrawn;
-    const w = c + (mktTotal - mktDrawn) * recovery;
+    const c = rev - costDrawn;                     // 現金損益：出た賞品の原価だけ
+    const w = rev - costTotal + (mktTotal - mktDrawn) * recovery;   // 在庫込みは全体の原価
     const m = rev > 0 ? c / rev : 0;
     sold.push(k); cash.push(c); stock.push(w); mar.push(m);
     if(stopped) broke++;
@@ -2355,22 +2373,33 @@ function buildCue(c){
   else if(best) lines.push(pick(t.best(x), v));
   lines.push(pick(t.heat(x), v));
   if(hit && hit.ago <= 4) lines.push(pick(t.hit(x), v));
-  // 端数レベルの差で毎回「下げた！」と言うと嘘くさくなるので、5% 以上のときだけ
-  if(c.rec > 0 && c.price > 0 && (c.price - c.rec) / c.price >= 0.05) lines.push(pick(t.cut(x), v));
+  // 値下げの掛け声は、判断が「続ける」で 5% 以上下がるときだけ。
+  // 画面の判断と読み上げが食い違わないよう、同じ decideNow() を使う。
+  const dec = decideNow(c);
+  const goP = dec && dec.best ? dec.best.p : 0;
+  if(dec && dec.verdict !== "stop" && goP > 0 && c.price > 0 && (c.price - goP) / c.price >= 0.05){
+    lines.push(pick(t.cut(x), v));
+  }
 
   // --- 裏で見るだけの一言（読み上げ用ではない。ここには数字を出す） ---
-  const diff = c.price - c.rec;
   let act;
   if(c.pendingSlots > 0){
     act = `<b>開封待ちが ${c.pendingSlots} 口（${yen(c.pendingRev)}）。</b>`
         + `出たカードを押すまで売上に入らない。`;
-  }else if(T.count === 0){
-    act = `<b>目玉が残っていない。</b>ここは長く引っ張らず、値下げして捌くか、賞品を足して組み直す。`;
-  }else if(diff > 0){
-    act = `<b>推奨 ${yen(c.rec)}（現行から ${yen(diff)} 引き）。</b>`
+  }else if(!dec || dec.verdict === "stop"){
+    act = dec && dec.dead
+      ? `<b>もう回らない。</b>解体条件に達しているので、下げても買い手は動かない。`
+      : `<b>解体したほうが得。</b>`
+        + (dec ? `続けるより ${yen(Math.abs(Math.round(dec.gain)))} 上回る。` : "");
+    act += `残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
+  }else if(dec.verdict === "even"){
+    act = `<b>続けても解体しても差は ${yen(Math.abs(Math.round(dec.gain)))} 。</b>`
+        + `続けるなら ${yen(goP)}。残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
+  }else if(goP > 0 && goP < c.price){
+    act = `<b>${yen(goP)} まで下げて続ける（解体より ${yen(Math.round(dec.gain))} 得）。</b>`
         + `残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
   }else{
-    act = `<b>いまの価格のままでいい。</b>残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
+    act = `<b>いまの価格のまま続けてよい。</b>残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
   }
 
   return { cls, level, sub: label, lines: lines.slice(0, 5), act };
@@ -2474,24 +2503,40 @@ function simFromHere(c, p, topMult, minReturn, trials){
       }
     }
     const rev  = c.revenue + k * price;
-    const cash_ = rev - c.costDrawn - costMore;
-    const stk  = cash_ + (mktLeft - mktMore) * recovery;
+    const cash_ = rev - c.costDrawn - costMore;      // 現金損益：出た賞品の原価だけ引く
+    // 在庫込みは**オリパ全体の原価**を引く。売れ残りの仕入代を引かずに
+    // 売れ残りの回収額だけ足すと、持っているほうが不当に得に見える。
+    const stk  = rev - c.costTotal + (mktLeft - mktMore) * recovery;
     more.push(k); cash.push(cash_); stock.push(stk);
     mar.push(rev > 0 ? cash_ / rev : 0);
     if(cash_ < 0) neg++;
   }
 
+  const mean = a => a.reduce((n, v) => n + v, 0) / a.length;
+  const cashMean = mean(cash), stockMean = mean(stock), moreMean = mean(more);
   more.sort((a, b) => a - b); cash.sort((a, b) => a - b);
   stock.sort((a, b) => a - b); mar.sort((a, b) => a - b);
 
   return {
     price, trials: T, R, topLeft, topTotal, thinNow, overNow,
+    cashMean, stockMean, moreMean,
     moreMed: quantile(more, 0.5), moreP10: quantile(more, 0.1), moreP90: quantile(more, 0.9),
     cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashP90: quantile(cash, 0.9),
     stockMed: quantile(stock, 0.5), stockP10: quantile(stock, 0.1), stockP90: quantile(stock, 0.9),
     marMed: quantile(mar, 0.5), marP10: quantile(mar, 0.1), marP90: quantile(mar, 0.9),
     cashNegRate: neg / T
   };
+}
+
+/* 同じ価格を何度も回さないための入れ物。状態が変わったら liveSimSync() が捨てる */
+let priceSims = new Map();
+
+/** 価格 p での試算。同じ価格なら使い回す */
+function simAtPrice(c, p, topMult, minReturn){
+  const k = Math.max(0, Math.round(p));
+  if(k <= 0) return null;
+  if(!priceSims.has(k)) priceSims.set(k, simFromHere(c, k, topMult, minReturn, LIVE_TRIALS));
+  return priceSims.get(k);
 }
 
 /**
@@ -2501,8 +2546,8 @@ function simFromHere(c, p, topMult, minReturn, trials){
 function breakupAnchors(c, topMult, minReturn){
   if(c.left <= 0 || c.price <= 0) return null;
   const at = p => {
-    const r = p > 0 ? simFromHere(c, Math.round(p), topMult, minReturn, LIVE_TRIALS) : null;
-    return r ? { p, cash: r.cashMed, mar: r.marMed, more: r.moreMed } : null;
+    const r = simAtPrice(c, p, topMult, minReturn);
+    return r ? { p: Math.round(p), cash: r.cashMed, mar: r.marMed, more: r.moreMed } : null;
   };
 
   // 完売前提の答え（c.pBE / c.pTarget）は解体前提の当たりを付けるのに使える程度には近い。
@@ -2542,6 +2587,79 @@ function breakupAnchors(c, topMult, minReturn){
 }
 
 /* ============================================================
+   続けるか、解体するか
+
+   いま止めれば、残りの在庫が「相場 × 回収率」で戻ってくる。
+   売り続ければ、解体までのぶんが現金になり、残りは在庫として戻る。
+   **同じ物差し（在庫込み損益）で比べれば、どちらが得か決まる。**
+
+   止める＝ simFromHere で1口も売れなかった場合とちょうど同じ式になるので、
+   比較は厳密に噛み合う（`stockAtStop()` と k=0 の stock が一致する）。
+
+   価格は運用者に決めさせず、こちらで探す。探す範囲は
+     下限：これ以上下げても在庫で持つほうが得になる線より少し下まで
+     上限：**買い手が動く価格**（残り期待値 ÷ 目標還元率）と現行価格の低いほう
+   上限を切らないと「¥50,000 にすれば儲かる」という、誰も買わない答えが出る。
+   ============================================================ */
+
+/** いま止めたときの在庫込み損益。simFromHere の k=0 とちょうど同じ式になる */
+function stockAtStop(c){
+  return c.revenue - c.costTotal + c.salvageLeft;
+}
+
+/**
+ * 価格を振って、在庫込み損益の期待値がいちばん高い売り方を探し、
+ * 「いま止める」と比べる。
+ */
+function decideNow(c){
+  if(c.left <= 0) return null;
+  const { topMult, minReturn } = simParams();
+  const stop = stockAtStop(c);
+
+  // 買い手が動く上限。現行価格より上は出さない（配信中に値上げはしない）
+  const hi = Math.max(1, Math.min(c.price || Infinity, c.pBuyer || c.price || 0));
+  if(!isFinite(hi) || hi <= 0){
+    return { verdict: "stop", stop, best: null, gain: 0, hi: 0 };
+  }
+  const lo = Math.max(10, Math.round(hi * 0.15));
+
+  // 粗く振ってから、いちばん良かったところの周りを細かく見る
+  const tried = [];
+  const probe = p => {
+    const k = Math.max(10, Math.round(p));
+    if(k > hi || tried.some(t => t.p === k)) return;
+    const r = simAtPrice(c, k, topMult, minReturn);
+    if(r) tried.push({ p: k, ev: r.stockMean, r });
+  };
+  const STEPS = 9;
+  for(let i = 0; i < STEPS; i++) probe(lo + (hi - lo) * i / (STEPS - 1));
+
+  let best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
+  if(!best) return { verdict: "stop", stop, best: null, gain: 0, hi };
+
+  const step = (hi - lo) / (STEPS - 1);
+  for(const d of [-0.5, -0.25, 0.25, 0.5]) probe(best.p + step * d);
+  best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
+
+  // 読み上げる価格なので丸める。丸めた価格で評価し直して数字を合わせる
+  const rounded = Math.max(10, roundPrice(best.p) || best.p);
+  const rr = simAtPrice(c, rounded, topMult, minReturn);
+  if(rr && rr.stockMean >= best.ev - Math.abs(best.ev) * 0.02) best = { p: rounded, ev: rr.stockMean, r: rr };
+
+  const gain = best.ev - stop;
+  // 誤差レベルの差で「続けろ」と言い切らない
+  const near = Math.max(500, Math.abs(stop) * 0.01);
+  let verdict = gain > near ? "go" : gain < -near ? "stop" : "even";
+
+  // どの価格でも1口も動かないなら「大差ない」ではなく「もう回らない」。
+  // 解体条件（目玉が出尽くした／残りが薄すぎる）に既に達している状態。
+  const dead = !best.r || best.r.moreMean < 0.5;
+  if(dead) verdict = "stop";
+
+  return { verdict, stop, best, gain, hi, lo, dead };
+}
+
+/* ============================================================
    配信の記録
    ============================================================ */
 
@@ -2572,7 +2690,7 @@ function buildRecord(o, endedAt, memo){
     margin: c.marginNow,
     mktLeft: c.mktLeft,
     salvage: c.salvageLeft,
-    withStock: c.profitNow + c.salvageLeft,
+    withStock: c.revenue - c.costTotal + c.salvageLeft,
     recovery: c.recovery,
     auction: (() => {
       const a = auctionSummary(o);
@@ -3019,7 +3137,7 @@ function renderLive(c){
 
   // 予想の着地ではなく、いま手元にある損益（売上 − 出た賞品の原価）
   const kF = $("kpiFinal");
-  const withStock = c.profitNow + c.salvageLeft;
+  const withStock = stockAtStop(c);   // 全体の原価を引いた、いまの正味の position
   kF.className = "kpi " + (c.profitNow >= 0 ? "is-good" : withStock >= 0 ? "is-warn" : "is-bad");
   $("mFinal").textContent = syen(c.profitNow);
   $("mFinal").className = "v " + (c.profitNow >= 0 ? "pos" : "neg");
@@ -3303,6 +3421,9 @@ function renderPrizes(c){
   $("drawCount").textContent = S.events.length ? `記録 ${S.events.length} 件` : "";
 }
 
+/* 直近の判断で出した「続けるならこの価格」。0 なら出していない */
+let decidedPrice = 0;
+
 /* 値下げ判断は「完売したら」ではなく「解体まで売ったら」で出す。
    価格ごとに引き直すので、状態が変わらないうちは使い回す。 */
 let liveSimCache = { key: "", bk: null, at: new Map() };
@@ -3342,67 +3463,85 @@ function renderPrice(c){
 
   const sold_out = c.left === 0;
   const box = $("recBox");
-  const rec = c.rec;
 
   const bk = c.left > 0 ? liveBreakup(c) : null;
   const bBE  = bk ? bk.pBE : Infinity;      // 解体前提の損益分岐
   const bTgt = bk ? bk.pTarget : Infinity;  // 解体前提で目標利益率に届く価格
-  const at = c.left > 0 ? liveSimAt(c, rec) : null;   // 推奨価格での解体着地
 
-  let cls = "", msg = "", deltaTxt = "";
+  // ここが判断の本体。続けるのと止めるのを同じ物差しで比べる
+  const dec = c.left > 0 ? decideNow(c) : null;
+  const goPrice = dec && dec.best ? dec.best.p : 0;
+  decidedPrice = goPrice;                    // 「この価格に変更」が押す価格
+
+  let cls = "", msg = "";
   if(sold_out){
     cls = "is-good";
-    msg = "完売。値下げの判断は不要。";
+    $("recLabel").textContent = "完売";
     $("recPrice").textContent = "—";
     $("recDelta").textContent = `${c.N} 口すべて排出済み`;
+    $("recCmp").innerHTML = "";
+    msg = "完売。判断は不要。配信を終了して記録に残す。";
+  }else if(!dec || !dec.best){
+    cls = "is-bad";
+    $("recLabel").textContent = "解体";
+    $("recPrice").textContent = "いま止める";
+    $("recDelta").textContent = "売れる価格帯が無い";
+    $("recCmp").innerHTML = "";
+    msg = `買い手が動く価格まで下げると、売るより在庫として持つほうが上回る。`
+        + `ここで止めて在庫（回収見込み ${yen(c.salvageLeft)}）に戻すのが得。`;
   }else{
-    $("recPrice").textContent = yen(rec);
-    const diff = c.price - rec;
-    deltaTxt = diff <= 0
-      ? "現行価格のまま（下げる理由なし）"
-      : `現行から ${yen(diff)} 引き（${pct(diff/c.price,0)} オフ）`;
+    const go = dec.verdict === "go";
+    const even = dec.verdict === "even";
+    cls = go ? "is-good" : even ? "" : "is-bad";
+    const b = dec.best.r;
 
-    // 解体までの着地をひとことで。以降のメッセージはこれに足す。
-    const land = at
-      ? `この価格なら解体まであと ${at.moreMed} 口（残り ${c.left} 口）、着地は ${syen(at.cashMed)}・利益率 ${spct(at.marMed, 0)}。`
-      : "";
+    $("recLabel").textContent = go ? "続ける" : even ? "どちらでも大差ない" : "解体する";
+    $("recPrice").textContent = (go || even) && !dec.dead ? yen(goPrice) : "いま止める";
+    const diff = c.price - goPrice;
+    $("recDelta").textContent = (go || even)
+      ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
+         : "現行価格のまま（下げる理由なし）")
+      : `残りを在庫に戻す`;
 
-    if(at && (at.overNow || at.thinNow)){
-      cls = "is-bad";
-      msg = (at.overNow
-              ? `目玉（相場 ${yen(c.price * simParams().topMult)} 以上）はもう残っていない。`
-              : `残り1口の期待値 ${yen(c.evMkt)} は、いまの単価に対して還元率 ${pct(c.returnLeft,0)}。解体ラインを割っている。`)
-          + `これ以上は続けても買い手が付かない。ここで止めて残りを在庫（回収見込み ${yen(c.salvageLeft)}）に戻すか、`
-          + `相場 ${yen(c.addNeeded)} ぶんを追加して組み直すか。`;
-    }else if(diff <= 0){
-      cls = "is-good";
-      msg = `残り ${c.left} 口の還元率は ${pct(c.returnLeft,0)}。まだ買い手から見て十分に強いので、値下げせずに進めてよい。` + land;
-    }else if(rec < bBE){
-      cls = "is-bad";
-      const beTxt = bBE === Infinity
-        ? `価格をいくら上げても、解体までに原価は回収しきれない`
-        : `解体までに原価を回収するには ${yen(Math.ceil(bBE))} 以上が必要だが、その価格の還元率は ${pct(c.evMkt / bBE, 0)} で買い手は付かない`;
-      msg = land + `${beTxt}。打ち手は2つ — 相場 ${yen(c.addNeeded)} ぶんの賞品を追加して価値を戻すか、`
-          + `ここで止めて残りを在庫（回収見込み ${yen(c.salvageLeft)}）に戻すか。`;
-    }else if(rec >= bTgt){
-      cls = "is-good";
-      msg = `この価格でも解体まで売れば目標利益率 ${pct(c.tm,0)} に届く。還元率は ${pct(rec>0 ? c.evMkt/rec : 0, 0)} まで戻るので売れ行きは回復するはず。` + land;
+    // 同じ物差し（在庫込み損益）で並べる
+    $("recCmp").innerHTML = `
+      <div class="${go ? "win" : ""}">
+        <span class="k">続けた場合${go ? `<span class="tag">こちら</span>` : ""}</span>
+        <span class="v">${syen(Math.round(dec.best.ev))}</span>
+        <span class="s">${yen(goPrice)}で あと ${b.moreMed} 口 さばけて解体・悪いほう1割で ${syen(b.stockP10)}</span>
+      </div>
+      <div class="${!go && !even ? "win" : ""}">
+        <span class="k">いま解体${!go && !even ? `<span class="tag">こちら</span>` : ""}</span>
+        <span class="v">${syen(Math.round(dec.stop))}</span>
+        <span class="s">売上 ${yen(c.revenue)} − 総原価 ${yen(c.costTotal)} ＋ 残り ${c.left} 口の回収 ${yen(c.salvageLeft)}</span>
+      </div>`;
+
+    const d = Math.abs(Math.round(dec.gain));
+    if(go){
+      msg = `${yen(goPrice)} まで下げて続けるほうが、いま解体するより <b>${yen(d)}</b> 得。`
+          + `この価格なら還元率 ${pct(goPrice > 0 ? c.evMkt / goPrice : 0, 0)} で買い手も動く。`;
+      if(b.cashNegRate > 0.4) msg += `ただし現金がマイナスで終わる目も ${pct(b.cashNegRate, 0)} ある。`;
+    }else if(even){
+      msg = `どちらを選んでも差は <b>${yen(d)}</b> しかない。売り切って現金にしたいなら ${yen(goPrice)}、`
+          + `在庫として持っておきたいならここで止める。好みで決めてよい。`;
+    }else if(dec.dead){
+      msg = `<b>もう回らない。</b>解体条件（目玉が出尽くす／残りが薄すぎる）に達しているので、`
+          + `いくらに下げても買い手は動かない。ここで止めて在庫（${yen(c.salvageLeft)}）に戻す。`;
     }else{
-      cls = "";
-      msg = land + `目標利益率 ${pct(c.tm,0)} は割るが黒字は確保できる。`
-          + (bTgt === Infinity
-              ? `いまの残りでは、価格を上げても目標には届かない。`
-              : `目標を守るなら ${yen(Math.ceil(bTgt))} が下限。`);
+      msg = `いま解体するほうが <b>${yen(d)}</b> 得。買い手が動く ${yen(dec.hi)} 以下まで下げても、`
+          + `売った現金より在庫のほうが価値が残る。ここで止めて組み直すのが筋。`;
     }
-    $("recDelta").textContent = deltaTxt;
+    // 目玉が残っていないなら、その事実も添える（続ける根拠が薄い）
+    const T = topsLeft(c);
+    if(T.count === 0) msg += ` 目玉はもう残っていない。`;
   }
   box.className = "verdict-box" + (cls ? " " + cls : "");
-  $("recMsg").textContent = msg;
-  $("btnApply").disabled = sold_out || rec <= 0 || rec === c.price;
+  $("recMsg").innerHTML = msg;
+  $("btnApply").disabled = sold_out || goPrice <= 0 || goPrice === c.price;
 
   // アンカー。損益分岐と目標利益率は解体前提（＝残りを全部さばける前提にしない）
   const anchors = [
-    { key:"rec",    name:"推奨価格",       desc:"買い手が動く水準まで下げる",     p: c.rec },
+    { key:"rec",    name:"おすすめの価格", desc:"続けるならここ（期待値がいちばん高い）", p: goPrice },
     { key:"buyer",  name:"還元率ベース",   desc:`残り期待値 ÷ ${pct(S.targetReturn,0)}`, p: c.pBuyer },
     { key:"target", name:"目標利益率の下限", desc:`解体まで売って利益率 ${pct(c.tm,0)}`, p: bTgt },
     { key:"be",     name:"損益分岐",       desc:"解体までにちょうどトントン",      p: bBE },
@@ -3436,8 +3575,8 @@ function renderPrice(c){
 
   // 試算
   const finite = v => (v === Infinity || !isFinite(v)) ? 0 : v;
-  const simMax = Math.max(c.price, c.rec, finite(bTgt), finite(bBE), 100) * 1.4;
-  const sim = simPrice == null ? c.rec : simPrice;
+  const simMax = Math.max(c.price, goPrice, finite(bTgt), finite(bBE), 100) * 1.4;
+  const sim = simPrice == null ? (goPrice || c.price) : simPrice;
   const rng = $("simPriceRange");
   rng.max = String(Math.round(simMax));
   rng.step = "1";                       // 落札は1円単位なので試算も1円単位で動かせる
@@ -4111,7 +4250,7 @@ function openClosePanel(){
 
 function renderCloseSummary(){
   const c = compute();
-  const withStock = c.profitNow + c.salvageLeft;
+  const withStock = stockAtStop(c);   // 全体の原価を引いた、いまの正味の position
   $("closeSummary").innerHTML = [
     ["消化",        `${c.sold}/${c.N}`, ""],
     ["売上",        yen(c.revenue), ""],
@@ -4374,8 +4513,9 @@ $("btnResetDraws").addEventListener("click", async () => {
 });
 
 $("btnApply").addEventListener("click", () => {
-  const c = compute();
-  if(c.rec > 0){ S.price = c.rec; simPrice = null; render(); }
+  if(decidedPrice > 0 && decidedPrice !== S.price){
+    S.price = decidedPrice; simPrice = null; render();
+  }
 });
 
 $("simPriceInput").addEventListener("input", e => {
