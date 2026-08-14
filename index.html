@@ -616,6 +616,38 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .syncbody input{ font-family:var(--font-ui); font-size:13px; }
 .syncbody .drawbar{ margin-top:0; }
 
+/* ---- ブリッジ（見るだけ） ----
+   配信中の画面をそのまま流用して、書き込む操作だけ消す。
+   別画面を作ると片方だけ直すのを必ず忘れるので、DOM は共有する。 */
+.watchbar{
+  border:1px solid color-mix(in srgb, var(--good) 40%, var(--line));
+  background:var(--good-bg); border-radius:9px; padding:9px 12px;
+}
+.watchtag{
+  font-family:var(--font-num); font-size:10.5px; font-weight:800; letter-spacing:.16em;
+  padding:2px 8px; border-radius:999px; flex:none;
+  background:var(--good); color:var(--surface);
+}
+.watchpick select{
+  background:var(--surface); border:1px solid var(--line-2); border-radius:7px;
+  padding:6px 9px; font-size:13px; max-width:230px;
+}
+.watchclock{ font-family:var(--font-num); font-size:12px; color:var(--ink-3); white-space:nowrap; }
+.watchclock.is-stale{ color:var(--bad); font-weight:700; }
+/* 書き込む操作はブリッジには出さない。無効化ではなく非表示にして、押せると思わせない */
+.is-watch #liveCrumb,
+.is-watch #closePanel,
+.is-watch #lotBar,
+.is-watch #btnUndo,
+.is-watch #btnResetDraws,
+.is-watch #btnApply,
+.is-watch #btnReopen,
+.is-watch #btnNextRound{ display:none !important; }
+.is-watch .prize{ cursor:default; }
+.is-watch .prize:hover{ border-color:var(--line); background:var(--surface-2); }
+.is-watch .prize:active{ transform:none; }
+.is-watch .verdict-box .top{ padding-right:16px; }
+
 /* ---- 画面内ダイアログ ---- */
 .modal{
   position:fixed; inset:0; z-index:200; display:grid; place-items:center;
@@ -751,6 +783,7 @@ body.locked > header, body.locked > main { display:none; }
     <nav class="modes" aria-label="表示切替">
       <button type="button" data-mode="list" aria-pressed="true">オリパ一覧</button>
       <button type="button" data-mode="live" aria-pressed="false" id="tabLive">配信中</button>
+      <button type="button" data-mode="watch" aria-pressed="false" id="tabWatch">ブリッジ</button>
     </nav>
   </div>
 </header>
@@ -847,12 +880,25 @@ body.locked > header, body.locked > main { display:none; }
 
   <!-- ========== 配信中 ========== -->
   <section id="view-live" class="stack" hidden>
-    <div class="crumb">
+    <div class="crumb" id="liveCrumb">
       <button type="button" class="btn ghost" id="btnLiveToList">← オリパ一覧</button>
       <span class="crumb-name" id="liveName">—</span>
       <span class="spacer"></span>
       <button type="button" class="btn" id="btnEditFromLive">中身を編集</button>
       <button type="button" class="btn primary" id="btnCloseStream">配信を終了して記録</button>
+    </div>
+
+    <!-- ブリッジ（見るだけ）の見出し。ここには何も書き込む操作を置かない -->
+    <div class="crumb watchbar" id="watchCrumb" hidden>
+      <button type="button" class="btn ghost" id="btnWatchToList">← オリパ一覧</button>
+      <span class="watchtag">BRIDGE</span>
+      <span class="crumb-name" id="watchName">—</span>
+      <span class="spacer"></span>
+      <label class="watchpick">
+        <span class="sr">映すオリパ</span>
+        <select id="watchPick"></select>
+      </label>
+      <span class="watchclock" id="watchClock">—</span>
     </div>
 
     <!-- 締めの確認 -->
@@ -1486,7 +1532,9 @@ function loadDB(){
 function save(){
   if(dataState === "broken") return;    // 読めなかった中身を潰さない
   try{
-    if(S && mode !== "list") S.updatedAt = Date.now();
+    // ブリッジは見るだけ。ここで updatedAt を触ると、見ているだけの端末の版が
+    // 「いちばん新しい」ことになって、配信している端末の記録を上書きしてしまう。
+    if(S && (mode === "live" || mode === "edit")) S.updatedAt = Date.now();
     DB.currentId = S ? S.id : null;
     DB.version = APP_DATA_VERSION;
     localStorage.setItem(STORE_KEY, JSON.stringify(DB));
@@ -1518,6 +1566,9 @@ const SYNC_DEBOUNCE = 3000;
 
 let syncConf = { url: "", room: "", token: "", since: 0 };
 let syncBusy = false, syncTimer = null, syncMsg = "";
+let syncFails = 0, pollTimer = null;
+let watchSeenAt = 0;        // 最後にサーバから取れた時刻（ブリッジの時計用）
+let watchPin = "";          // ブリッジで固定表示するオリパ。空なら自動で追う
 
 function loadSyncConf(){
   try{
@@ -1572,7 +1623,8 @@ function syncApply(items){
       // 配信中・編集中のオリパは、他の端末の更新で差し替えない。
       // 打っている最中に中身がすり替わるのがいちばん困る。
       // こちらの版はこのあと送られるので、新しければ相手に反映される。
-      if(S && String(S.id) === String(id) && mode !== "list") continue;
+      // ブリッジ（見るだけ）は逆で、相手の更新を映すのが仕事なので必ず受け取る。
+      if(S && String(S.id) === String(id) && (mode === "live" || mode === "edit")) continue;
       const i = DB.oripas.findIndex(o => String(o.id) === String(id));
       const mine = i >= 0 ? Number(DB.oripas[i].updatedAt) || 0 : -1;
       if(Number(it.updatedAt) < mine) continue;          // こちらが新しい
@@ -1658,7 +1710,10 @@ async function syncNow(manual){
     saveSyncConf();
     save();
     setSyncState("is-on", `${fmtClock(Date.now())} に同期（受信 ${changed} 件）`);
-    if(changed && mode === "list") render();
+    syncFails = 0;
+    watchSeenAt = Date.now();
+    if(mode === "watch") render();                    // 受信が 0 でも時計は進める
+    else if(changed && mode === "list") render();
     return true;
   }catch(err){
     // 失敗しても since は進めない。次回また送り直す
@@ -1667,16 +1722,34 @@ async function syncNow(manual){
       why += "（回線、URL の誤り、または埋め込み表示で外部通信が禁止されている）";
     }
     setSyncState("is-bad", (manual ? "同期できなかった：" : "同期できていない：") + why);
+    syncFails = Math.min(syncFails + 1, 5);
+    if(mode === "watch") render();          // 映せていないことを画面に出す
+    scheduleSync();                          // 送り残しがあるなら間を空けて出し直す
     return false;
   }finally{
     syncBusy = false;
   }
 }
 
+/* 送るものがあるときだけ急いで送る。
+   以前はここが save() から無条件に呼ばれ、syncNow() の中の save() がまた
+   ここを呼ぶ輪になっていて、何も変わっていなくても 3 秒おきに通信し続けていた。
+   取りに行くほうは下の setPoll() が画面ごとの間隔で受け持つ。 */
 function scheduleSync(){
   if(!syncOn()) return;
+  if(!syncOutbox().length) return;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => syncNow(false), SYNC_DEBOUNCE);
+  syncTimer = setTimeout(() => syncNow(false), SYNC_DEBOUNCE * Math.min(1 << syncFails, 20));
+}
+
+/* 画面ごとの取りに行く間隔。配信中・編集中は自分が主なので取りに行かない */
+const POLL_MS = { watch: 5000, list: 60000 };
+function setPoll(){
+  clearTimeout(pollTimer);
+  pollTimer = null;
+  const ms = syncOn() ? POLL_MS[mode] : 0;
+  if(!ms) return;
+  pollTimer = setTimeout(async () => { await syncNow(false); setPoll(); }, ms);
 }
 
 const fmtClock = t => {
@@ -2919,6 +2992,9 @@ function renderDataNotice(){
 function render(){
   renderDataNotice();
 
+  // ブリッジは「いま動いているオリパ」を自分で選ぶ。開く前に決めておく
+  if(mode === "watch") S = watchTarget() || S;
+
   // 開いているオリパが消えていたら一覧へ戻す
   if(S && !DB.oripas.some(o => o.id === S.id)) S = null;
   if(!S) S = DB.oripas.find(o => o.id === DB.currentId) || null;
@@ -2927,15 +3003,22 @@ function render(){
   document.querySelectorAll(".modes button").forEach(b =>
     b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
   $("tabLive").disabled = !S;
+  $("tabWatch").disabled = !DB.oripas.length;
+  const onLive = mode === "live" || mode === "watch";
   $("view-list").hidden = mode !== "list";
-  $("view-live").hidden = mode !== "live";
+  $("view-live").hidden = !onLive;
   $("view-edit").hidden = mode !== "edit";
+  $("view-live").classList.toggle("is-watch", mode === "watch");
+  $("liveCrumb").hidden  = mode !== "live";
+  $("watchCrumb").hidden = mode !== "watch";
 
   const inList = mode === "list";
   $("titleText").textContent = inList ? "配信オリパAI支援" : (S.name || "配信オリパAI支援");
   $("subText").textContent   = inList
     ? "保存したオリパの一覧"
-    : (mode === "edit" ? "オリパの中身を編集" : "配信中のリアルタイム利益率と値下げ判断");
+    : mode === "edit"  ? "オリパの中身を編集"
+    : mode === "watch" ? "ブリッジ — 配信中の進行を映すだけ。ここからは記録できない"
+    : "配信中のリアルタイム利益率と値下げ判断";
   document.title = (!inList && S && S.name ? S.name + " — " : "") + "配信オリパAI支援";
 
   if(inList){
@@ -2948,11 +3031,12 @@ function render(){
 
   const c = compute();
   const pill = $("verdictPill");
-  pill.hidden = mode !== "live";
+  pill.hidden = !onLive;
   pill.className = "pill" + (c.state === "flat" ? "" : " is-" + c.state);
   $("verdictText").textContent = c.verdict;
 
-  if(mode === "live") renderLive(c); else renderEdit(c);
+  if(onLive) renderLive(c); else renderEdit(c);
+  if(mode === "watch") renderWatchBar();
   renderFormulas(c);
   save();
 }
@@ -2960,8 +3044,56 @@ function render(){
 function go(m){
   if(m !== "live"){ const cp = document.getElementById("closePanel"); if(cp) cp.hidden = true; }
   mode = m;
+  if(m === "watch"){ lotBarKey = ""; syncNow(false); }   // 開いた瞬間にまず取りに行く
   render();
+  setPoll();
   window.scrollTo({ top: 0 });
+}
+
+/* ============================================================
+   ブリッジ（見るだけ）
+   配信している端末の進行をサーバ越しに映す。ここからは一切書き込まない。
+   ============================================================ */
+
+/** 映す対象。固定していなければ「まだ記録していないもののうち直近に動いたもの」 */
+function watchTarget(){
+  if(watchPin){
+    const pinned = DB.oripas.find(o => String(o.id) === String(watchPin));
+    if(pinned) return pinned;
+    watchPin = "";
+  }
+  const live = DB.oripas.filter(o => !o.closedAt);
+  const pool = live.length ? live : DB.oripas;
+  return pool.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0] || null;
+}
+
+function renderWatchBar(){
+  $("watchName").textContent = S.name || "無題のオリパ";
+
+  const sel = $("watchPick");
+  const want = watchPin ? String(watchPin) : "";
+  const opts = [`<option value="">自動（いま動いているもの）</option>`].concat(
+    DB.oripas.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map(o =>
+      `<option value="${esc(String(o.id))}">${esc(o.name || "無題のオリパ")}`
+      + `${o.closedAt ? "（記録済み）" : ""}</option>`));
+  const html = opts.join("");
+  if(sel.dataset.html !== html){ sel.innerHTML = html; sel.dataset.html = html; }
+  sel.value = want;
+
+  const clock = $("watchClock");
+  if(!syncOn()){
+    clock.textContent = "同期が未設定。この端末の中身を映している";
+    clock.className = "watchclock is-stale";
+    return;
+  }
+  if(!watchSeenAt){
+    clock.textContent = "受信待ち…";
+    clock.className = "watchclock";
+    return;
+  }
+  const age = Math.round((Date.now() - watchSeenAt) / 1000);
+  clock.textContent = age < 15 ? `${fmtClock(watchSeenAt)} 受信` : `${age} 秒前から届いていない`;
+  clock.className = "watchclock" + (age >= 30 ? " is-stale" : "");
 }
 
 function openOripa(id, m){
@@ -3359,7 +3491,7 @@ function renderLotTable(){
       `<td class="n">${yen(lot.price)}${lot.rem ? `<br><span class="hint">合計 ${yen(lotTotal(lot))}</span>` : ""}</td>` +
       `<td class="n">${yen(st.cost)}</td>` +
       `<td class="n ${st.profit >= 0 ? "pos" : "neg"}">${syen(st.profit)}</td>` +
-      `<td>${S.closedAt ? "" : `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
+      `<td>${S.closedAt || mode === "watch" ? "" : `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
     const del = tr.querySelector(".rowdel");
     if(del) del.addEventListener("click", () => cancelLot(lot.id));
     tb.appendChild(tr);
@@ -3381,7 +3513,9 @@ function renderPrizes(c){
     const el = document.createElement("button");
     el.type = "button";
     el.className = "prize";
-    el.disabled = out || c.left === 0 || !!S.closedAt;
+    // ブリッジでは残り口数を見せたいので薄くはしない。押せないだけ
+    el.disabled = mode === "watch" ? false : (out || c.left === 0 || !!S.closedAt);
+    if(mode === "watch") el.setAttribute("aria-disabled", "true");
     el.dataset.id = p.id;
     el.innerHTML = `
       <span>
@@ -3390,12 +3524,12 @@ function renderPrizes(c){
       </span>
       <span class="right">
         <span class="rem${out?" out":""}">残 ${rest}/${p.count|0}</span>
-        <span class="plus" aria-hidden="true">＋1</span>
+        ${mode === "watch" ? "" : `<span class="plus" aria-hidden="true">＋1</span>`}
       </span>`;
-    el.addEventListener("click", () => draw(p.id));
+    if(mode !== "watch") el.addEventListener("click", () => draw(p.id));
     wrap.appendChild(el);
 
-    if(p.normal && rest > 1){
+    if(p.normal && rest > 1 && mode !== "watch"){
       const bar = document.createElement("div");
       bar.className = "drawbar";
       bar.style.margin = "0 0 2px 0";
@@ -4396,8 +4530,16 @@ function undo(){
 document.querySelectorAll(".modes button").forEach(b => {
   b.addEventListener("click", () => {
     if(b.dataset.mode === "live" && !S) return;
+    if(b.dataset.mode === "watch" && !DB.oripas.length) return;
     go(b.dataset.mode);
   });
+});
+
+$("btnWatchToList").addEventListener("click", () => go("list"));
+$("watchPick").addEventListener("change", () => {
+  watchPin = $("watchPick").value || "";
+  lotBarKey = "";
+  render();
 });
 
 /* 画面間の行き来 */
@@ -4432,6 +4574,7 @@ $("btnBackupAll").addEventListener("click", () => {
     if(url !== syncConf.url || room !== syncConf.room) syncConf.since = 0;
     syncConf.url = url; syncConf.room = room; syncConf.token = token;
     saveSyncConf();
+    setPoll();
     setSyncState(syncOn() ? "is-on" : "", syncOn() ? "設定済み。「いま同期する」で確かめる。" : "");
   }));
 
@@ -4444,6 +4587,7 @@ $("btnSyncOff").addEventListener("click", async () => {
   if(!await ask("同期をやめますか？\nこの端末の内容はそのまま残ります。", { okLabel: "やめる" })) return;
   syncConf = { url: "", room: "", token: "", since: 0 };
   saveSyncConf();
+  setPoll();
   renderSyncBox();
   setSyncState("", "同期を切った。この端末だけに保存する。");
 });
@@ -4667,9 +4811,12 @@ loadSyncConf();
 render();
 // 立ち上げ直後に一度だけ取りに行く。失敗しても画面はそのまま動く
 if(syncOn()) syncNow(false);
+setPoll();
 // 復帰したときにも拾いに行く（配信中にスリープした端末など）
 document.addEventListener("visibilitychange", () => {
-  if(document.visibilityState === "visible" && syncOn()) scheduleSync();
+  if(document.visibilityState !== "visible"){ clearTimeout(pollTimer); pollTimer = null; return; }
+  if(syncOn()) syncNow(false);
+  setPoll();
 });
 </script>
 
