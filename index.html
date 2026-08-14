@@ -663,6 +663,76 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 /* ---- ブリッジ（見るだけ） ----
    配信中の画面をそのまま流用して、書き込む操作だけ消す。
    別画面を作ると片方だけ直すのを必ず忘れるので、DOM は共有する。 */
+/* ---- 使い方 ---- */
+.helplink{
+  border:1px solid var(--line-2); background:transparent; color:var(--ink-2);
+  border-radius:8px; padding:6px 12px; font-size:13px; font-weight:700; white-space:nowrap;
+}
+.helplink:hover{ border-color:var(--gold); color:var(--gold-ink); }
+.helplink[aria-pressed="true"]{ background:var(--gold); border-color:var(--gold); color:var(--on-gold); }
+
+.guide{ max-width:760px; }
+.guide > .body{ padding:20px 22px 26px; }
+.guide h3{
+  font-size:15px; font-weight:800; margin:26px 0 8px; padding-top:16px;
+  border-top:1px solid var(--line);
+}
+.guide h3:first-child{ margin-top:0; padding-top:0; border-top:0; }
+.guide h4{ font-size:13.5px; font-weight:800; margin:16px 0 6px; color:var(--ink-2); }
+.guide p{ margin:0 0 10px; font-size:14px; line-height:1.75; }
+.guide ul, .guide ol{ margin:0 0 10px; padding-left:1.3em; font-size:14px; line-height:1.75; }
+.guide li{ margin-bottom:5px; }
+.guide li::marker{ color:var(--ink-3); }
+.guide b{ font-weight:800; }
+.guide code{
+  font-family:var(--font-num); font-size:12.5px; background:var(--surface-2);
+  border:1px solid var(--line); border-radius:5px; padding:1px 6px;
+}
+.guide .lead{ font-size:14.5px; color:var(--ink-2); }
+.guide .warn{
+  border-radius:8px; padding:11px 14px; font-size:13.5px; line-height:1.7; margin:0 0 12px;
+  background:var(--gold-bg); color:var(--gold-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 30%, transparent);
+}
+.guide .warn b{ font-weight:800; }
+.guide table{ width:100%; border-collapse:collapse; font-size:13.5px; margin:0 0 12px; }
+.guide th, .guide td{ padding:7px 9px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+.guide th{ font-size:11.5px; letter-spacing:.06em; color:var(--ink-3); font-weight:700; white-space:nowrap; }
+.guide tr:last-child td{ border-bottom:0; }
+.guide .toc{
+  display:flex; flex-wrap:wrap; gap:7px; margin:0 0 4px; padding:0; list-style:none;
+}
+.guide .toc a{
+  display:inline-block; padding:5px 11px; border-radius:999px; font-size:12.5px; font-weight:700;
+  background:var(--surface-2); color:var(--ink-2); text-decoration:none;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.guide .toc a:hover{ background:var(--gold-bg); color:var(--gold-ink); }
+.guide .keys{ display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:13.5px; margin:0 0 12px; }
+.guide .keys dt{ font-family:var(--font-num); font-weight:700; white-space:nowrap; }
+.guide .keys dd{ margin:0; color:var(--ink-2); }
+
+/* ---- 配信の席 ---- */
+.seat{
+  display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+  padding:5px 11px; border-radius:999px; font-size:12.5px; font-weight:700;
+  background:var(--good-bg); color:var(--good);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 25%, transparent);
+}
+.seat:empty{ display:none; }
+.seat.is-warn{ background:var(--gold-bg); color:var(--gold-ink); }
+/* 配信中は中身をいじれない。数字の土台が動くと記録と食い違うため */
+.lockbar{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  border-radius:8px; padding:11px 14px; font-size:13px; margin-bottom:14px;
+  background:var(--gold-bg); color:var(--gold-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gold) 32%, transparent);
+}
+.lockbar b{ font-weight:800; }
+.lockbar .spacer{ flex:1 1 auto; }
+.lockbar .btn{ background:var(--surface); border-color:color-mix(in srgb, currentColor 35%, transparent); color:inherit; }
+.is-locked table.edit, .is-locked .fields, .is-locked .setbar{ opacity:.55; }
+
 .watchbar{
   border:1px solid color-mix(in srgb, var(--good) 40%, var(--line));
   background:var(--good-bg); border-radius:9px; padding:9px 12px;
@@ -829,6 +899,7 @@ body.locked > header, body.locked > main { display:none; }
       <button type="button" data-mode="live" aria-pressed="false" id="tabLive">配信中</button>
       <button type="button" data-mode="watch" aria-pressed="false" id="tabWatch">ブリッジ</button>
     </nav>
+    <button type="button" class="helplink" id="btnHelp">使い方</button>
   </div>
 </header>
 
@@ -892,7 +963,15 @@ body.locked > header, body.locked > main { display:none; }
                 <label for="syncToken">合言葉</label>
                 <input type="password" id="syncToken" placeholder="スクリプトの SHARED_SECRET" autocomplete="off">
               </div>
+              <div class="field">
+                <label for="devName">この端末の名前</label>
+                <input type="text" id="devName" placeholder="配信PC" autocomplete="off">
+              </div>
             </div>
+            <p class="hint" style="margin:0">
+              端末の名前は、別の PC で配信中のときに「どこが配信しているか」を出すのに使う。
+              同じオリパは<b>同時に 1 台しか開けない</b>。
+            </p>
             <div class="drawbar">
               <button type="button" class="btn primary" id="btnSyncNow">いま同期する</button>
               <button type="button" class="btn ghost" id="btnSyncOff">同期をやめる</button>
@@ -941,7 +1020,7 @@ body.locked > header, body.locked > main { display:none; }
       <button type="button" class="btn ghost" id="btnLiveToList">← オリパ一覧</button>
       <span class="crumb-name" id="liveName">—</span>
       <span class="spacer"></span>
-      <button type="button" class="btn" id="btnEditFromLive">中身を編集</button>
+      <span class="seat" id="liveSeat"></span>
       <button type="button" class="btn primary" id="btnCloseStream">配信を終了して記録</button>
     </div>
 
@@ -950,6 +1029,7 @@ body.locked > header, body.locked > main { display:none; }
       <button type="button" class="btn ghost" id="btnWatchToList">← オリパ一覧</button>
       <span class="watchtag">BRIDGE</span>
       <span class="crumb-name" id="watchName">—</span>
+      <span class="seat" id="watchSeat"></span>
       <span class="spacer"></span>
       <label class="watchpick">
         <span class="sr">映すオリパ</span>
@@ -1143,6 +1223,217 @@ body.locked > header, body.locked > main { display:none; }
       </section>
       </div>
     </div>
+  </section>
+
+
+  <!-- ========== 使い方 ========== -->
+  <section id="view-help" class="stack" hidden>
+    <section class="panel guide">
+      <header>
+        <h2>使い方</h2>
+        <span class="hint">この版のアプリに合わせて書いてある</span>
+      </header>
+      <div class="body">
+        <p class="lead">
+          配信でオリパを売っている最中に、<b>いまいくら儲かっているか</b>と
+          <b>このまま続けるべきか</b>を出すツール。カードが出るたびに押していくだけで、
+          残りの口数・利益率・値下げの判断・終わる時刻が更新される。
+        </p>
+
+        <ul class="toc">
+          <li><a href="#g-flow">配信の流れ</a></li>
+          <li><a href="#g-cue">カンペ</a></li>
+          <li><a href="#g-decide">続けるか、解体するか</a></li>
+          <li><a href="#g-pace">時間とペース</a></li>
+          <li><a href="#g-seat">配信の席</a></li>
+          <li><a href="#g-bridge">ブリッジ</a></li>
+          <li><a href="#g-market">相場想定</a></li>
+          <li><a href="#g-sync">端末間の同期</a></li>
+          <li><a href="#g-data">データ</a></li>
+          <li><a href="#g-keys">キーボード</a></li>
+          <li><a href="#g-trouble">困ったとき</a></li>
+        </ul>
+
+        <h3 id="g-screens">4 つの画面</h3>
+        <table>
+          <tr><th>オリパ一覧</th><td>入口。作ったオリパが並ぶ。過去の配信の記録もここの下</td></tr>
+          <tr><th>編集</th><td>賞品（原価・相場・口数）と販売単価を決める。一覧で<b>名前を押す</b>と入る</td></tr>
+          <tr><th>配信中</th><td>売れるたびに記録する。<b>同時に 1 台だけ</b></td></tr>
+          <tr><th>ブリッジ</th><td>配信中の進行を<b>別の PC から見るだけ</b>。記録はできない</td></tr>
+        </table>
+
+        <h3 id="g-flow">配信の流れ</h3>
+        <ol>
+          <li><b>オリパを作る。</b>一覧の <code>＋ 新しいオリパ</code>、または <code>CSV から作る</code>
+            （在庫 CSV は画面のどこにドロップしてもいい）。</li>
+          <li><b>中身を確かめる。</b>賞品の原価・相場・口数と販売単価。
+            総口数は口数の合計から自動で決まる。ハズレ枠は行を足して口数を入れる。</li>
+          <li><b><code>配信画面をひらく</code>。</b>ここで席を取る。他の PC が配信中なら入れない。</li>
+          <li><b>売れたら記録する。</b>下の 2 通りのどちらか。</li>
+          <li><b>終わったら <code>配信を終了して記録</code>。</b>日付とメモを添えるとその回の結果が残る。</li>
+        </ol>
+
+        <h4>売れたときの記録のしかた</h4>
+        <table>
+          <tr><th>定価で売れた</th><td>出たカードを押す →&nbsp;<code>定価で記録</code>。2 手で終わり</td></tr>
+          <tr><th>オークション</th><td><code>落札を登録</code> で先に金額・口数・落札者を入れる →
+            カードが開いたらその賞品を押す（<b>このとき金額はもう聞かれない</b>）</td></tr>
+        </table>
+        <ul>
+          <li>金額は <b>1 円単位</b>。「合計」で入れて口数で割り切れないときは、
+            余りの円を先頭の口に乗せるので合計はぴったり入力どおりになる。</li>
+          <li>登録しただけでカードを押していない口は「<b>開封待ち</b>」として別に出る。
+            売上に入るのはカードを押してから（出た賞品が決まらないと原価が分からないため）。</li>
+          <li>カードは<b>原価の高い順</b>に並ぶ。残りが 5 口以上ある行には
+            <code>＋5</code> <code>＋10</code> が出るので、ハズレはまとめて押せる。</li>
+          <li>取り消しは <code>← 1 件取り消し</code>。落札の金額と落札者は次のダイアログに戻る。</li>
+        </ul>
+
+        <h3 id="g-cue">カンペ（画面のいちばん上）</h3>
+        <p>
+          いまの残りから作った<b>そのまま読み上げられる文</b>。カードを押すたびに作り直される。
+        </p>
+        <ul>
+          <li><code>「」</code> が付いた行が読み上げ用。いちばん下の <code>自分用</code> の行は判断メモで、
+            読み上げるものではない。</li>
+          <li><b>読み上げ行に出る数字は「残り口数」と「相場」だけ。</b>
+            単価・還元率・確率は出さない。熱さは <code>激熱！</code> <code>のこ熱！</code> のような言葉で出る。</li>
+          <li>口調は <code>たたき売り</code>（既定・高速に捌く用）と <code>ふつう</code> から選べる。
+            <b>口調を変えても数字は 1 つも変わらない。</b>渋い局面では たたき売りでも
+            「正直ちょい渋い！だから安くいくよ！」と出る。</li>
+          <li><code>別の言い方</code> で言い回しを入れ替えられる。<code>たたむ</code> で隠せる。</li>
+        </ul>
+
+        <h3 id="g-decide">続けるか、解体するか（右側）</h3>
+        <p>
+          値下げ幅を決める道具ではなく、<b>2 択を期待値で比べる画面</b>。
+          いくらにすべきかはアプリが探して出すので、価格をこちらで決める必要はない。
+        </p>
+        <ul>
+          <li><b>続けた場合</b>と<b>いま解体</b>を同じ式（売上 − 総原価 ＋ 残りの回収額）で並べ、
+            高いほうに <code>こちら</code> が付く。</li>
+          <li>価格は「現行価格」と「買い手が動く上限」の低いほうを天井に、その 15% までを探す。
+            <b>値上げの提案はしない</b>（需要のモデルを持っていないため）。</li>
+          <li>差が小さいときは「どちらでも大差ない」。目玉が出尽くしていれば「もう回らない」。</li>
+          <li>下の表は<b>解体前提</b>の着地（中央値／良いほう 1 割／悪いほう 1 割）。
+            完売は参考として薄く 1 行だけ。</li>
+        </ul>
+        <p>
+          <b>現金損益</b>は売れ残りを 0 円と見た数字。<b>在庫込み損益</b>は売れ残りを
+          回収率で評価した数字（＝売上 − 総原価 ＋ 残りの相場 × 回収率）。
+        </p>
+
+        <h3 id="g-pace">時間とペース</h3>
+        <ul>
+          <li><b>実働</b>は休憩を除いた時間。口と口のあいだが 10 分を超えたぶんは中断として外す。
+            そうしないと雑談や休憩でペースが実態より遅く出る。</li>
+          <li><b>予測には直近のペースを使う</b>。値下げすれば速くなるので、全体平均だと反応しない。</li>
+          <li><b>完売見込み</b>と<b>解体まで</b>は別物。オリパは途中で解体するのが前提なので、
+            実際に終わるのはたいてい「解体まで」に近い。</li>
+          <li><b>時給 GMV は売上ベース</b>（原価を引く前）。粗利ではない。</li>
+          <li>10 分以上動きがないと「中断中」になって予測を止める。</li>
+        </ul>
+
+        <h3 id="g-seat">配信の席（同時に 1 台だけ）</h3>
+        <div class="warn">
+          <b>記録する PC は必ず 1 台だけ。</b>2 台で同じオリパを打つと、
+          あとから保存したほうで<b>片方の記録が丸ごと消える</b>。
+          それを防ぐために、配信中は 1 台しか入れないようにしてある。
+        </div>
+        <ul>
+          <li>他の PC が配信中のオリパを開こうとすると
+            <b>「別の PC で配信中です」</b>と出て、ブリッジを勧められる。</li>
+          <li><b>配信中は中身を編集できない。</b>単価や賞品を途中で変えると、
+            すでに記録した排出の原価と 食い違うため。直すときは一覧に戻る。</li>
+          <li><b>30 分操作がないと自動で席を立つ</b>（一覧へ戻る）。
+            5 分前から見出しに「あと ◯ 分で抜ける」と出る。
+            <b>記録が消えることはない</b>し、勝手に「配信を終了して記録」もしない。
+            開き直せば続きから打てる。</li>
+          <li>PC が落ちても、合図が 3 分途切れれば席は自動で空く。</li>
+          <li>端末の名前は一覧の <code>端末間で同期</code> の中の <code>この端末の名前</code> で変えられる。</li>
+        </ul>
+
+        <h3 id="g-bridge">ブリッジ（見るだけ）</h3>
+        <ul>
+          <li>サブモニタや別室から進行を眺めるための画面。
+            中身は配信中とまったく同じだが、<b>記録する操作が一切ない</b>。</li>
+          <li>5 秒ごとに自動で最新を取りに行く。右上が最後に受け取った時刻で、
+            30 秒以上届かないと赤くなる。</li>
+          <li>映すオリパは既定で「まだ記録していないもののうち、直近に動いたもの」。
+            セレクトで固定もできる。</li>
+          <li><b>ブリッジは席を取らない。</b>誰が配信しているかは見出しに出る。</li>
+        </ul>
+
+        <h3 id="g-market">相場想定（一覧のいちばん上）</h3>
+        <p>
+          在庫 CSV には相場の列が無いことが多い。その場合 <b>相場 ＝ 原価 × 倍率</b> で埋めていて、
+          その倍率をあとから入れ直すのがこのバー。
+        </p>
+        <ul>
+          <li><b>手で入れた相場は書き換えない。</b>効くのは自動の行だけ
+            （編集画面の相場欄が<b>破線＋灰色</b>なら自動）。そこに数字を打つとその行は固定になる。</li>
+          <li>この 1 つの数字で、<b>還元率・在庫の回収額・目玉の判定・ハズレ枠の線・
+            カンペが読み上げる「相場¥◯」</b>が動く。</li>
+          <li>低すぎると「いま解体」が不当に不利に見えて、判断が「もっと下げろ」に寄る。
+            実勢に近づけておくこと。</li>
+        </ul>
+
+        <h4>ハズレ枠</h4>
+        <p>
+          <b>相場が販売単価の 20% 以下</b>なら自動で「ハズレ」。印を付ける操作はない。
+          まとめ排出（<code>＋5</code> <code>＋10</code>）はこの印とは無関係で、
+          <b>残りが 5 口以上の行</b>に出る。
+        </p>
+
+        <h3 id="g-sync">端末間の同期</h3>
+        <ul>
+          <li><b>設定しなければ通信は一切起きない。</b>この端末のブラウザにだけ保存される。</li>
+          <li>同じ<b>同期コード</b>を入れた端末どうしで、オリパと配信の記録が揃う。</li>
+          <li>取りに行く間隔は画面ごとに違う。ブリッジ 5 秒／一覧 60 秒／
+            配信中は行かない（自分が正なので）。</li>
+          <li>通信に失敗してもこの端末の内容は消えない。次の機会に送り直す。</li>
+        </ul>
+
+        <h3 id="g-data">データ</h3>
+        <ul>
+          <li>保存先はそのブラウザの中（localStorage）。
+            <b>アプリが更新されても入力したデータは残る。</b></li>
+          <li><b>URL ごとに別の保存領域になる。</b>公開ページ・ローカルに置いた HTML は別物。
+            移すときは一覧の <code>全体をバックアップ</code> で JSON に書き出し、
+            移った先で <code>JSON を読み込み</code>。オリパだけでなく<b>配信の記録も一緒に運べる</b>。</li>
+          <li>読み込みに失敗したときは<b>絶対に上書きしない</b>。退避したうえで画面で知らせる
+            （<code>自動退避から復元</code> で戻せる）。</li>
+          <li>ブラウザの「サイトデータを削除」では消える。大事な回は書き出しておく。</li>
+        </ul>
+
+        <h3 id="g-keys">キーボード（配信中）</h3>
+        <dl class="keys">
+          <dt>1 〜 9</dt><dd>並びどおり上から 9 枚のカードを押す</dd>
+          <dt>L / N</dt><dd>落札を登録する</dd>
+          <dt>Backspace / U</dt><dd>1 件取り消す</dd>
+          <dt>Esc</dt><dd>開いているダイアログを閉じる</dd>
+        </dl>
+
+        <h3 id="g-trouble">困ったとき</h3>
+        <table>
+          <tr><th>金額を入れても記録されない</th>
+              <td>金額欄の下に理由が出ているはず。空欄・0 円・残り口数を超える口数など</td></tr>
+          <tr><th>「別の PC で配信中です」と出る</th>
+              <td>他の PC が席を持っている。ブリッジで見るか、向こうで一覧に戻ってもらう。
+                  PC が落ちている場合は 3 分待てば空く</td></tr>
+          <tr><th>勝手に一覧に戻った</th>
+              <td>30 分操作がなかったので席を空けた。記録は消えていないので開き直す</td></tr>
+          <tr><th>編集できない</th>
+              <td>そのオリパが配信中。一覧に戻って席を空けてから</td></tr>
+          <tr><th>還元率がやけに低い</th>
+              <td>相場想定の倍率が 1.0 のままかもしれない。一覧のいちばん上で直す</td></tr>
+          <tr><th>ハズレを 1 口ずつ押している</th>
+              <td>残り 5 口以上なら <code>＋5</code> <code>＋10</code> が出ているはず</td></tr>
+          <tr><th>他の PC の入力が反映されない</th>
+              <td>一覧は 60 秒間隔。急ぐなら同期パネルの <code>いま同期する</code></td></tr>
+        </table>
+      </div>
+    </section>
   </section>
 
   <!-- ========== 設定 ========== -->
@@ -1493,7 +1784,11 @@ function normalizeOripa(o){
     totalSlots: 0,
     createdAt: Number(o.createdAt) || t,
     updatedAt: Number(o.updatedAt) || t,
-    closedAt: Number(o.closedAt) || 0        // 配信を記録した時刻。0 なら未終了
+    closedAt: Number(o.closedAt) || 0,       // 配信を記録した時刻。0 なら未終了
+    // 配信の席。{by, name, at}。at が古くなれば自動的に空く
+    live: o.live && o.live.by
+      ? { by: String(o.live.by), name: String(o.live.name || ""), at: Number(o.live.at) || 0 }
+      : null
   }));
 }
 
@@ -1671,6 +1966,94 @@ const SYNC_DEBOUNCE = 3000;
 let syncConf = { url: "", room: "", token: "", since: 0 };
 let syncBusy = false, syncTimer = null, syncMsg = "";
 let syncFails = 0, pollTimer = null;
+
+/* ============================================================
+   配信の席（同時に1台だけ）
+   同期は「オリパ1本まるごと、新しいほうが勝つ」なので、2台で同じオリパを
+   打つと片方の記録が丸ごと消える。それを起こさないための札。
+   札はオリパの中に持たせる（同期に載るのはオリパと記録だけなので）。
+
+   サーバに比較交換が無いので、これは**紳士協定**であって完全な排他ではない。
+   ほぼ同時に2台が入ろうとした一瞬は通り抜けうる。実運用（1人・数台）では
+   入る直前に必ず取りに行くので、まず起きない。
+   ============================================================ */
+const LIVE_BEAT_MS  = 30 * 1000;        // 席を握っているあいだの合図の間隔
+const LIVE_LEASE_MS = 3 * 60 * 1000;    // 合図が途切れてこれだけ経てば席は空く
+const LIVE_AUTO_END_MS = 30 * 60 * 1000;// 操作がこれだけ無ければ自分から席を立つ
+const LIVE_WARN_MS = 5 * 60 * 1000;     // 席を立つ何分前から画面で知らせるか
+
+let DEVICE_ID = "", DEVICE_NAME = "";
+try{
+  DEVICE_ID = localStorage.getItem("oripa-device") || "";
+  if(!DEVICE_ID){
+    DEVICE_ID = "d" + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem("oripa-device", DEVICE_ID);
+  }
+  DEVICE_NAME = localStorage.getItem("oripa-device-name") || "";
+}catch(_){}
+if(!DEVICE_NAME) DEVICE_NAME = "PC-" + (DEVICE_ID || "").slice(1, 5);
+
+let liveBeatTimer = null;
+let lastActionAt = 0;        // 最後に排出・落札・値付けをした時刻
+
+/** いま札を持っている端末。期限切れなら null */
+function liveHolder(o){
+  const l = o && o.live;
+  if(!l || !l.by) return null;
+  if(Date.now() - (Number(l.at) || 0) > LIVE_LEASE_MS) return null;
+  return l;
+}
+/** 他の端末が握っていれば、その情報を返す */
+function heldByOther(o){
+  const l = liveHolder(o);
+  return l && l.by !== DEVICE_ID ? l : null;
+}
+function claimLive(o){
+  o.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+  o.updatedAt = Date.now();
+}
+function releaseLive(o){
+  if(!o || !o.live || o.live.by !== DEVICE_ID) return;
+  o.live = null;
+  o.updatedAt = Date.now();
+  scheduleSync();
+}
+/** 席を握り続ける合図。ついでに放置していないか見る */
+function startLiveBeat(){
+  clearInterval(liveBeatTimer);
+  lastActionAt = Date.now();
+  liveBeatTimer = setInterval(() => {
+    if(mode !== "live" || !S){ clearInterval(liveBeatTimer); liveBeatTimer = null; return; }
+    if(Date.now() - lastActionAt >= LIVE_AUTO_END_MS){ autoLeaveLive(); return; }
+    S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+    S.updatedAt = Date.now();
+    scheduleSync();
+    renderLiveSeat();          // 残り時間の表示だけ更新する（全体は描き直さない）
+  }, LIVE_BEAT_MS);
+}
+function stopLiveBeat(){ clearInterval(liveBeatTimer); liveBeatTimer = null; }
+
+function autoLeaveLive(){
+  stopLiveBeat();
+  const name = S ? S.name : "";
+  releaseLive(S);
+  go("list");
+  say(`操作が ${Math.round(LIVE_AUTO_END_MS / 60000)} 分無かったので、`
+    + `「${name}」の配信中を抜けた。\n`
+    + `記録は消えていない。続けるならもう一度ひらく。\n`
+    + `席を空けておかないと、他の PC から入れないため。`);
+}
+
+/** 排出・落札・値付けのたびに呼ぶ。これが無いと自動で席を立つ */
+function touchLive(){
+  lastActionAt = Date.now();
+  if(mode === "live" && S && !heldByOther(S)) S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+}
+
+const agoText = at => {
+  const m = Math.max(0, Math.round((Date.now() - (Number(at) || 0)) / 60000));
+  return m <= 0 ? "たったいま" : `${m} 分前`;
+};
 let watchSeenAt = 0;        // 最後にサーバから取れた時刻（ブリッジの時計用）
 let watchPin = "";          // ブリッジで固定表示するオリパ。空なら自動で追う
 
@@ -1862,6 +2245,7 @@ const fmtClock = t => {
 };
 
 function renderSyncBox(){
+  if(document.activeElement !== $("devName")) $("devName").value = DEVICE_NAME;
   const box = $("syncBox");
   if(!box) return;
   $("syncUrl").value   = syncConf.url || "";
@@ -3197,7 +3581,20 @@ function render(){
   // 開いているオリパが消えていたら一覧へ戻す
   if(S && !DB.oripas.some(o => o.id === S.id)) S = null;
   if(!S) S = DB.oripas.find(o => o.id === DB.currentId) || null;
-  if(!S && mode !== "list") mode = "list";
+  if(!S && mode !== "list" && mode !== "help") mode = "list";
+
+  // 使い方はオリパが無くても開ける。ここで先に片付ける
+  $("view-help").hidden = mode !== "help";
+  $("btnHelp").setAttribute("aria-pressed", String(mode === "help"));
+  if(mode === "help"){
+    document.querySelectorAll(".modes button").forEach(b => b.setAttribute("aria-pressed", "false"));
+    $("view-list").hidden = $("view-live").hidden = $("view-edit").hidden = true;
+    $("verdictPill").hidden = true;
+    $("titleText").textContent = "使い方";
+    $("subText").textContent = "配信オリパAI支援の手引き";
+    document.title = "使い方 — 配信オリパAI支援";
+    return;
+  }
 
   document.querySelectorAll(".modes button").forEach(b =>
     b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
@@ -3242,11 +3639,41 @@ function render(){
 
 function go(m){
   if(m !== "live"){ const cp = document.getElementById("closePanel"); if(cp) cp.hidden = true; }
+  if(mode === "live" && m !== "live"){ stopLiveBeat(); releaseLive(S); }
   mode = m;
   if(m === "watch"){ lotBarKey = ""; syncNow(false); }   // 開いた瞬間にまず取りに行く
+  if(m === "live" && S){ claimLive(S); startLiveBeat(); }
   render();
   setPoll();
   window.scrollTo({ top: 0 });
+}
+
+/** 配信中に入る前に席を確かめる。埋まっていれば入らず、ブリッジを勧める。
+    入る直前に必ず取りに行くのは、一覧の取得間隔（60秒）ぶん古い札で
+    判断すると二重に入ってしまうため。 */
+async function goLive(o){
+  const target = o || S;
+  if(!target) return;
+  if(syncOn()) await syncNow(false);
+  const fresh = DB.oripas.find(x => String(x.id) === String(target.id)) || target;
+  const held = heldByOther(fresh);
+  if(held){
+    S = fresh;
+    const who = held.name || "別の PC";
+    const yes = await ask(
+      `「${fresh.name}」は別の PC で配信中です。\n\n`
+      + `席：${who}（最後の合図 ${agoText(held.at)}）\n\n`
+      + `二重に打つと、あとから保存したほうで片方の記録が丸ごと消えます。\n`
+      + `ブリッジなら、その進行をそのまま見られます。\n\n`
+      + `※ 向こうの PC が落ちていても、合図が ${Math.round(LIVE_LEASE_MS / 60000)} 分途切れれば席は自動で空きます。`,
+      { okLabel: "ブリッジで見る" });
+    if(yes){ watchPin = String(fresh.id); go("watch"); }
+    else render();
+    return;
+  }
+  S = fresh;
+  DB.currentId = fresh.id;
+  go("live");
 }
 
 /* ============================================================
@@ -3279,6 +3706,13 @@ function renderWatchBar(){
   if(sel.dataset.html !== html){ sel.innerHTML = html; sel.dataset.html = html; }
   sel.value = want;
 
+  const seat = liveHolder(S);
+  const seatEl = $("watchSeat");
+  seatEl.textContent = seat
+    ? (seat.by === DEVICE_ID ? "この PC が席を持っている" : `${seat.name || "別の PC"} が配信中`)
+    : "だれも配信していない";
+  seatEl.className = "seat" + (seat ? "" : " is-warn");
+
   const clock = $("watchClock");
   if(!syncOn()){
     clock.textContent = "同期が未設定。この端末の中身を映している";
@@ -3304,6 +3738,7 @@ function openOripa(id, m){
   activeAnchor = "rec";
   resetLotDraft();
   lotBarKey = "";
+  if(m === "live"){ goLive(o); return; }
   go(m || "edit");
 }
 
@@ -3390,6 +3825,13 @@ function renderList(){
         + (c.state === "bad" ? "・下ぶれ" : "")
         + (!live && e ? `・${fmtDur(e.idleMs)} 動きなし` : "");
     }
+    const seat = liveHolder(o);
+    if(seat){
+      cls = "is-live";
+      badge += seat.by === DEVICE_ID
+        ? `・この PC が席を持っている`
+        : `・${esc(seat.name || "別の PC")} が配信中`;
+    }
 
     const margin = started ? c.marginNow : c.finalMargin;
     const eta = listEta(o, c);
@@ -3421,7 +3863,11 @@ function renderList(){
 
     el.querySelector(".oname").addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="edit"]').addEventListener("click", () => openOripa(o.id, "edit"));
-    el.querySelector('[data-act="live"]').addEventListener("click", () => openOripa(o.id, "live"));
+    el.querySelector('[data-act="live"]').addEventListener("click", () => {
+      S = o; DB.currentId = o.id; simPrice = null; activeAnchor = "rec";
+      resetLotDraft(); lotBarKey = "";
+      goLive(o);                       // 席の確認を挟む
+    });
     el.querySelector('[data-act="copy"]').addEventListener("click", () => duplicateOripa(o, "（複製）", false));
     el.querySelector('[data-act="del"]').addEventListener("click", async () => {
       if(await deleteOripa(o)) render();
@@ -3542,6 +3988,7 @@ function renderLive(c){
   renderLotTable();
   renderPrice(c);
   renderPace(c);
+  renderLiveSeat();
   drawSpark(c);
 
   const reopen = $("btnReopen");
@@ -3689,6 +4136,7 @@ function askDraw(p, n, c){
 
 /** 落札だけ先に登録する。カードは後から押す */
 async function registerLotOnly(){
+  touchLive();          // 自動終了までの時計を戻す
   if(!S || S.closedAt || drawDone || activeLot()) return;
   const c = compute();
   if(c.left <= 0){ say("残りの口数がない。"); return; }
@@ -3709,6 +4157,7 @@ function closeDraw(value){
 }
 
 async function cancelLot(id){
+  touchLive();          // 自動終了までの時計を戻す
   const lot = S.lots.find(l => l.id === id);
   if(!lot) return;
   const st = lotStats(S, lot);
@@ -4037,6 +4486,24 @@ function seriesData(){
    完売見込みは「このまま最後まで売れたら」の話。うちのオリパは途中で
    解体するのが前提なので、解体までの見込みも並べて出す。
    ============================================================ */
+/* 配信中の席の表示。放置で自動的に抜けるまでの残り時間もここに出す。
+   合図のたびにここだけ描き直す（全体を描き直すと入力中のダイアログが飛ぶ）。 */
+function renderLiveSeat(){
+  const el = $("liveSeat");
+  if(!el || mode !== "live" || !S){ if(el) el.textContent = ""; return; }
+  const idle = Date.now() - lastActionAt;
+  const leftMs = LIVE_AUTO_END_MS - idle;
+  if(leftMs > LIVE_WARN_MS){
+    el.className = "seat";
+    el.textContent = `${DEVICE_NAME} で配信中`;
+    el.title = "同じオリパは同時に 1 台しか開けない";
+  }else{
+    el.className = "seat is-warn";
+    el.textContent = `操作が無いので あと ${Math.max(1, Math.round(leftMs / 60000))} 分で抜ける`;
+    el.title = `${Math.round(LIVE_AUTO_END_MS / 60000)} 分操作が無いと席を空ける`;
+  }
+}
+
 function renderPace(c){
   const grid = $("paceGrid");
   const e = etaOf(S, c);
@@ -4198,6 +4665,7 @@ function renderEdit(c){
   if(document.activeElement !== $("fPrice")) $("fPrice").value = S.price;
 
   $("setupNotice").innerHTML = "";
+  const held = liveHolder(S);
 
   const tb = $("editRows");
   tb.innerHTML = "";
@@ -4306,6 +4774,38 @@ function renderEdit(c){
   $("sProfit").textContent = syen(c.N * c.price - c.costTotal);
 
   renderSim();
+  lockEditIfLive(held);
+}
+
+/* 配信中のオリパは中身をいじれない。単価や賞品を配信の途中で動かすと、
+   すでに記録した排出の原価と食い違う。自分の席でも同じく止める。 */
+function lockEditIfLive(held){
+  const view = $("view-edit");
+  view.classList.toggle("is-locked", !!held);
+  if(!held) return;
+
+  const mine = held.by === DEVICE_ID;
+  $("setupNotice").innerHTML =
+    `<div class="lockbar"><span><b>${mine ? "このオリパは配信中。" : "別の PC で配信中です。"}</b>`
+    + `${mine
+        ? `中身を変えると、記録した排出と食い違う。配信中を抜けてから直すこと。`
+        : `席：${esc(held.name || "別の PC")}（最後の合図 ${agoText(held.at)}）。`
+          + `向こうが抜けるか、合図が ${Math.round(LIVE_LEASE_MS / 60000)} 分途切れれば直せる。`}</span>`
+    + `<span class="spacer"></span>`
+    + `<span>${mine
+        ? `<button type="button" class="btn" id="btnLeaveLive">配信中を抜ける</button>`
+        : `<button type="button" class="btn" id="btnLockWatch">ブリッジで見る</button>`}</span></div>`;
+
+  // 入力を実際に無効化する。見た目だけ薄くしても Tab で入れてしまうため
+  view.querySelectorAll("input, select, textarea, button").forEach(el => {
+    if(el.id === "btnBackToList" || el.id === "btnLeaveLive" || el.id === "btnLockWatch") return;
+    el.disabled = true;
+  });
+
+  const leave = $("btnLeaveLive");
+  if(leave) leave.addEventListener("click", () => { stopLiveBeat(); releaseLive(S); render(); });
+  const watch = $("btnLockWatch");
+  if(watch) watch.addEventListener("click", () => { watchPin = String(S.id); go("watch"); });
 }
 
 /* ---------- 解体シミュレーションの表示 ---------- */
@@ -4824,6 +5324,7 @@ $("btnRecCsv").addEventListener("click", () => {
    操作
    ============================================================ */
 async function draw(prizeId, n = 1){
+  touchLive();          // 自動終了までの時計を戻す
   if(!S || S.closedAt || drawDone) return;   // ダイアログが開いている間は二重に開かない
   const c = compute();
   const p = S.prizes.find(q => q.id === prizeId);
@@ -4860,6 +5361,7 @@ async function draw(prizeId, n = 1){
 }
 
 function undo(){
+  touchLive();          // 自動終了までの時計を戻す
   if(!S || S.closedAt || !S.events.length) return;
   const e = S.events.pop();
   const lot = e && e.lotId ? S.lots.find(l => l.id === e.lotId) : null;
@@ -4881,10 +5383,24 @@ function undo(){
 
 document.querySelectorAll(".modes button").forEach(b => {
   b.addEventListener("click", () => {
-    if(b.dataset.mode === "live" && !S) return;
+    if(b.dataset.mode === "live"){
+      if(!S) return;
+      goLive(S);                       // 席が埋まっていれば「別の PC で配信中です」
+      return;
+    }
     if(b.dataset.mode === "watch" && !DB.oripas.length) return;
     go(b.dataset.mode);
   });
+});
+
+$("btnHelp").addEventListener("click", () => go(mode === "help" ? "list" : "help"));
+
+$("devName").addEventListener("change", () => {
+  const v = $("devName").value.trim().slice(0, 24);
+  DEVICE_NAME = v || ("PC-" + (DEVICE_ID || "").slice(1, 5));
+  try{ localStorage.setItem("oripa-device-name", DEVICE_NAME); }catch(_){}
+  if(mode === "live" && S) touchLive();
+  render();
 });
 
 $("mktMult").addEventListener("change", () => {
@@ -4910,8 +5426,7 @@ $("watchPick").addEventListener("change", () => {
 
 /* 画面間の行き来 */
 $("btnBackToList").addEventListener("click", () => { pending = null; $("importPanel").hidden = true; go("list"); });
-$("btnGoLive").addEventListener("click", () => go("live"));
-$("btnEditFromLive").addEventListener("click", () => go("edit"));
+$("btnGoLive").addEventListener("click", () => goLive(S));
 
 /* オリパを作る・複製する・消す */
 $("btnNewOripa").addEventListener("click", () => {
@@ -5023,6 +5538,7 @@ $("btnResetDraws").addEventListener("click", async () => {
 });
 
 $("btnApply").addEventListener("click", () => {
+  touchLive();
   if(decidedPrice > 0 && decidedPrice !== S.price){
     S.price = decidedPrice; simPrice = null; render();
   }
@@ -5184,6 +5700,23 @@ document.addEventListener("visibilitychange", () => {
   if(document.visibilityState !== "visible"){ clearTimeout(pollTimer); pollTimer = null; return; }
   if(syncOn()) syncNow(false);
   setPoll();
+});
+// タブを閉じる・再読み込みするときは席を空けて、その事実を送り切る。
+// 送れなくても LIVE_LEASE_MS で自然に空くので、失敗しても詰まらない。
+window.addEventListener("pagehide", () => {
+  if(mode !== "live" || !S || !S.live || S.live.by !== DEVICE_ID) return;
+  S.live = null;
+  S.updatedAt = Date.now();
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }catch(_){}
+  if(syncOn() && navigator.sendBeacon){
+    try{
+      navigator.sendBeacon(syncConf.url, new Blob([JSON.stringify({
+        token: syncConf.token, room: syncConf.room, action: "sync",
+        since: Number(syncConf.since) || 0,
+        items: [{ kind: "oripa", id: String(S.id), updatedAt: S.updatedAt, json: JSON.stringify(S) }]
+      })], { type: "text/plain;charset=utf-8" }));
+    }catch(_){}
+  }
 });
 </script>
 
