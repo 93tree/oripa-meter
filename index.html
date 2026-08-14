@@ -492,6 +492,13 @@ table.edit .calc{
 .sr{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 .linkbtn:disabled{ opacity:.4; cursor:not-allowed; text-decoration:none; }
 
+.losertag{
+  display:inline-block; padding:1px 7px; border-radius:999px;
+  font-size:10.5px; font-weight:800; letter-spacing:.06em;
+  background:var(--flat-bg); color:var(--flat);
+}
+table.edit input.auto{ color:var(--ink-3); border-style:dashed; }
+
 .rowdel{
   border:1px solid var(--line); background:transparent; color:var(--ink-3);
   border-radius:6px; width:32px; height:32px; font-size:15px; line-height:1;
@@ -623,6 +630,24 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .syncbody .fields{ gap:10px; }
 .syncbody input{ font-family:var(--font-ui); font-size:13px; }
 .syncbody .drawbar{ margin-top:0; }
+
+/* ---- 相場想定バー ---- */
+.mktbar{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:12px 16px;
+  border-left:3px solid var(--gold);
+}
+.mktset{
+  display:inline-flex; align-items:center; gap:7px; font-size:14px; font-weight:700; white-space:nowrap;
+}
+.mktset input{
+  width:5.5ch; background:var(--surface-2); border:1px solid var(--line-2); border-radius:7px;
+  padding:6px 8px; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:16px; font-weight:600; text-align:right;
+}
+.mktset input:focus{ border-color:var(--gold); outline:none; }
+.mktbar .hint{ flex:1 1 260px; min-width:0; }
 
 /* ---- 時間とペース ---- */
 .pacegrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:13px; }
@@ -812,6 +837,18 @@ body.locked > header, body.locked > main { display:none; }
 
   <!-- ========== オリパ一覧 ========== -->
   <section id="view-list" class="stack">
+    <!-- 相場想定。CSV に相場の列が無いオリパの相場をここで決める -->
+    <div class="mktbar">
+      <span class="label">相場想定</span>
+      <span class="mktset">
+        原価 ×
+        <input type="number" id="mktMult" min="0" max="50" step="0.05" inputmode="decimal"
+               aria-label="相場は原価の何倍か">
+        倍
+      </span>
+      <span class="hint" id="mktNote"></span>
+    </div>
+
     <section class="panel">
       <header>
         <h2>オリパ一覧</h2>
@@ -1179,7 +1216,7 @@ body.locked > header, body.locked > main { display:none; }
                 <th style="width:12%">相場</th>
                 <th style="width:9%">口数</th>
                 <th style="width:20%">備考</th>
-                <th style="width:7%">通常枠</th>
+                <th style="width:7%">ハズレ</th>
                 <th style="width:7%">排出済</th>
                 <th></th>
               </tr>
@@ -1404,7 +1441,8 @@ function sampleOripa(){
 /** 読み込んだ値を必ず期待する形に整える（旧データ・手書き JSON 対策） */
 function normalizeOripa(o){
   const t = Date.now();
-  return {
+  // 相場の埋め直し → ハズレ判定 の順。ハズレは相場を見るので順番が要る
+  return markLosers(syncMarket({
     ...o,                       // 知らないフィールドも捨てずに持ち越す
     id: o.id || newId(),
     name: String(o.name || "無題のオリパ"),
@@ -1415,12 +1453,19 @@ function normalizeOripa(o){
     // 解体の条件。編集画面のシミュレーションと配信中の値下げ判断が同じ前提を使う
     simTopMult: Math.max(0, Number(o.simTopMult ?? 5)),
     simMinReturn: clamp(Number(o.simMinReturn ?? 0.50), 0, 2),
+    // 相場想定。CSV に相場の列が無いオリパは 原価 × この倍率 を相場として使う
+    marketMult: Number(o.marketMult) > 0 ? Number(o.marketMult) : 1,
     prizes: (Array.isArray(o.prizes) ? o.prizes : []).map(p => ({
       id: p.id, name: String(p.name || ""),
       cost: Math.max(0, Number(p.cost) || 0),
       market: Math.max(0, Number(p.market) || 0),
       count: Math.max(0, Math.round(Number(p.count) || 0)),
       note: String(p.note || ""), normal: !!p.normal,
+      // 相場が原価と同額（＝倍率1.0で取り込んだ跡）か未設定なら「自動」とみなす。
+      // 実売相場をわざわざ原価ちょうどで入れることは無いので、この判定で拾える。
+      marketAuto: p.marketAuto === undefined
+        ? !(Number(p.market) > 0) || Number(p.market) === Number(p.cost)
+        : !!p.marketAuto,
       items: (Array.isArray(p.items) ? p.items : []).map(it => ({
         name: String(it.name || ""),
         cost: Math.max(0, Number(it.cost) || 0),
@@ -1449,7 +1494,33 @@ function normalizeOripa(o){
     createdAt: Number(o.createdAt) || t,
     updatedAt: Number(o.updatedAt) || t,
     closedAt: Number(o.closedAt) || 0        // 配信を記録した時刻。0 なら未終了
-  };
+  }));
+}
+
+/* ============================================================
+   相場想定とハズレ枠
+   ============================================================ */
+
+/** ハズレ枠の線。相場が販売単価のこの割合以下なら「ハズレ」とみなす */
+const LOSER_RATIO = 0.2;
+
+/** 相場が「自動」の賞品を 原価 × 倍率 で埋め直す。手入力した相場には触らない */
+function syncMarket(o){
+  const m = Number(o.marketMult) > 0 ? Number(o.marketMult) : 1;
+  for(const p of o.prizes){
+    if(!p.marketAuto) continue;
+    if(isSet(p)) for(const it of p.items) it.market = Math.round((Number(it.cost) || 0) * m);
+    else p.market = Math.round((Number(p.cost) || 0) * m);
+  }
+  return o;
+}
+
+/** ハズレ枠かどうかは印を付けてもらうのではなく、単価との比で決める。
+    印を人手で維持させると必ず付け忘れる（実際 83 口の行が付いていなかった）。 */
+function markLosers(o){
+  const line = (Number(o.price) || 0) * LOSER_RATIO;
+  for(const p of o.prizes) p.normal = line > 0 && mktOf(p) <= line;
+  return o;
 }
 
 /** lots が無かった頃のイベントを、1口ずつの即決として拾い直す */
@@ -1917,15 +1988,11 @@ function csvToPrizes(text, opts){
   const NORMAL_RE = /通常枠|ノーマル枠|ハズレ|はずれ|外れ枠/;
   const prizes = out.map(o => ({
     id: uid++, name: o.name, cost: o.cost, market: o.market,
-    count: o.count, note: o.note || "", normal: NORMAL_RE.test(o.name), items: []
+    count: o.count, note: o.note || "", normal: NORMAL_RE.test(o.name), items: [],
+    // CSV に相場の列が無ければ、相場は 原価 × 相場想定倍率 で埋める
+    marketAuto: idx.market == null
   }));
-  // 通常枠は1つだけに絞る（まとめ排出の対象を一意にするため）
-  let seenNormal = false;
-  for(const p of prizes){
-    if(!p.normal) continue;
-    if(seenNormal) p.normal = false;
-    seenNormal = true;
-  }
+  // ハズレ枠は取り込み時ではなく markLosers() が単価との比で決めるので、ここでは触らない
   const slots = prizes.reduce((n, p) => n + p.count, 0);
   const cost  = prizes.reduce((n, p) => n + costOf(p) * p.count, 0);
   return { prizes, slots, cost, hasMarket: idx.market != null };
@@ -3258,7 +3325,36 @@ function listEta(o, c){
   return { ...gmv, when: fmtWhen(e.at), sub: `あと ${fmtDur(e.ms)}・${e.recentPace.toFixed(1)} 口/時` };
 }
 
+/* 相場想定バー。倍率はオリパごとに持たせてある（そうしないと端末間で同期されない）が、
+   運用としては全部そろっている前提なので、ここでは 1 つの数字として扱う。 */
+function renderMktBar(){
+  const os = DB.oripas.filter(o => o.prizes.length);
+  const mults = [...new Set(os.map(o => Number(o.marketMult) || 1))];
+  const inp = $("mktMult");
+  if(document.activeElement !== inp) inp.value = mults.length === 1 ? String(mults[0]) : "";
+  inp.placeholder = mults.length > 1 ? "混在" : "1";
+
+  let auto = 0, fixed = 0;
+  for(const o of os) for(const p of o.prizes) (p.marketAuto ? auto++ : fixed++);
+  const note = [];
+  if(mults.length > 1) note.push(`いまオリパごとに ${mults.join(" / ")} 倍と食い違っている。入れ直すと全部そろう。`);
+  note.push(auto
+    ? `CSV に相場の列が無かった ${auto} 行に効く（原価 × 倍率 が相場になる）。`
+    : `いま自動の行は無い。相場を手で入れた行は変わらない。`);
+  if(fixed) note.push(`手入力・CSV 由来の ${fixed} 行はそのまま。`);
+  note.push(`還元率・在庫の回収額・目玉の判定・ハズレ枠の線がこの数字で動く。`);
+  $("mktNote").textContent = note.join("");
+}
+
+/** いま使っている相場想定倍率。食い違っていたら開いているオリパのものを優先 */
+function commonMarketMult(){
+  if(S && Number(S.marketMult) > 0) return Number(S.marketMult);
+  const ms = [...new Set(DB.oripas.filter(o => o.prizes.length).map(o => Number(o.marketMult) || 1))];
+  return ms.length === 1 ? ms[0] : 1;
+}
+
 function renderList(){
+  renderMktBar();
   renderSyncBox();
   const wrap = $("oripaList");
   wrap.innerHTML = "";
@@ -3692,7 +3788,9 @@ function renderPrizes(c){
     if(mode !== "watch") el.addEventListener("click", () => draw(p.id));
     wrap.appendChild(el);
 
-    if(p.normal && rest > 1 && mode !== "watch"){
+    // まとめ排出は「残りが多い行」に出す。ハズレ枠の印に頼っていたころは、
+    // 印の付いていない 83 口の行を 1 口ずつ押すはめになっていた。
+    if(rest >= 5 && mode !== "watch"){
       const bar = document.createElement("div");
       bar.className = "drawbar";
       bar.style.margin = "0 0 2px 0";
@@ -4118,10 +4216,12 @@ function renderEdit(c){
         : `<input type="number" data-f="cost" min="0" step="1" value="${p.cost|0}" aria-label="原価" inputmode="numeric">`}</td>
       <td>${set
         ? `<span class="calc num">${yen(mktOf(p))}</span>`
-        : `<input type="number" data-f="market" min="0" step="1" value="${p.market|0}" aria-label="相場" inputmode="numeric">`}</td>
+        : `<input type="number" data-f="market" min="0" step="1" value="${p.market|0}" aria-label="相場"
+             inputmode="numeric" class="${p.marketAuto ? "auto" : ""}"
+             title="${p.marketAuto ? "原価 × 相場想定倍率。ここに書くと固定になる" : "手入力"}">`}</td>
       <td><input type="number" data-f="count" min="0" step="1" value="${p.count|0}" aria-label="口数" inputmode="numeric"></td>
       <td><input type="text" data-f="note" value="${esc(p.note || "")}" aria-label="備考"></td>
-      <td style="text-align:center"><input type="radio" name="normalRow" data-f="normal" ${p.normal?"checked":""} aria-label="通常枠にする" style="width:auto"></td>
+      <td style="text-align:center">${p.normal ? `<span class="losertag">ハズレ</span>` : ""}</td>
       <td class="num" style="text-align:center;color:var(--ink-3)">${drawn}</td>
       <td><button type="button" class="rowdel" ${drawn>0?"disabled title='排出済みのため削除できない'":""} aria-label="この行を削除">×</button></td>`;
 
@@ -4135,9 +4235,12 @@ function renderEdit(c){
         return;
       }
       inp.addEventListener("change", () => {
-        if(f === "normal"){ S.prizes.forEach(q => q.normal = false); p.normal = inp.checked; }
-        else if(f === "name" || f === "note") p[f] = inp.value;
+        if(f === "name" || f === "note") p[f] = inp.value;
         else p[f] = Math.max(0, Number(inp.value) || 0);
+        // 相場を手で書いたらその行は固定。原価を直したら自動の行は追従させる
+        if(f === "market") p.marketAuto = false;
+        if(f === "cost") syncMarket(S);
+        markLosers(S);
         render();
       });
     });
@@ -4390,7 +4493,8 @@ function startImport(text, fileName){
   mode = "edit";
   render();
   $("importPanel").hidden = false;
-  $("impMarket").value = "1";
+  // 前に決めた相場想定を初期値にする。毎回 1.0 に戻ると入れ忘れる
+  $("impMarket").value = String(commonMarketMult());
   $("impGroup").checked = true;
   $("impPrice").value = "";
   renderImport(true);
@@ -4505,6 +4609,11 @@ async function applyImport(){
   S.totalSlots = fresh.slots;
   S.price = Number($("impPrice").value) || suggestPrice(fresh.cost, fresh.slots, S.targetMargin);
   S.events = [];
+  // 取り込みで使った倍率をそのオリパの「相場想定」として覚える。
+  // 一覧のバーから後で入れ直せるのはこの値。
+  S.marketMult = Number($("impMarket").value) || 1;
+  syncMarket(S);
+  markLosers(S);
   if(pending.fileName && (!S.name || S.name === "新しいオリパ")){
     S.name = pending.fileName.replace(/\.csv$/i, "");
   }
@@ -4778,6 +4887,20 @@ document.querySelectorAll(".modes button").forEach(b => {
   });
 });
 
+$("mktMult").addEventListener("change", () => {
+  const v = Number($("mktMult").value);
+  if(!(v > 0)){ renderMktBar(); return; }          // 空欄や 0 は無視して元に戻す
+  const now = Date.now();
+  for(const o of DB.oripas){
+    if(Number(o.marketMult) === v) continue;
+    o.marketMult = v;
+    syncMarket(o);
+    markLosers(o);
+    o.updatedAt = now;                              // 一覧では save() が触らないので明示的に
+  }
+  render();
+});
+
 $("btnWatchToList").addEventListener("click", () => go("list"));
 $("watchPick").addEventListener("change", () => {
   watchPin = $("watchPick").value || "";
@@ -4920,6 +5043,7 @@ $("simPriceRange").addEventListener("input", e => {
 
 $("fPrice").addEventListener("change", e => {
   S.price = Math.max(0, Math.round(Number(e.target.value) || 0));
+  markLosers(S);            // ハズレ枠の線は単価で決まるので、単価を変えたら引き直す
   render();
 });
 $("fName").addEventListener("change", e => { S.name = e.target.value; render(); });
