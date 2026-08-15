@@ -781,6 +781,15 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .inbox .when{ font-size:11.5px; color:var(--ink-3); font-family:var(--font-num); white-space:nowrap; }
 .inbox .spacer{ flex:1 1 auto; }
 .inbox .head.is-bad{ color:var(--bad); border-top:1px solid var(--line); }
+.inbox .head.is-wait{ color:var(--gold-ink); border-top:1px solid var(--line); }
+.inbox .waittag{
+  font-size:11.5px; font-weight:800; padding:3px 10px; border-radius:999px;
+  background:var(--gold-bg); color:var(--gold-ink); white-space:nowrap;
+}
+/* 押せないことが見て分かるように、行ごと沈める */
+.inbox .row.is-wait{ background:var(--surface-2); }
+.inbox .row.is-wait .amt,
+.inbox .row.is-wait .who{ color:var(--ink-3); }
 .inbox .orphan{ padding:10px 13px; background:var(--surface); border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); }
 
 /* ---- 配信の席 ---- */
@@ -1978,19 +1987,26 @@ function normalizeOrder(x){
   };
 }
 
-/** そのオリパ宛の注文を、使ったもの／まだのもの に分ける。
-    **ここに来る時点で入金は確認済み**（未入金は中継が送ってこない）。
-    それでも paid を見ているのは、古い版の中継や手入力が混じったときの保険。 */
+/* 落札から入金確認までの猶予。これを過ぎた未入金は画面から落とす。
+   支払われないまま流れた落札をいつまでも出しておくと、受信箱がゴミで埋まる。
+   消えても記録は残っているので、あとから入金されれば入金済みとして出直す。 */
+const UNPAID_TTL = 60 * 60 * 1000;
+
+/** そのオリパ宛の注文を、状態ごとに分ける。
+    **売上になるのは pending（入金確認済み）だけ。**waiting は見せるだけで押せない。 */
 function ordersFor(o){
-  const none = { pending: [], trouble: [] };
+  const none = { pending: [], waiting: [], trouble: [] };
   if(!o || !DB.orders || !DB.orders.length) return none;
   const pid = String(o.shopProductId || "").trim();
   if(!pid) return none;
   const used = new Set((o.lots || []).map(l => String(l.orderId || "")).filter(Boolean));
   const mine = DB.orders.filter(x => x.productId === pid).sort((a, b) => a.at - b.at);
+  const fresh = x => Date.now() - (x.at || 0) < UNPAID_TTL;
   return {
     // 入金済みで、まだカードを押していない → いま取り込めるもの
     pending: mine.filter(x => !used.has(String(x.id)) && x.paid && !x.cancelled),
+    // 落札は決まったが入金がまだ → 灰色で出すだけ。押せない
+    waiting: mine.filter(x => !used.has(String(x.id)) && !x.paid && !x.cancelled && fresh(x)),
     // カードを渡したあとに取り消された → 売上が狂うので知らせる
     trouble: mine.filter(x => used.has(String(x.id)) && x.cancelled),
   };
@@ -2003,7 +2019,7 @@ function pendingOrders(o){ return ordersFor(o).pending; }
 function orphanOrders(){
   if(!DB.orders || !DB.orders.length) return [];
   const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
-  return DB.orders.filter(x => !x.productId || !known.has(x.productId) ? !x.cancelled : false);
+  return DB.orders.filter(x => (!x.productId || !known.has(x.productId)) && !x.cancelled);
 }
 
 /** 記録済みなのに取り消された落札。売上が実態と食い違っている状態 */
@@ -3975,10 +3991,11 @@ function renderOrderNotice(){
   const el = $("orderNotice");
   const per = DB.oripas.map(o => ({ o, ...ordersFor(o) }));
   const ready  = per.filter(x => x.pending.length);
+  const wait   = per.reduce((n, x) => n + x.waiting.length, 0);
   const bad    = troubleOrders();
   const orphans = orphanOrders().length;
 
-  if(!ready.length && !bad.length && !orphans){ el.innerHTML = ""; return; }
+  if(!ready.length && !wait && !bad.length && !orphans){ el.innerHTML = ""; return; }
 
   const out = [];
 
@@ -3995,7 +4012,7 @@ function renderOrderNotice(){
       + `</span></div>`);
   }
 
-  if(ready.length || orphans){
+  if(ready.length || wait || orphans){
     const lines = ready.map(x =>
       `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
       + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.pending.length} 件）</button>`).join("");
@@ -4003,6 +4020,7 @@ function renderOrderNotice(){
       + (ready.length
           ? `<b>落札が ${ready.reduce((n, x) => n + x.pending.length, 0)} 件届いている。</b>配信画面をひらくと取り込める。`
           : "")
+      + (wait ? ` 入金待ちが ${wait} 件（入金が確認できると押せるようになる）。` : "")
       + (orphans
           ? ` どのオリパにも結びつかない注文が ${orphans} 件ある`
             + `（編集画面の「TikTok Shop の商品 ID」を入れると結びつく）。`
@@ -4258,15 +4276,15 @@ function renderInbox(c){
     return;
   }
 
-  const { pending, trouble } = ordersFor(S);
+  const { pending, waiting, trouble } = ordersFor(S);
   const orphans = orphanOrders();
-  if(!pending.length && !trouble.length && !orphans.length){
+  if(!pending.length && !waiting.length && !trouble.length && !orphans.length){
     box.hidden = true; box.innerHTML = ""; return;
   }
   box.hidden = false;
 
   const busy = !!activeLot() || !!S.closedAt || c.left <= 0;
-  const line = (x, tail) => `<div class="row" data-order="${esc(x.id)}">
+  const line = (x, tail, cls) => `<div class="row ${cls || ""}" data-order="${esc(x.id)}">
       <span class="amt">${yen(x.price * x.qty)}</span>
       <span class="who">${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(x.buyer || "落札者不明")}</span>
       <span class="spacer"></span>
@@ -4282,6 +4300,13 @@ function renderInbox(c){
             `<button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`)).join("")
       : "")
     // カードを渡したあとに取り消された。売上が実態と食い違っている
+    // 落札は決まったが入金がまだ。灰色で出すだけで押せない。
+    // 入金が確認できると自動で上の「届いた落札」へ移り、押せるようになる。
+    + (waiting.length
+      ? `<div class="head is-wait">入金待ち ${waiting.length} 件`
+        + `<span class="sub">落札は決まったが入金がまだ。確認できると上に移って押せるようになる</span></div>`
+        + waiting.map(x => line(x, `<span class="waittag">入金待ち</span>`, "is-wait")).join("")
+      : "")
     + (trouble.length
       ? `<div class="head is-bad">取り消された落札 ${trouble.length} 件`
         + `<span class="sub">記録済みだが取り消し・返金になった。売上から外す必要がある</span></div>`
@@ -6071,6 +6096,24 @@ window.addEventListener("pagehide", () => {
         status:"AWAITING_SHIPMENT", source:"test" }) }]);
     save(); render();
   };
+  // 落札 → 灰色（入金待ち）→ 入金確認 → 押せる、の順をそのまま試す
+  window.__fakeUnpaid = function(){
+    var o = (typeof S !== "undefined" && S) || DB.oripas.find(function(x){ return x.shopProductId; }) || DB.oripas[0];
+    if(!o){ return; }
+    if(!o.shopProductId){ o.shopProductId = "STG-" + o.id; }
+    var price = [2800, 3800, 5200, 8200][Math.floor(Math.random() * 4)];
+    var id = "STG-U-" + Date.now();
+    var put = function(paid){
+      syncApply([{ kind:"order", id:id, updatedAt:Date.now(), deleted:false,
+        json: JSON.stringify({ id:id, productId:o.shopProductId, productName:o.name,
+          price:price, qty:1, buyer:"@tester" + (10 + Math.floor(Math.random()*90)),
+          fee:Math.round(price*0.07), at:Date.now(), paid:paid,
+          status: paid ? "AWAITING_SHIPMENT" : "UNPAID", source:"test" }) }]);
+      save(); render();
+    };
+    put(false);                       // まず入金待ち（灰色）
+    setTimeout(function(){ put(true); }, 6000);   // 6 秒後に入金確認
+  };
   window.__clearOrders = function(){ DB.orders = []; save(); render(); };
 
   document.addEventListener("DOMContentLoaded", function(){
@@ -6085,6 +6128,7 @@ window.addEventListener("pagehide", () => {
       bar.appendChild(b);
     };
     mk("偽の落札を流す", function(){ window.__fakeOrder(); });
+    mk("入金待ち→6秒後に入金", function(){ window.__fakeUnpaid(); });
     mk("受信箱を空に", function(){ window.__clearOrders(); });
   });
 })();
