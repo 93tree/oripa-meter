@@ -2396,7 +2396,13 @@ function loadSyncConf(){
 function adoptSyncDefaults(){
   const d = window.__SYNC_DEFAULTS;
   if(!d || !d.url || !d.room || !d.key) return;
-  if(syncConf.url || syncConf.token) return;        // 既に決まっているものは尊重する
+
+  // **古いスプレッドシート経由の設定は乗り換えさせる。**
+  // ここを尊重してしまうと、繋ぎ先が端末ごとに割れて別々の場所にデータが
+  // 溜まる。しかも**エラーは出ない**ので、食い違いに気づくのは
+  // 「片方の端末にだけ記録がある」と分かった後になる。
+  const old = /script\.google\.com/.test(syncConf.url || "");
+  if(!old && (syncConf.url || syncConf.token)) return;   // 手で決めたものは尊重する
   let token = "";
   try{ token = localStorage.getItem(d.key) || ""; }catch(_){}
   if(!token) return;                                 // 入口を通っていない
