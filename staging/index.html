@@ -691,15 +691,28 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
   box-shadow:var(--shadow); padding:12px 16px;
   border-left:3px solid var(--gold);
 }
-.mktset{
-  display:inline-flex; align-items:center; gap:7px; font-size:14px; font-weight:700; white-space:nowrap;
+.mktbar .setrow{ display:inline-flex; align-items:center; gap:8px; white-space:nowrap; }
+.mktbar .setunit{ font-size:11.5px; color:var(--ink-3); }
+/* 数字は打たせず増減で決める。配信中に手で打つと桁を間違える */
+.stepper{
+  display:inline-flex; align-items:center; gap:2px;
+  background:var(--surface-2); border:1px solid var(--line-2); border-radius:8px; padding:2px;
 }
-.mktset input{
-  width:5.5ch; background:var(--surface-2); border:1px solid var(--line-2); border-radius:7px;
-  padding:6px 8px; font-family:var(--font-num); font-variant-numeric:tabular-nums;
-  font-size:16px; font-weight:600; text-align:right;
+.stepper b{
+  min-width:4.5ch; text-align:center; font-family:var(--font-num);
+  font-variant-numeric:tabular-nums; font-size:16px; font-weight:700;
 }
-.mktset input:focus{ border-color:var(--gold); outline:none; }
+.stepbtn{
+  width:30px; height:30px; border:0; border-radius:6px; background:var(--surface);
+  color:var(--ink); font-size:16px; font-weight:700; cursor:pointer; line-height:1;
+}
+.stepbtn:hover{ background:var(--gold-bg); color:var(--gold-ink); }
+.stepbtn:disabled{ opacity:.4; cursor:not-allowed; }
+/* 未確定のあいだは色を変える。押し忘れて「変えたのに効かない」を防ぐ */
+.pricestep{ display:flex; gap:5px; margin-top:7px; flex-wrap:wrap; }
+.pricestep .stepbtn{ width:auto; min-width:52px; padding:0 9px; font-size:12.5px; }
+.mktbar.is-dirty{ border-left-color:var(--bad); }
+.mktbar.is-dirty .stepper{ border-color:var(--bad); }
 .mktbar .hint{ flex:1 1 260px; min-width:0; }
 
 /* ---- 時間とペース ---- */
@@ -1050,13 +1063,28 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
     <div id="orderNotice"></div>
     <!-- 相場想定。CSV に相場の列が無いオリパの相場をここで決める -->
     <div class="mktbar">
-      <span class="label">相場想定</span>
-      <span class="mktset">
-        原価 ×
-        <input type="number" id="mktMult" min="0" max="50" step="0.05" inputmode="decimal"
-               aria-label="相場は原価の何倍か">
-        倍
-      </span>
+      <div class="setrow">
+        <span class="label">相場想定</span>
+        <span class="stepper">
+          <button type="button" class="stepbtn" data-mkt="-0.1" aria-label="0.1 下げる">−</button>
+          <b id="mktVal">1.2</b>
+          <button type="button" class="stepbtn" data-mkt="0.1" aria-label="0.1 上げる">＋</button>
+        </span>
+        <span class="setunit">倍（原価 × これ ＝ 相場）</span>
+      </div>
+      <div class="setrow">
+        <span class="label">手数料</span>
+        <span class="stepper">
+          <button type="button" class="stepbtn" data-fee="-0.1" aria-label="0.1% 下げる">−</button>
+          <b id="feeVal">5.0</b>
+          <button type="button" class="stepbtn" data-fee="0.1" aria-label="0.1% 上げる">＋</button>
+        </span>
+        <span class="setunit">%（売上から引く）</span>
+      </div>
+      <div class="setrow">
+        <button type="button" class="btn primary" id="btnSetApply" disabled>決定</button>
+        <span class="hint" id="setDirty"></span>
+      </div>
       <span class="hint" id="mktNote"></span>
     </div>
 
@@ -1318,6 +1346,14 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
                 <span class="pricelabel" id="recPriceLabel">参考金額</span>
                 <div class="price" id="recPrice">—</div>
                 <div class="delta" id="recDelta">—</div>
+                <!-- 出た金額をそのまま使うとは限らない。場の空気で少し動かす。
+                     手打ちにすると配信中に桁を間違えるので増減だけにしてある -->
+                <div class="pricestep" id="priceStep">
+                  <button type="button" class="stepbtn" data-price="-1000">−1000</button>
+                  <button type="button" class="stepbtn" data-price="-100">−100</button>
+                  <button type="button" class="stepbtn" data-price="100">＋100</button>
+                  <button type="button" class="stepbtn" data-price="1000">＋1000</button>
+                </div>
               </div>
               <button type="button" class="btn primary" id="btnApply">この価格に変更</button>
             </div>
@@ -1897,6 +1933,8 @@ function normalizeOripa(o){
     targetMargin: clamp(Number(o.targetMargin ?? 0.30), 0, 0.95),
     targetReturn: Math.max(0.01, Number(o.targetReturn ?? 0.80)),
     recovery: clamp(Number(o.recovery ?? 0.70), 0, 1),
+    // 手数料。売上から引く。既定 5%
+    feeRate: clamp(Number(o.feeRate != null ? o.feeRate : DEFAULT_FEE), 0, 0.5),
     // 解体の条件。編集画面のシミュレーションと配信中の値下げ判断が同じ前提を使う
     simTopMult: Math.max(0, Number(o.simTopMult ?? 5)),
     simMinReturn: clamp(Number(o.simMinReturn ?? 0.50), 0, 2),
@@ -2743,6 +2781,18 @@ function syncSlots(o){
   return o.totalSlots;
 }
 
+/* ------------------------------------------------------------
+   手数料
+
+   TikTok の手数料は注文の中身に入ってこない（実物で確認済み）。
+   だから率を決めて売上から引く。**引かないと利益率が実態より良く出る。**
+
+   率はオリパごとに持たせてある。そうしないと端末間で同期されないため
+   （相場想定の倍率と同じ理由）。運用としては全部そろっている前提。
+   ------------------------------------------------------------ */
+const DEFAULT_FEE = 0.05;
+const feeRateOf = o => clamp(Number(o && o.feeRate != null ? o.feeRate : DEFAULT_FEE), 0, 0.5);
+
 /** 指標をまとめて出す。o を省略すると開いているオリパ。一覧では各オリパを渡す。 */
 function compute(o){
   o = o || S;
@@ -2793,7 +2843,10 @@ function compute(o){
   const evCost   = left > 0 ? costLeft / left : 0;
   const evMkt    = left > 0 ? mktLeft  / left : 0;
 
-  const profitNow = revenue - costDrawn;
+  // **手数料は売上から引く。**引かないと利益率が実態より良く出る
+  const feeRate  = feeRateOf(o);
+  const feeNow   = revenue * feeRate;
+  const profitNow = revenue - feeNow - costDrawn;
   const marginNow = revenue > 0 ? profitNow / revenue : 0;
 
   const baseEvMkt  = N > 0 ? mktTotal / N : 0;
@@ -2802,7 +2855,7 @@ function compute(o){
   const returnAll  = (N > 0 && price > 0) ? mktTotal / (N * price) : 0;
 
   const finalRev    = revenue + left * price;
-  const finalProfit = finalRev - costTotal;
+  const finalProfit = finalRev * (1 - feeRate) - costTotal;
   const finalMargin = finalRev > 0 ? finalProfit / finalRev : 0;
 
   const tm      = clamp(o.targetMargin || 0, 0, 0.95);
@@ -2834,7 +2887,7 @@ function compute(o){
     o, N, price, sold, left, pendingSlots, pendingRev,
     addNeeded, salvageLeft, recovery: o.recovery || 0,
     costTotal, mktTotal, costDrawn, mktDrawn, costLeft, mktLeft,
-    revenue, profitNow, marginNow, evCost, evMkt, baseEvMkt, heat,
+    revenue, feeRate, feeNow, profitNow, marginNow, evCost, evMkt, baseEvMkt, heat,
     returnLeft, returnAll, finalRev, finalProfit, finalMargin,
     pBE, pTarget, pBuyer, pFloor, rec, tm, state, verdict, drawnBy
   };
@@ -2861,7 +2914,7 @@ function scenario(c, p, f){
   const unsold  = c.left - more;
   const salvage = unsold * c.evCost * c.recovery;
   const rev     = c.revenue + addRev;
-  const cash    = rev - c.costTotal;
+  const cash    = rev * (1 - c.feeRate) - c.costTotal;
   return { more, addRev, unsold, salvage, rev, cash, withStock: cash + salvage,
            margin: rev > 0 ? cash / rev : 0 };
 }
@@ -3004,6 +3057,7 @@ const quantile = (sorted, q) => sorted.length
 function simulateBreakup(o, topMult, minReturn){
   const price = Math.max(0, o.price || 0);
   const recovery = clamp(o.recovery ?? 0.7, 0, 1);
+  const feeRate = feeRateOf(o);
   const slots = [];
   let costTotal = 0, mktTotal = 0;
   const topLine = price * (topMult > 0 ? topMult : 0);
@@ -3047,7 +3101,7 @@ function simulateBreakup(o, topMult, minReturn){
 
     const rev = k * price;
     const c = rev - costDrawn;                     // 現金損益：出た賞品の原価だけ
-    const w = rev - costTotal + (costTotal - costDrawn) * recovery; // 在庫込みは全体の原価
+    const w = rev * (1 - feeRate) - costTotal + (costTotal - costDrawn) * recovery;
     const m = rev > 0 ? c / rev : 0;
     sold.push(k); cash.push(c); stock.push(w); mar.push(m);
     if(stopped) broke++;
@@ -3080,8 +3134,8 @@ function simulateBreakup(o, topMult, minReturn){
     marMed: quantile(mar, 0.5), marP10: quantile(mar, 0.1), marP90: quantile(mar, 0.9), marMean: mean(mar),
     earlyRate: early / trials,
     earlyMarMed: earlyMar.length ? quantile(earlyMar.sort((a, b) => a - b), 0.5) : 0,
-    soldOutMargin: (N * price) > 0 ? (N * price - costTotal) / (N * price) : 0,
-    soldOutProfit: N * price - costTotal,
+    soldOutMargin: (N * price) > 0 ? (N * price * (1 - feeRate) - costTotal) / (N * price) : 0,
+    soldOutProfit: N * price * (1 - feeRate) - costTotal,
     hist, histLo: lo, histHi: hi,
     histClipLo: mar[0] < lo, histClipHi: mar[mar.length - 1] > hi
   };
@@ -3372,6 +3426,7 @@ function simFromHere(c, p, topMult, minReturn, trials){
 
   const targetReturn = clamp(c.o.targetReturn ?? 0.8, 0.05, 5);
   const recovery = clamp(c.recovery, 0, 1);
+  const feeRate = c.feeRate;
   const topLine = price * (topMult > 0 ? topMult : 0);
 
   // 残っている口だけを並べる。目玉かどうかは全体の相場で決まる（既出ぶんも数える）
@@ -3430,10 +3485,11 @@ function simFromHere(c, p, topMult, minReturn, trials){
     }
     const rev  = c.revenue + revMore;
     if(k > 0) bids.push(revMore / k);
-    const cash_ = rev - c.costDrawn - costMore;      // 現金損益：出た賞品の原価だけ引く
+    // 現金損益：出た賞品の原価だけ引く。手数料は売上にかかる
+    const cash_ = rev * (1 - feeRate) - c.costDrawn - costMore;
     // 在庫込みは**オリパ全体の原価**を引く。売れ残りの仕入代を引かずに
     // 売れ残りの回収額だけ足すと、持っているほうが不当に得に見える。
-    const stk  = rev - c.costTotal + (costLeft - costMore) * recovery;
+    const stk  = rev * (1 - feeRate) - c.costTotal + (costLeft - costMore) * recovery;
     more.push(k); cash.push(cash_); stock.push(stk);
     mar.push(rev > 0 ? cash_ / rev : 0);
     if(cash_ < 0) neg++;
@@ -3533,7 +3589,7 @@ function breakupAnchors(c, topMult, minReturn){
 
 /** いま止めたときの在庫込み損益。simFromHere の k=0 とちょうど同じ式になる */
 function stockAtStop(c){
-  return c.revenue - c.costTotal + c.salvageLeft;
+  return c.revenue * (1 - c.feeRate) - c.costTotal + c.salvageLeft;
 }
 
 /**
@@ -3720,7 +3776,7 @@ function buildRecord(o, endedAt, memo){
     margin: c.marginNow,
     mktLeft: c.mktLeft,
     salvage: c.salvageLeft,
-    withStock: c.revenue - c.costTotal + c.salvageLeft,
+    withStock: c.revenue * (1 - c.feeRate) - c.costTotal + c.salvageLeft,
     recovery: c.recovery,
     auction: (() => {
       const a = auctionSummary(o);
@@ -3956,8 +4012,13 @@ function renderDataNotice(){
 function render(){
   renderDataNotice();
 
-  // ブリッジは「いま動いているオリパ」を自分で選ぶ。開く前に決めておく
-  if(mode === "watch") S = watchTarget() || S;
+  // ブリッジは「いま配信しているオリパ」を映す。開く前に決めておく。
+  // 配信が終われば映すものが無くなるので、一覧へ戻す
+  if(mode === "watch"){
+    const t = watchTarget();
+    if(t) S = t;
+    else { mode = "list"; syncMsg = ""; setSyncState("", "配信しているオリパが無いので一覧に戻った。"); }
+  }
 
   // 開いているオリパが消えていたら一覧へ戻す
   if(S && !DB.oripas.some(o => o.id === S.id)) S = null;
@@ -3979,8 +4040,15 @@ function render(){
 
   document.querySelectorAll(".modes button").forEach(b =>
     b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
-  $("tabLive").disabled = !S;
-  $("tabWatch").disabled = !DB.oripas.length;
+  // **配信中の札は「自分がいま配信しているもの」に戻る口**にする。
+  // 誰も配信していないのに押せると、止まった数字が配信画面として出る。
+  // 配信を始めるのは一覧の「配信を始める」から。
+  // 押せるのは「誰かが配信しているとき」だけ。自分の席なら戻る口になり、
+  // 他人の席なら「別の PC で配信中です → ブリッジで見る」の案内が出る。
+  // 誰も配信していなければ塞ぐ（止まった数字が配信画面として出るため）
+  $("tabLive").disabled = !(mode === "live" || (S && liveHolder(S)));
+  // ブリッジは**誰かが配信しているときだけ**。映すものが無ければ押させない
+  $("tabWatch").disabled = !liveNow().length && mode !== "watch";
   const onLive = mode === "live" || mode === "watch";
   $("view-list").hidden = mode !== "list";
   $("view-live").hidden = !onLive;
@@ -4065,15 +4133,27 @@ async function goLive(o){
    ============================================================ */
 
 /** 映す対象。固定していなければ「まだ記録していないもののうち直近に動いたもの」 */
+/** いま実際に誰かが配信しているオリパ（席の合図が生きているもの）*/
+function liveNow(){
+  return DB.oripas.filter(o => !o.closedAt && liveHolder(o));
+}
+
+/**
+ * ブリッジが映すもの。
+ *
+ * **誰も配信していなければ何も映さない。**以前は「いちばん最近さわった
+ * オリパ」に落ちる作りで、誰も配信していないのに配信画面らしきものが
+ * 出ていた。止まった数字が配信中の画面として映るのは紛らわしい。
+ */
 function watchTarget(){
+  const live = liveNow();
   if(watchPin){
-    const pinned = DB.oripas.find(o => String(o.id) === String(watchPin));
+    const pinned = live.find(o => String(o.id) === String(watchPin));
     if(pinned) return pinned;
-    watchPin = "";
+    watchPin = "";                      // 配信が終わった指名は外す
   }
-  const live = DB.oripas.filter(o => !o.closedAt);
-  const pool = live.length ? live : DB.oripas;
-  return pool.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0] || null;
+  return live.slice().sort((a, b) =>
+    (Number(b.live && b.live.at) || 0) - (Number(a.live && a.live.at) || 0))[0] || null;
 }
 
 function renderWatchBar(){
@@ -4081,10 +4161,13 @@ function renderWatchBar(){
 
   const sel = $("watchPick");
   const want = watchPin ? String(watchPin) : "";
-  const opts = [`<option value="">自動（いま動いているもの）</option>`].concat(
-    DB.oripas.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map(o =>
+  // 選べるのは**いま配信しているもの**だけ。配信していないものを選べると、
+  // 止まった数字が配信画面として映る
+  const opts = [`<option value="">自動（いま配信しているもの）</option>`].concat(
+    liveNow().slice().sort((a, b) =>
+      (Number(b.live && b.live.at) || 0) - (Number(a.live && a.live.at) || 0)).map(o =>
       `<option value="${esc(String(o.id))}">${esc(o.name || "無題のオリパ")}`
-      + `${o.closedAt ? "（記録済み）" : ""}</option>`));
+      + `${o.live && o.live.name ? `（${esc(o.live.name)}）` : ""}</option>`));
   const html = opts.join("");
   if(sel.dataset.html !== html){ sel.innerHTML = html; sel.dataset.html = html; }
   sel.value = want;
@@ -4183,17 +4266,40 @@ function listEta(o, c){
 
 /* 相場想定バー。倍率はオリパごとに持たせてある（そうしないと端末間で同期されない）が、
    運用としては全部そろっている前提なので、ここでは 1 つの数字として扱う。 */
+/* 決定を押すまでの仮の値。押さずに閉じても保存しない。
+   配信中に効く数字なので、触った瞬間に全部へ波及させない。 */
+let setDraft = null;
+
+function currentMult(){
+  const os = DB.oripas.filter(o => o.prizes.length);
+  const ms = [...new Set(os.map(o => Number(o.marketMult) || 1))];
+  return ms.length === 1 ? ms[0] : (ms.length ? ms[0] : 1.2);
+}
+function currentFee(){
+  const os = DB.oripas.filter(o => o.prizes.length);
+  const fs = [...new Set(os.map(o => feeRateOf(o)))];
+  return fs.length ? fs[0] : DEFAULT_FEE;
+}
+function setDraftNow(){
+  if(!setDraft) setDraft = { mult: currentMult(), fee: currentFee() };
+  return setDraft;
+}
+
 function renderMktBar(){
   const os = DB.oripas.filter(o => o.prizes.length);
   const mults = [...new Set(os.map(o => Number(o.marketMult) || 1))];
-  const inp = $("mktMult");
-  if(document.activeElement !== inp) inp.value = mults.length === 1 ? String(mults[0]) : "";
-  inp.placeholder = mults.length > 1 ? "混在" : "1";
+  const d = setDraftNow();
+  $("mktVal").textContent = d.mult.toFixed(1);
+  $("feeVal").textContent = (d.fee * 100).toFixed(1);
+  const dirty = Math.abs(d.mult - currentMult()) > 1e-9 || Math.abs(d.fee - currentFee()) > 1e-9;
+  document.querySelector(".mktbar").classList.toggle("is-dirty", dirty);
+  $("btnSetApply").disabled = !dirty;
+  $("setDirty").textContent = dirty ? "決定を押すまで反映されない" : "";
 
   let auto = 0, fixed = 0;
   for(const o of os) for(const p of o.prizes) (p.marketAuto ? auto++ : fixed++);
   const note = [];
-  if(mults.length > 1) note.push(`いまオリパごとに ${mults.join(" / ")} 倍と食い違っている。入れ直すと全部そろう。`);
+  if(mults.length > 1) note.push(`いまオリパごとに ${mults.join(" / ")} 倍と食い違っている。決定を押すと全部そろう。`);
   note.push(auto
     ? `CSV に相場の列が無かった ${auto} 行に効く（原価 × 倍率 が相場になる）。`
     : `いま自動の行は無い。相場を手で入れた行は変わらない。`);
@@ -4452,10 +4558,11 @@ function renderLive(c){
   kF.className = "kpi " + (c.profitNow >= 0 ? "is-good" : withStock >= 0 ? "is-warn" : "is-bad");
   $("mFinal").textContent = syen(c.profitNow);
   $("mFinal").className = "v " + (c.profitNow >= 0 ? "pos" : "neg");
+  // 手数料は引いたあとの数字なので、いくら引いたかを添える。
+  // 出さないと「計算が合わない」と見える
   $("mFinalSub").textContent = c.sold === 0
     ? "まだ排出なし"
-    : `在庫込み ${syen(withStock)}`
-      + (c.left > 0 ? `（残り ${c.left} 口を回収 ${pct(c.recovery, 0)} で評価）` : "");
+    : `手数料 ${pct(c.feeRate, 1)}（${syen(-Math.round(c.feeNow))}）を引いたあと`;
 
   renderCue(c);
   renderInbox(c);
@@ -4923,6 +5030,27 @@ function renderPrizes(c){
 /* 直近の判断で出した「続けるならこの価格」。0 なら出していない */
 let decidedPrice = 0;
 
+/* 参考金額からのずらし。**場の空気で少し動かすための手動ぶん。**
+   提案そのものが変わったら 0 に戻す（前の提案へのずらしを引きずらない）。 */
+let priceAdj = 0, priceAdjKey = "";
+
+/**
+ * 直近の落札から見た下限。
+ *
+ * 計算だけで価格を出すと、目玉が出きった直後などに**いま買われている額より
+ * ずっと安い数字**が出ることがある。実際にその値で売れている以上、そこまで
+ * 下げる理由は無い（下げれば下げたぶんだけ取りこぼす）。
+ * 直近の落札の中央値の 7 割を下限に置く。
+ */
+function recentFloor(o){
+  const done = lotDrawn(o);
+  const ps = o.lots.filter(l => (done.get(l.id) || 0) > 0).slice(-5)
+    .map(l => Number(l.price) || 0).filter(v => v > 0).sort((a, b) => a - b);
+  if(!ps.length) return 0;
+  const mid = ps[Math.floor(ps.length / 2)];
+  return roundPrice(mid * 0.7);
+}
+
 /* 値下げ判断は「完売したら」ではなく「解体まで売ったら」で出す。
    価格ごとに引き直すので、状態が変わらないうちは使い回す。 */
 let liveSimCache = { key: "", bk: null, at: new Map() };
@@ -4960,8 +5088,17 @@ function renderPrice(c){
 
   // ここが判断の本体。続けるのと止めるのを同じ物差しで比べる
   const dec = c.left > 0 ? decideNow(c) : null;
-  const goPrice = dec && dec.best ? dec.best.p : 0;
+  const raw = dec && dec.best ? dec.best.p : 0;
+  // **いま買われている額より大きく下げない。**下げたぶんだけ取りこぼす
+  const floor = raw > 0 ? recentFloor(S) : 0;
+  const base = raw > 0 ? Math.max(raw, floor) : 0;
+  // 提案そのものが動いたら、手で足したぶんは捨てる
+  const key = `${S.id}|${base}`;
+  if(priceAdjKey !== key){ priceAdjKey = key; priceAdj = 0; }
+  const goPrice = base > 0 ? Math.max(100, base + priceAdj) : 0;
   decidedPrice = goPrice;                    // 「この価格に変更」が押す価格
+  const stepBox = $("priceStep");
+  if(stepBox) stepBox.hidden = !(goPrice > 0) || mode === "watch";
 
   let cls = "", msg = "";
   if(sold_out){
@@ -4990,10 +5127,13 @@ function renderPrice(c){
     $("recLabel").textContent = go ? "続ける" : even ? "どちらでも大差ない" : "解体する";
     $("recPrice").textContent = (go || even) && !dec.dead ? yen(goPrice) : "終了してOK";
     const diff = c.price - goPrice;
-    $("recDelta").textContent = (go || even)
+    const adj = priceAdj ? `／手動で ${priceAdj > 0 ? "+" : ""}${yen(priceAdj)}` : "";
+    const held = floor > raw ? `／直近の落札に合わせて据え置き` : "";
+    $("recDelta").textContent = ((go || even)
       ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
+         : diff < 0 ? `現行から ${yen(-diff)} 上げ`
          : "現行価格のまま（下げる理由なし）")
-      : `残りを在庫に戻す`;
+      : `残りを在庫に戻す`) + held + adj;
 
     // **続けた場合の振れ幅を出す。**「いま解体」は現時点での利益と同じ額に
     // なるので別枠にしない（解体したカードは原価のまま在庫に戻るため）。
@@ -6058,7 +6198,7 @@ document.querySelectorAll(".modes button").forEach(b => {
       goLive(S);                       // 席が埋まっていれば「別の PC で配信中です」
       return;
     }
-    if(b.dataset.mode === "watch" && !DB.oripas.length) return;
+    if(b.dataset.mode === "watch" && !liveNow().length) return;
     go(b.dataset.mode);
   });
 });
@@ -6073,17 +6213,32 @@ $("devName").addEventListener("change", () => {
   render();
 });
 
-$("mktMult").addEventListener("change", () => {
-  const v = Number($("mktMult").value);
-  if(!(v > 0)){ renderMktBar(); return; }          // 空欄や 0 は無視して元に戻す
+document.querySelectorAll("[data-mkt]").forEach(b => b.addEventListener("click", () => {
+  const d = setDraftNow();
+  d.mult = Math.min(50, Math.max(0.1, Math.round((d.mult + Number(b.dataset.mkt)) * 10) / 10));
+  renderMktBar();
+}));
+document.querySelectorAll("[data-fee]").forEach(b => b.addEventListener("click", () => {
+  const d = setDraftNow();
+  const pct = Math.min(50, Math.max(0, Math.round((d.fee * 100 + Number(b.dataset.fee)) * 10) / 10));
+  d.fee = pct / 100;
+  renderMktBar();
+}));
+
+/** 決定。**ここで初めて全オリパへ効く**（同期にも乗る）*/
+$("btnSetApply").addEventListener("click", () => {
+  const d = setDraftNow();
   const now = Date.now();
   for(const o of DB.oripas){
-    if(Number(o.marketMult) === v) continue;
-    o.marketMult = v;
-    syncMarket(o);
-    markLosers(o);
-    o.updatedAt = now;                              // 一覧では save() が触らないので明示的に
+    let touched = false;
+    if(Number(o.marketMult) !== d.mult){
+      o.marketMult = d.mult; syncMarket(o); markLosers(o); touched = true;
+    }
+    if(feeRateOf(o) !== d.fee){ o.feeRate = d.fee; touched = true; }
+    if(touched) o.updatedAt = now;   // 一覧では save() が触らないので明示的に
   }
+  setDraft = null;
+  save();
   render();
 });
 
@@ -6206,6 +6361,11 @@ $("btnResetDraws").addEventListener("click", async () => {
     S.events = []; S.lots = []; resetLotDraft(); lotBarKey = ""; render();
   }
 });
+
+document.querySelectorAll("[data-price]").forEach(b => b.addEventListener("click", () => {
+  priceAdj += Number(b.dataset.price);
+  render();
+}));
 
 $("btnApply").addEventListener("click", () => {
   touchLive();
