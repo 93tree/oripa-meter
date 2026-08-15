@@ -780,13 +780,7 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .inbox .who{ font-size:13px; color:var(--ink-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .inbox .when{ font-size:11.5px; color:var(--ink-3); font-family:var(--font-num); white-space:nowrap; }
 .inbox .spacer{ flex:1 1 auto; }
-.inbox .head.is-wait{ color:var(--gold-ink); border-top:1px solid var(--line); }
 .inbox .head.is-bad{ color:var(--bad); border-top:1px solid var(--line); }
-.inbox .waittag{
-  font-size:11.5px; font-weight:800; padding:3px 10px; border-radius:999px;
-  background:var(--gold-bg); color:var(--gold-ink); white-space:nowrap;
-}
-.inbox .row.is-wait .amt{ color:var(--ink-3); }
 .inbox .orphan{ padding:10px 13px; background:var(--surface); border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); }
 
 /* ---- 配信の席 ---- */
@@ -1984,9 +1978,11 @@ function normalizeOrder(x){
   };
 }
 
-/** そのオリパ宛の注文を、使ったもの／まだのもの に分ける */
+/** そのオリパ宛の注文を、使ったもの／まだのもの に分ける。
+    **ここに来る時点で入金は確認済み**（未入金は中継が送ってこない）。
+    それでも paid を見ているのは、古い版の中継や手入力が混じったときの保険。 */
 function ordersFor(o){
-  const none = { pending: [], waiting: [], trouble: [] };
+  const none = { pending: [], trouble: [] };
   if(!o || !DB.orders || !DB.orders.length) return none;
   const pid = String(o.shopProductId || "").trim();
   if(!pid) return none;
@@ -1995,8 +1991,6 @@ function ordersFor(o){
   return {
     // 入金済みで、まだカードを押していない → いま取り込めるもの
     pending: mine.filter(x => !used.has(String(x.id)) && x.paid && !x.cancelled),
-    // 落札はしたが入金がまだ → 見せるが取り込ませない
-    waiting: mine.filter(x => !used.has(String(x.id)) && !x.paid && !x.cancelled),
     // カードを渡したあとに取り消された → 売上が狂うので知らせる
     trouble: mine.filter(x => used.has(String(x.id)) && x.cancelled),
   };
@@ -3981,11 +3975,10 @@ function renderOrderNotice(){
   const el = $("orderNotice");
   const per = DB.oripas.map(o => ({ o, ...ordersFor(o) }));
   const ready  = per.filter(x => x.pending.length);
-  const wait   = per.reduce((n, x) => n + x.waiting.length, 0);
   const bad    = troubleOrders();
   const orphans = orphanOrders().length;
 
-  if(!ready.length && !wait && !bad.length && !orphans){ el.innerHTML = ""; return; }
+  if(!ready.length && !bad.length && !orphans){ el.innerHTML = ""; return; }
 
   const out = [];
 
@@ -4002,7 +3995,7 @@ function renderOrderNotice(){
       + `</span></div>`);
   }
 
-  if(ready.length || wait || orphans){
+  if(ready.length || orphans){
     const lines = ready.map(x =>
       `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
       + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.pending.length} 件）</button>`).join("");
@@ -4010,7 +4003,6 @@ function renderOrderNotice(){
       + (ready.length
           ? `<b>落札が ${ready.reduce((n, x) => n + x.pending.length, 0)} 件届いている。</b>配信画面をひらくと取り込める。`
           : "")
-      + (wait ? ` 入金待ちが ${wait} 件（入金が確認できると取り込めるようになる）。` : "")
       + (orphans
           ? ` どのオリパにも結びつかない注文が ${orphans} 件ある`
             + `（編集画面の「TikTok Shop の商品 ID」を入れると結びつく）。`
@@ -4266,9 +4258,9 @@ function renderInbox(c){
     return;
   }
 
-  const { pending, waiting, trouble } = ordersFor(S);
+  const { pending, trouble } = ordersFor(S);
   const orphans = orphanOrders();
-  if(!pending.length && !waiting.length && !trouble.length && !orphans.length){
+  if(!pending.length && !trouble.length && !orphans.length){
     box.hidden = true; box.innerHTML = ""; return;
   }
   box.hidden = false;
@@ -4288,12 +4280,6 @@ function renderInbox(c){
         + `<span class="sub">${busy ? "いまの落札を出し切ってから取り込む" : "押すとその金額で落札が始まる。あとはカードを押すだけ"}</span></div>`
         + pending.map(x => line(x,
             `<button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`)).join("")
-      : "")
-    // 落札はしたが入金がまだ。見せるが取り込ませない（正式な売上は入金確認後）
-    + (waiting.length
-      ? `<div class="head is-wait">入金待ち ${waiting.length} 件`
-        + `<span class="sub">落札は決まったが、まだ入金が確認できていない。確認できると上に移る</span></div>`
-        + waiting.map(x => line(x, `<span class="waittag">入金待ち</span>`)).join("")
       : "")
     // カードを渡したあとに取り消された。売上が実態と食い違っている
     + (trouble.length
@@ -4320,8 +4306,8 @@ function takeOrder(orderId){
   if(!S || S.closedAt || activeLot()) return;
   const x = (DB.orders || []).find(o => String(o.id) === String(orderId));
   if(!x) return;
-  // 入金が確認できていないものは売上にしない
-  if(!x.paid || x.cancelled){ say("この落札はまだ入金が確認できていない。"); return; }
+  // 保険。入金が確認できたものしか届かない建て付けだが、万一混じっても売上にしない
+  if(!x.paid || x.cancelled){ say("この落札は入金が確認できていない。"); return; }
   const c = compute();
   if(c.left <= 0){ say("残りの口数がない。"); return; }
   touchLive();
