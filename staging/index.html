@@ -777,7 +777,14 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
   font-family:var(--font-num); font-variant-numeric:tabular-nums;
   font-size:20px; font-weight:600; letter-spacing:-.02em; white-space:nowrap;
 }
-.inbox .who{ font-size:13px; color:var(--ink-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.inbox .who{ font-size:13px; color:var(--ink-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  background:none; border:0; padding:0; font-family:inherit; text-align:left; cursor:pointer; }
+.inbox .who:hover{ color:var(--ink); text-decoration:underline; }
+/* 呼び名がまだ無い落札者。押せば付けられると分かるように出す */
+.inbox .who .addname{
+  font-size:11px; color:var(--ink-3); border:1px dashed var(--line);
+  border-radius:4px; padding:1px 5px; margin-left:5px; white-space:nowrap;
+}
 .inbox .when{ font-size:11.5px; color:var(--ink-3); font-family:var(--font-num); white-space:nowrap; }
 .inbox .spacer{ flex:1 1 auto; }
 .inbox .head.is-bad{ color:var(--bad); border-top:1px solid var(--line); }
@@ -1960,7 +1967,59 @@ function normalizeDB(d){
     .filter(x => x && x.id != null)
     .map(normalizeOrder)
     .sort((a, b) => b.at - a.at);
-  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId, graves: gr, orders };
+  // 落札者の呼び名帳。TikTok は注文にハンドルを載せないので、一度だけ手で
+  // 結びつけて覚えさせる（下の buyerLabel を参照）
+  const buyers = {};
+  const src = d.buyers && typeof d.buyers === "object" ? d.buyers : {};
+  for(const k of Object.keys(src)){
+    const v = src[k];
+    const name = String((v && v.name) || "").trim();
+    const at = Number(v && v.updatedAt) || 0;
+    // 名前を空にした＝消したという記録。捨てると他の端末から復活してくるので残す
+    if(name || at) buyers[String(k)] = { name, updatedAt: at };
+  }
+  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId, graves: gr, orders, buyers };
+}
+
+/* ============================================================
+   落札者の呼び名
+
+   **TikTok Shop の注文に @ハンドルは入っていない。**買い手を指すのは
+   user_id（数字）・buyer_email・recipient_address.name の 3 つだけで、
+   後ろ 2 つは配信画面に映る値なので使えない（本名とメールを晒すことになる）。
+
+   ただし落札した瞬間、ライブ側の画面にはハンドルが出ている。
+   そこで **一度だけ手で結びつけて覚える**。同じ人が次に落としたときは
+   自動で名前で出る。オリパは常連が多いので、数回で大半が埋まる。
+   ============================================================ */
+function buyers(){
+  if(!DB.buyers || typeof DB.buyers !== "object") DB.buyers = {};
+  return DB.buyers;
+}
+
+/** 表示名。覚えていればその名、無ければ数字を短く。手入力の名前はそのまま通す */
+function buyerLabel(v){
+  const key = String(v || "").trim();
+  if(!key) return "";
+  const hit = buyers()[key];
+  if(hit && hit.name) return hit.name;
+  // 数字だけの長い値＝TikTok の user_id。全部出しても読めないので末尾だけ
+  if(/^\d{8,}$/.test(key)) return "…" + key.slice(-4);
+  return key;
+}
+
+/** 覚えているか（「名前を付ける」を出すかの判定に使う）*/
+function buyerNamed(v){
+  const key = String(v || "").trim();
+  return !!(key && buyers()[key] && buyers()[key].name);
+}
+
+function setBuyerName(id, name){
+  const key = String(id || "").trim();
+  if(!key) return;
+  // 空にした場合も「消した」として残す。消すと他の端末の古い名前が復活する
+  buyers()[key] = { name: String(name || "").trim(), updatedAt: Date.now() };
+  save();
 }
 
 /* ============================================================
@@ -2266,6 +2325,12 @@ function syncOutbox(){
     const at = Number(r.updatedAt || r.endedAt) || 0;
     if(at > since) out.push({ kind: "record", id: String(r.id), updatedAt: at, json: JSON.stringify(r) });
   }
+  // 落札者の呼び名。注文と違ってこちらから送る（付けるのは人だから）
+  const bk = buyers();
+  for(const id of Object.keys(bk)){
+    const at = Number(bk[id].updatedAt) || 0;
+    if(at > since) out.push({ kind: "buyer", id: String(id), updatedAt: at, json: JSON.stringify({ name: bk[id].name }) });
+  }
   for(const g of graves()){
     if((Number(g.updatedAt) || 0) > since) out.push({ kind: g.kind, id: String(g.id), updatedAt: g.updatedAt, deleted: true });
   }
@@ -2321,6 +2386,15 @@ function syncApply(items){
         if(i >= 0) DB.orders[i] = x; else DB.orders.push(x);
         changed++;
       }
+    }else if(it.kind === "buyer"){
+      // 呼び名。新しいほうが勝つ。空の名前も「消した」として受け取る
+      const bk = buyers();
+      const mine = Number(bk[id] && bk[id].updatedAt) || -1;
+      if(Number(it.updatedAt) < mine) continue;
+      let v;
+      try{ v = it.deleted ? { name: "" } : JSON.parse(it.json); }catch(_){ continue; }
+      bk[String(id)] = { name: String((v && v.name) || "").trim(), updatedAt: Number(it.updatedAt) || 0 };
+      changed++;
     }
   }
   // 差し替えで S が宙に浮かないよう、同じ id の実体へ結び直す
@@ -4284,9 +4358,16 @@ function renderInbox(c){
   box.hidden = false;
 
   const busy = !!activeLot() || !!S.closedAt || c.left <= 0;
+  // 落札者は数字の user_id で届く（TikTok はハンドルを注文に載せない）。
+  // 押すと呼び名を付けられる。付ければ以後その人は名前で出る
+  const who = x => `<button type="button" class="who" data-name="${esc(x.buyer || "")}"`
+    + `${x.buyer ? "" : " disabled"}>`
+    + `${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(buyerLabel(x.buyer) || "落札者不明")}`
+    + `${x.buyer && !buyerNamed(x.buyer) ? `<span class="addname">名前を付ける</span>` : ""}</button>`;
+
   const line = (x, tail, cls) => `<div class="row ${cls || ""}" data-order="${esc(x.id)}">
       <span class="amt">${yen(x.price * x.qty)}</span>
-      <span class="who">${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(x.buyer || "落札者不明")}</span>
+      ${who(x)}
       <span class="spacer"></span>
       <span class="when">${x.at ? fmtClock(x.at) : ""}</span>
       ${tail}
@@ -4324,6 +4405,27 @@ function renderInbox(c){
   box.querySelectorAll("[data-void]").forEach(btn => {
     btn.addEventListener("click", () => voidOrder(btn.dataset.void));
   });
+  box.querySelectorAll("[data-name]").forEach(btn => {
+    btn.addEventListener("click", () => renameBuyer(btn.dataset.name));
+  });
+}
+
+/**
+ * 落札者に呼び名を付ける。
+ * 落札した瞬間はライブ側の画面にハンドルが出ているので、そこで一度だけ写す。
+ * 以後その user_id は名前で出る。**過去の記録も遡って名前で出る**
+ * （落札には id を持たせてあり、表示のたびに引き直しているため）。
+ */
+async function renameBuyer(id){
+  const key = String(id || "").trim();
+  if(!key || mode !== "live") return;
+  const now = buyers()[key];
+  const v = await askText(
+    `この落札者の呼び名\n\nTikTok の ID: ${key}\nライブ画面に出ているハンドルを写すと、次からその名前で出る。`,
+    (now && now.name) || "");
+  if(v === null) return;
+  setBuyerName(key, v);
+  render();
 }
 
 /** 届いた落札を、進行中の落札として立てる */
@@ -4376,7 +4478,7 @@ function renderLotBar(c){
       <div class="lotnow">
         <span class="big">${yen(lot.price)} × ${lot.qty}<span class="u">口</span></span>
         ${lot.rem ? `<span class="who">合計 ${yen(lotTotal(lot))}</span>` : ""}
-        ${lot.buyer ? `<span class="who">${esc(lot.buyer)}</span>` : ""}
+        ${lot.buyer ? `<span class="who">${esc(buyerLabel(lot.buyer))}</span>` : ""}
         <span class="pipes">${Array.from({length: lot.qty}, (_, i) =>
           `<i class="${i < st.drawn ? "on" : ""}"></i>`).join("")}</span>
         <span class="hint">開封待ち <b class="num">${rest}</b> 口。出たカードを押す（金額は聞かない）</span>
@@ -4489,7 +4591,7 @@ async function voidOrder(orderId){
   const lot = (S.lots || []).find(l => String(l.orderId || "") === String(orderId));
   if(!lot){ render(); return; }
   const st = lotStats(S, lot);
-  if(!await ask(`${yen(x.price * x.qty)}（${x.buyer || "落札者不明"}）は取り消し・返金になった。\n`
+  if(!await ask(`${yen(x.price * x.qty)}（${buyerLabel(x.buyer) || "落札者不明"}）は取り消し・返金になった。\n`
     + `この落札を売上から外しますか？\n\n`
     + `${st.drawn > 0 ? `排出済みの ${st.drawn} 口も一緒に取り消されます。` : ""}`,
     { okLabel: "売上から外す", danger: true })) return;
@@ -4543,7 +4645,7 @@ function renderLotTable(){
     tr.innerHTML =
       `<td class="l"><span class="lotno">${i + 1}</span>` +
         `${lot.kind === "auction" ? "オークション" : "即決"}` +
-        `${lot.buyer ? " ／ " + esc(lot.buyer) : ""}${names}</td>` +
+        `${lot.buyer ? " ／ " + esc(buyerLabel(lot.buyer)) : ""}${names}</td>` +
       `<td class="n">${st.drawn}/${lot.qty}</td>` +
       `<td class="n">${yen(lot.price)}${lot.rem ? `<br><span class="hint">合計 ${yen(lotTotal(lot))}</span>` : ""}</td>` +
       `<td class="n">${yen(st.cost)}</td>` +
