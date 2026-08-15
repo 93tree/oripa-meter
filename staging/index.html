@@ -4047,8 +4047,10 @@ function render(){
   // 他人の席なら「別の PC で配信中です → ブリッジで見る」の案内が出る。
   // 誰も配信していなければ塞ぐ（止まった数字が配信画面として出るため）
   $("tabLive").disabled = !(mode === "live" || (S && liveHolder(S)));
-  // ブリッジは**誰かが配信しているときだけ**。映すものが無ければ押させない
-  $("tabWatch").disabled = !liveNow().length && mode !== "watch";
+  // ブリッジは**他の端末の配信を見る**もの。自分しか配信していないときに
+  // 押せると、席を手放した瞬間に映すものが無くなって一覧へ飛ばされる。
+  const others = liveNow().filter(o => (o.live || {}).by !== DEVICE_ID);
+  $("tabWatch").disabled = !others.length && mode !== "watch";
   const onLive = mode === "live" || mode === "watch";
   $("view-list").hidden = mode !== "list";
   $("view-live").hidden = !onLive;
@@ -6198,7 +6200,8 @@ document.querySelectorAll(".modes button").forEach(b => {
       goLive(S);                       // 席が埋まっていれば「別の PC で配信中です」
       return;
     }
-    if(b.dataset.mode === "watch" && !liveNow().length) return;
+    if(b.dataset.mode === "watch"
+       && !liveNow().some(o => (o.live || {}).by !== DEVICE_ID)) return;
     go(b.dataset.mode);
   });
 });
