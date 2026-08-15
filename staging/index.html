@@ -996,6 +996,12 @@ body.locked > header, body.locked > main { display:none; }
 </head>
 <body>
 
+<script>
+// 同期は既定で繋がっている状態にする。**端末ごとに設定させない。**
+// 合言葉は入口を通ったときに導出して置いてあるので、ここでは組み立てるだけ。
+window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync", room: "2ndline-stg", key: "oripa-stg-sync-key" };
+</script>
+
 <div class="gate" id="gate">
   <form class="gatebox" id="gateForm" autocomplete="on">
     <h1>配信オリパAI支援</h1>
@@ -2283,6 +2289,35 @@ function loadSyncConf(){
     const raw = localStorage.getItem(SYNC_KEY);
     if(raw) syncConf = Object.assign(syncConf, JSON.parse(raw) || {});
   }catch(_){}
+  adoptSyncDefaults();
+}
+
+/**
+ * 同期は既定で繋がった状態にする。**端末ごとに設定させない。**
+ *
+ * 配信を手伝う人が URL と合言葉を手で入れる運用は、入れ忘れた端末が
+ * 黙って同期していない状態になる。しかもエラーは出ず、ただ古い画面が
+ * 映り続けるので気づけない。
+ *
+ * 合言葉は入口（ID とパスワード）から導いた値を使う。**ページには埋め込まない。**
+ * 埋め込むと、公開の場所に置いてあるので誰でも読めてしまう。
+ * 入口を通れる人だけが同じ値に辿り着く、という形にしてある。
+ *
+ * 手で設定してある端末は触らない。実験用の部屋に繋いでいることがあり、
+ * 黙って本番へ引き戻すと配信の記録が混ざる。
+ */
+function adoptSyncDefaults(){
+  const d = window.__SYNC_DEFAULTS;
+  if(!d || !d.url || !d.room || !d.key) return;
+  if(syncConf.url || syncConf.token) return;        // 既に決まっているものは尊重する
+  let token = "";
+  try{ token = localStorage.getItem(d.key) || ""; }catch(_){}
+  if(!token) return;                                 // 入口を通っていない
+  syncConf.url = d.url;
+  syncConf.room = d.room;
+  syncConf.token = token;
+  syncConf.since = 0;                                // 初回は手元のものを全部送る
+  saveSyncConf();
 }
 function saveSyncConf(){
   try{ localStorage.setItem(SYNC_KEY, JSON.stringify(syncConf)); }catch(_){}
@@ -6338,6 +6373,7 @@ window.addEventListener("pagehide", () => {
   "use strict";
   var HASH = "e3a6c22694cfc7533a04e9cb46b86c7c7e6304b0aec6247242b7b7068c89f35c";
   var KEY  = "oripa-gate-ok";
+  var TOK  = "oripa-stg-sync-key";
 
   function open_(){
     document.body.classList.remove("locked");
@@ -6345,7 +6381,9 @@ window.addEventListener("pagehide", () => {
     if(g) g.remove();
   }
 
-  if(localStorage.getItem(KEY) === HASH){ open_(); return; }
+  // 入口を通っていても合言葉が無ければもう一度入れてもらう。
+  // 同期の合言葉を導出するようになる前からの端末がここに来る（一度きり）。
+  if(localStorage.getItem(KEY) === HASH && localStorage.getItem(TOK)){ open_(); return; }
   document.body.classList.add("locked");
 
   document.getElementById("gateForm").addEventListener("submit", function(e){
@@ -6358,13 +6396,23 @@ window.addEventListener("pagehide", () => {
       err.textContent = "この環境では確認できません。https:// で開いてください。";
       return;
     }
-    crypto.subtle.digest("SHA-256", new TextEncoder().encode(id + ":" + pw))
-      .then(function(buf){
-        var hex = Array.prototype.map.call(new Uint8Array(buf), function(b){
-          return b.toString(16).padStart(2, "0");
-        }).join("");
-        if(hex === HASH){
-          try{ localStorage.setItem(KEY, HASH); }catch(_){}
+    var enc = new TextEncoder();
+    var hex = function(buf){
+      return Array.prototype.map.call(new Uint8Array(buf), function(b){
+        return b.toString(16).padStart(2, "0");
+      }).join("");
+    };
+    Promise.all([
+      crypto.subtle.digest("SHA-256", enc.encode(id + ":" + pw)),
+      // **同期の合言葉。**ページに載っている HASH とは別の値になるよう
+      // 前置きを変えてある。HTML を読んだだけでは導けない。
+      crypto.subtle.digest("SHA-256", enc.encode("oripa-sync:" + id + ":" + pw))
+    ]).then(function(bufs){
+        if(hex(bufs[0]) === HASH){
+          try{
+            localStorage.setItem(KEY, HASH);
+            localStorage.setItem(TOK, hex(bufs[1]));
+          }catch(_){}
           open_();
         }else{
           err.textContent = "ID かパスワードが違います。";
