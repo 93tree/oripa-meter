@@ -1081,40 +1081,48 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
 
         <details class="syncbox" id="syncBox">
           <summary>
-            <span>端末間で同期</span>
+            <span>共有データ</span>
             <span class="syncstate" id="syncState">未設定</span>
           </summary>
           <div class="syncbody">
             <p class="hint" style="margin:0">
-              同じ<b>同期コード</b>を入れた端末どうしで、オリパと配信の記録が揃う。
-              設定しなければ、これまでどおりこの端末だけに保存される。
+              オリパと配信の記録は<b>全員が同じものを見ている</b>。
+              ログインすれば繋がるので、設定することは無い。
             </p>
             <div class="fields">
-              <div class="field" style="grid-column:1/-1">
-                <label for="syncUrl">同期先 URL（Apps Script のウェブアプリ）</label>
-                <input type="text" id="syncUrl" placeholder="https://script.google.com/macros/s/.../exec"
-                       autocomplete="off" spellcheck="false">
-              </div>
-              <div class="field">
-                <label for="syncRoom">同期コード</label>
-                <input type="text" id="syncRoom" placeholder="例：2ndline" autocomplete="off" spellcheck="false">
-              </div>
-              <div class="field">
-                <label for="syncToken">合言葉</label>
-                <input type="password" id="syncToken" placeholder="スクリプトの SHARED_SECRET" autocomplete="off">
-              </div>
               <div class="field">
                 <label for="devName">この端末の名前</label>
                 <input type="text" id="devName" placeholder="配信PC" autocomplete="off">
               </div>
             </div>
+            <!-- 繋ぎ先を手で決める口。既定では隠しておく。
+                 開発と、実験用の部屋に繋ぐときにしか使わない。
+                 常に見えていると「設定するものだ」と思わせてしまう。 -->
+            <details class="advbox" id="syncAdv">
+              <summary class="hint">つなぎ先を手で決める（普段は不要）</summary>
+              <div class="fields" style="margin-top:8px">
+                <div class="field" style="grid-column:1/-1">
+                  <label for="syncUrl">つなぎ先 URL</label>
+                  <input type="text" id="syncUrl" placeholder="https://…/sync"
+                         autocomplete="off" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="syncRoom">部屋</label>
+                  <input type="text" id="syncRoom" placeholder="例：2ndline" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="syncToken">合言葉</label>
+                  <input type="password" id="syncToken" placeholder="ログインから導かれる" autocomplete="off">
+                </div>
+              </div>
+            </details>
             <p class="hint" style="margin:0">
               端末の名前は、別の PC で配信中のときに「どこが配信しているか」を出すのに使う。
               同じオリパは<b>同時に 1 台しか開けない</b>。
             </p>
             <div class="drawbar">
-              <button type="button" class="btn primary" id="btnSyncNow">いま同期する</button>
-              <button type="button" class="btn ghost" id="btnSyncOff">同期をやめる</button>
+              <button type="button" class="btn primary" id="btnSyncNow">いま取り込む</button>
+              <button type="button" class="btn ghost" id="btnSyncOff">この端末だけにする</button>
               <span class="hint" id="syncNote"></span>
             </div>
             <p class="hint" style="margin:0">
@@ -2530,7 +2538,8 @@ function renderSyncBox(){
   $("syncUrl").value   = syncConf.url || "";
   $("syncRoom").value  = syncConf.room || "";
   $("syncToken").value = syncConf.token || "";
-  if(!syncMsg) setSyncState(syncOn() ? "is-on" : "", syncOn() ? "設定済み" : "");
+  if(!syncMsg) setSyncState(syncOn() ? "is-on" : "",
+    syncOn() ? `${syncConf.room} に接続` : "この端末だけ");
 }
 
 /* ============================================================
