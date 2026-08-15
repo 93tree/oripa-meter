@@ -715,6 +715,26 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .mktbar.is-dirty .stepper{ border-color:var(--bad); }
 .mktbar .hint{ flex:1 1 260px; min-width:0; }
 
+/* ---- 配信中の時計 ---- */
+.clockbar{
+  display:flex; flex-wrap:wrap; gap:0; border-bottom:1px solid var(--line);
+  background:var(--surface-2);
+}
+.clockbar > div{
+  flex:1 1 118px; min-width:0; padding:9px 12px;
+  border-right:1px solid var(--line);
+}
+/* 4 つ横並びが基本。入らない幅では 2×2 に落ちる */
+@media (max-width: 560px){ .clockbar > div{ flex-basis:44%; } }
+.clockbar > div:last-child{ border-right:0; }
+.clockbar .k{ display:block; font-size:10.5px; letter-spacing:.08em; color:var(--ink-3); font-weight:700; }
+.clockbar .v{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:19px; font-weight:700; margin-top:1px;
+}
+.clockbar .s{ display:block; font-size:11px; color:var(--ink-3); }
+.clockbar .now .v{ color:var(--gold-ink); }
+
 /* ---- 時間とペース ---- */
 .pacegrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:13px; }
 .pacegrid > div{ border-left:2px solid var(--line-2); padding-left:11px; min-width:0; }
@@ -1310,6 +1330,8 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
           <h2>時間とペース</h2>
           <span class="hint" id="paceNote"></span>
         </header>
+        <!-- 配信中に一番よく見るのは時刻。パネルの上に固定で出す -->
+        <div class="clockbar" id="clockBar"></div>
         <div class="body">
           <div class="pacegrid" id="paceGrid"></div>
           <p class="hint" id="paceMsg" style="margin:13px 0 0"></p>
@@ -1380,8 +1402,8 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
             <table class="tbl" id="lotTable">
               <thead>
                 <tr>
-                  <th class="l">落札</th><th>口数</th><th>単価</th>
-                  <th>出た原価</th><th>損益</th><th></th>
+                  <th class="l">落札</th><th>時刻</th><th>口数</th><th>単価</th>
+                  <th>出た原価</th><th></th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -4102,6 +4124,7 @@ function go(m){
   if(m === "watch"){ lotBarKey = ""; syncNow(false); }   // 開いた瞬間にまず取りに行く
   if(m === "live" && S){ claimLive(S); startLiveBeat(); }
   if(m === "edit" && S){ claimEdit(S); startEditBeat(); }
+  if(m === "live" || m === "watch") startClock(); else stopClock();
   render();
   setPoll();
   window.scrollTo({ top: 0 });
@@ -4921,6 +4944,13 @@ async function cancelLot(id, noConfirm){
  * それでも長い場合は CSS 側で 1 行に切る。折り返すと行の高さが揃わず、
  * 表全体が読みにくくなるため。
  */
+/** 前の落札からの間隔。テンポが落ちた場所を見つけるのに使う */
+function fmtGap(ms){
+  const m = Math.round(ms / 60000);
+  if(!(m > 0)) return "";
+  return m < 60 ? `+${m}分` : `+${Math.floor(m / 60)}時間${String(m % 60).padStart(2, "0")}分`;
+}
+
 function nameSummary(list){
   const m = new Map();
   for(const n of list) m.set(n, (m.get(n) || 0) + 1);
@@ -4963,10 +4993,14 @@ function renderLotTable(){
       `<td class="l"><span class="lotno">${i + 1}</span>` +
         `${lot.kind === "auction" ? "オークション" : "即決"}` +
         `${lot.buyer ? " ／ " + esc(lot.buyer) : ""}${names}</td>` +
+      // 1 件ごとの損益は出さない。**1 口ぶんの当たり外れでしかなく、
+      // その場の判断には使えない**（判断は右の「続けるか終了か」で見る）。
+      // 代わりに時刻を出す。あとから「何時ごろ動きが止まったか」を追える
+      `<td class="n">${lot.at ? fmtClock(lot.at) : "—"}` +
+        `${i > 0 && lot.at && S.lots[i - 1].at ? `<br><span class="hint">${fmtGap(lot.at - S.lots[i - 1].at)}</span>` : ""}</td>` +
       `<td class="n">${st.drawn}/${lot.qty}</td>` +
       `<td class="n">${yen(lot.price)}${lot.rem ? `<br><span class="hint">合計 ${yen(lotTotal(lot))}</span>` : ""}</td>` +
       `<td class="n">${yen(st.cost)}</td>` +
-      `<td class="n ${st.profit >= 0 ? "pos" : "neg"}">${syen(st.profit)}</td>` +
       `<td>${S.closedAt || mode === "watch" ? "" : `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
     const del = tr.querySelector(".rowdel");
     if(del) del.addEventListener("click", () => cancelLot(lot.id));
@@ -5318,7 +5352,69 @@ function renderLiveSeat(){
   }
 }
 
+/**
+ * 配信中の時計。
+ *
+ * 配信は時間との勝負で、**いま何時か・いつ始めたか・あとどれくらいか**を
+ * 一番よく見る。毎回ペースの表を読み直すのは配信しながらだと重い。
+ *
+ * 「予想収量」は完売ではなく**解体まで**の口数。オリパは完売しないのが
+ * 普通（目玉が出尽くすか還元率が下限を割った時点で終わる）ので、
+ * 現実的な終わりの時刻はこちら。完売は参考として並べる。
+ */
+function renderClock(c){
+  const box = $("clockBar");
+  if(!box) return;
+  const e = etaOf(S, c);
+  const now = Date.now();
+
+  const cell = (k, v, sub, cls) =>
+    `<div class="${cls || ""}"><span class="k">${k}</span>`
+    + `<b class="v">${v}</b><span class="s">${sub || ""}</span></div>`;
+
+  const out = [cell("いま", fmtClock(now), fmtDate(now), "now")];
+
+  if(!e){
+    out.push(cell("開始", "—", "まだ排出なし"));
+  }else{
+    out.push(cell("開始", fmtClock(e.startedAt),
+      `${fmtDur(now - e.startedAt)} 経過`
+      + (e.pausedMs > 60000 ? `／中断 ${fmtDur(e.pausedMs)}` : "")));
+
+    // 解体まで＝予想収量。判断エンジンが見ている「あと何口さばけるか」で出す
+    const d = c.left > 0 && !S.closedAt ? decideNow(c) : null;
+    const more = d && d.best && d.best.r ? d.best.r.moreMed : null;
+    const perMs = e.recentPace > 0 ? 3600000 / e.recentPace : 0;
+
+    if(S.closedAt){
+      out.push(cell("終了", fmtClock(S.closedAt), `${e.slots} 口で締めた`));
+    }else if(more != null && more > 0 && perMs > 0){
+      const ms = more * perMs;
+      out.push(cell("予想収量まで", fmtDur(ms), `あと ${more} 口・${fmtWhen(now + ms)}`));
+    }else{
+      out.push(cell("予想収量まで", "—", more === 0 ? "もう回らない" : "ペースが出ない"));
+    }
+
+    if(e.done) out.push(cell("完売", "済", `${e.slots} 口すべて`));
+    else if(e.ms > 0) out.push(cell("完売まで", fmtDur(e.ms), `残り ${e.left} 口・${fmtWhen(e.at)}`));
+    else out.push(cell("完売まで", "—", e.stalled ? "動いていない" : "ペースが出ない"));
+  }
+  box.innerHTML = out.join("");
+}
+
+/* 時計を進める。30 秒ごとに数字だけ書き換える（全体は描き直さない）*/
+let clockTimer = null;
+function stopClock(){ clearInterval(clockTimer); clockTimer = null; }
+function startClock(){
+  clearInterval(clockTimer);
+  clockTimer = setInterval(() => {
+    if(mode !== "live" && mode !== "watch"){ clearInterval(clockTimer); clockTimer = null; return; }
+    if(S) renderClock(compute(S));
+  }, 30 * 1000);
+}
+
 function renderPace(c){
+  renderClock(c);
   const grid = $("paceGrid");
   const e = etaOf(S, c);
 
