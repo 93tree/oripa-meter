@@ -709,11 +709,40 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .stepbtn:hover{ background:var(--gold-bg); color:var(--gold-ink); }
 .stepbtn:disabled{ opacity:.4; cursor:not-allowed; }
 /* 未確定のあいだは色を変える。押し忘れて「変えたのに効かない」を防ぐ */
+.rowacts{ white-space:nowrap; }
+.rowedit{
+  border:1px solid var(--line-2); background:var(--surface); color:var(--ink-2);
+  border-radius:6px; padding:2px 8px; font-size:11.5px; font-weight:700;
+  cursor:pointer; margin-right:4px;
+}
+.rowedit:hover{ border-color:var(--gold); color:var(--gold-ink); }
+.qtyset{ display:inline-flex; gap:5px; }
+.qtyset .stepbtn{ width:auto; padding:0 10px; height:32px; font-size:12.5px; font-weight:700; }
 .pricestep{ display:flex; gap:5px; margin-top:7px; flex-wrap:wrap; }
 .pricestep .stepbtn{ width:auto; min-width:52px; padding:0 9px; font-size:12.5px; }
 .mktbar.is-dirty{ border-left-color:var(--bad); }
 .mktbar.is-dirty .stepper{ border-color:var(--bad); }
 .mktbar .hint{ flex:1 1 260px; min-width:0; }
+
+/* ---- 配信中の時計 ---- */
+.clockbar{
+  display:flex; flex-wrap:wrap; gap:0; border-bottom:1px solid var(--line);
+  background:var(--surface-2);
+}
+.clockbar > div{
+  flex:1 1 118px; min-width:0; padding:9px 12px;
+  border-right:1px solid var(--line);
+}
+/* 4 つ横並びが基本。入らない幅では 2×2 に落ちる */
+@media (max-width: 560px){ .clockbar > div{ flex-basis:44%; } }
+.clockbar > div:last-child{ border-right:0; }
+.clockbar .k{ display:block; font-size:10.5px; letter-spacing:.08em; color:var(--ink-3); font-weight:700; }
+.clockbar .v{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:19px; font-weight:700; margin-top:1px;
+}
+.clockbar .s{ display:block; font-size:11px; color:var(--ink-3); }
+.clockbar .now .v{ color:var(--gold-ink); }
 
 /* ---- 時間とペース ---- */
 .pacegrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:13px; }
@@ -1299,6 +1328,8 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
           <h2>時間とペース</h2>
           <span class="hint" id="paceNote"></span>
         </header>
+        <!-- 配信中に一番よく見るのは時刻。パネルの上に固定で出す -->
+        <div class="clockbar" id="clockBar"></div>
         <div class="body">
           <div class="pacegrid" id="paceGrid"></div>
           <p class="hint" id="paceMsg" style="margin:13px 0 0"></p>
@@ -1369,8 +1400,8 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
             <table class="tbl" id="lotTable">
               <thead>
                 <tr>
-                  <th class="l">落札</th><th>口数</th><th>単価</th>
-                  <th>出た原価</th><th>損益</th><th></th>
+                  <th class="l">落札</th><th>時刻</th><th>口数</th><th>単価</th>
+                  <th>出た原価</th><th></th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -4091,6 +4122,7 @@ function go(m){
   if(m === "watch"){ lotBarKey = ""; syncNow(false); }   // 開いた瞬間にまず取りに行く
   if(m === "live" && S){ claimLive(S); startLiveBeat(); }
   if(m === "edit" && S){ claimEdit(S); startEditBeat(); }
+  if(m === "live" || m === "watch") startClock(); else stopClock();
   render();
   setPoll();
   window.scrollTo({ top: 0 });
@@ -4700,7 +4732,9 @@ function renderLotBar(c){
   const bar = $("lotBar");
   const lot = activeLot();
   const st  = lot ? lotStats(S, lot) : null;
+  // 口数・単価・落札者も鍵に入れる。入れないと**直したのに表示が変わらない**
   const key = [S.id, lot ? lot.id : "-", st ? st.drawn : 0, S.events.length,
+               lot ? lot.qty : 0, lot ? lot.price : 0, lot ? lot.buyer : "",
                S.price, S.closedAt ? 1 : 0].join("|");
   if(key === lotBarKey) return;
   lotBarKey = key;
@@ -4732,10 +4766,19 @@ function renderLotBar(c){
           `<i class="${i < st.drawn ? "on" : ""}"></i>`).join("")}</span>
         <span class="hint">開封待ち <b class="num">${rest}</b> 口。出たカードを押す（金額は聞かない）</span>
         <span class="spacer"></span>
+        <!-- TikTok は 2 口まとめて買われても落札は 1 件で立ち、セラー側で
+             在庫を 2 減らす運用。入金が確認できた時点で口数が分かるので、
+             ここで合わせられないと数が合わなくなる -->
+        <span class="qtyset">
+          <button type="button" class="stepbtn" id="btnQtyDown" aria-label="口数を 1 減らす">−1口</button>
+          <button type="button" class="stepbtn" id="btnQtyUp" aria-label="口数を 1 増やす">＋1口</button>
+        </span>
         <button type="button" class="btn" id="btnCancelLot">この落札を取り消す</button>
       </div>
     </div>`;
   $("btnCancelLot").addEventListener("click", () => cancelLot(lot.id));
+  $("btnQtyUp").addEventListener("click", () => adjustLotQty(lot.id, 1));
+  $("btnQtyDown").addEventListener("click", () => adjustLotQty(lot.id, -1));
 }
 
 /* ------------------------------------------------------------
@@ -4818,6 +4861,62 @@ function askDraw(p, n, c){
   });
 }
 
+/**
+ * 記録済みの落札を直す。
+ *
+ * 打ち間違い・取り消し・入金後の口数変更は普通に起きるので、
+ * **あとから直せないと記録と現実がずれたまま残る**。ずれたことは画面に
+ * 出ないので、締めたあとの数字を見て初めて気づく。
+ *
+ * 金額を入れるときと同じダイアログを使い回す。単価・口数・落札者が
+ * 揃っていて、入れ方（単価／合計）の切り替えもそのまま使えるため。
+ */
+async function editLot(id){
+  const lot = S.lots.find(l => l.id === id);
+  if(!lot || S.closedAt || mode === "watch") return;
+  const c = compute(S);
+  const drawn = lotDrawn(S).get(lot.id) || 0;
+
+  drawForPrize = false;
+  $("drawTitle").textContent = "この落札を直す";
+  $("drawSub").textContent = `${fmtClock(lot.at)} に記録`
+    + (drawn ? ` ／ すでに ${drawn} 口ぶん出している（これより減らせない）` : "")
+    + ` ／ 残り ${c.left} 口`;
+  $("drawList").hidden = true;
+  $("drawOk").textContent = "この内容に直す";
+  $("drawPrice").value = String(lot.price);
+  $("drawQty").value   = String(lot.qty);
+  $("drawBuyer").value = lot.buyer || "";
+  lotDraft.mode = "unit";
+  $("drawModeUnit").setAttribute("aria-pressed", "true");
+  $("drawModeTotal").setAttribute("aria-pressed", "false");
+  updateDrawArm(c);
+  $("drawModal").hidden = false;
+
+  const r = await new Promise(resolve => {
+    drawDone = resolve;
+    setTimeout(() => { const el = $("drawPrice"); el.focus(); el.select(); }, 0);
+  });
+  if(!r) return;
+
+  if(r.qty < Math.max(1, drawn)){
+    await say(`すでに ${drawn} 口ぶん出しているので、それより減らせない。\n`
+      + `減らすなら先に排出を取り消すか、落札ごと取り消す。`);
+    return;
+  }
+  touchLive();
+  lot.price = Math.max(0, Math.round(r.price) || 0);
+  lot.qty   = Math.max(1, Math.round(r.qty) || 1);
+  lot.rem   = Math.max(0, Math.min(lot.qty - 1, Math.round(Number(r.rem) || 0)));
+  lot.buyer = String(r.buyer || "");
+  // 出した口の値段も直す。売上は 1 口ずつの値段の合計で出しているため、
+  // ここを直さないと**表の単価だけ変わって売上が動かない**
+  let i = 0;
+  for(const e of S.events) if(e.lotId === lot.id) e.price = lotSlotPrice(lot, i++);
+  save();
+  render();
+}
+
 /** 落札だけ先に登録する。カードは後から押す */
 async function registerLotOnly(){
   touchLive();          // 自動終了までの時計を戻す
@@ -4881,6 +4980,43 @@ function closeDraw(value){
   if(done) done(value);
 }
 
+/**
+ * 落札の口数をあとから直す。
+ *
+ * TikTok のセラー画面は**在庫を手で減らす**運用で、2 口まとめて買われても
+ * 落札としては 1 件で立つ。「2 口ぶん買われたので総数を 2 減らす」という
+ * 直し方をするので、こちらも**あとから口数を合わせられないと数が合わない**。
+ * 入金が確認できた時点で分かることなので、落札のあとに直せる必要がある。
+ *
+ * 減らせるのは**出したぶんより下にはできない**（出したカードは戻せない）。
+ * 端数の 1 円は先頭の口に乗せているので、口数に収まるよう詰め直す。
+ */
+function adjustLotQty(id, delta){
+  const lot = S.lots.find(l => l.id === id);
+  if(!lot || S.closedAt || mode === "watch") return;
+  const drawn = lotDrawn(S).get(lot.id) || 0;
+  const c = compute(S);
+  const next = lot.qty + delta;
+
+  if(next < Math.max(1, drawn)){
+    say(drawn > 0
+      ? `この落札はもう ${drawn} 口ぶん出している。これより減らせない。\n`
+        + `減らすなら、先に排出を取り消すか、落札ごと取り消す。`
+      : "1 口より少なくはできない。");
+    return;
+  }
+  // 増やせるのは残っている口まで。全体の口数を超えて売れない
+  if(delta > 0 && c.left <= 0){
+    say("残りの口が無い。賞品を足すか、口数を増やさずに進める。");
+    return;
+  }
+  touchLive();
+  lot.qty = next;
+  lot.rem = Math.max(0, Math.min(next - 1, Number(lot.rem) || 0));
+  save();
+  render();
+}
+
 async function cancelLot(id, noConfirm){
   touchLive();          // 自動終了までの時計を戻す
   const lot = S.lots.find(l => l.id === id);
@@ -4910,6 +5046,13 @@ async function cancelLot(id, noConfirm){
  * それでも長い場合は CSS 側で 1 行に切る。折り返すと行の高さが揃わず、
  * 表全体が読みにくくなるため。
  */
+/** 前の落札からの間隔。テンポが落ちた場所を見つけるのに使う */
+function fmtGap(ms){
+  const m = Math.round(ms / 60000);
+  if(!(m > 0)) return "";
+  return m < 60 ? `+${m}分` : `+${Math.floor(m / 60)}時間${String(m % 60).padStart(2, "0")}分`;
+}
+
 function nameSummary(list){
   const m = new Map();
   for(const n of list) m.set(n, (m.get(n) || 0) + 1);
@@ -4952,11 +5095,19 @@ function renderLotTable(){
       `<td class="l"><span class="lotno">${i + 1}</span>` +
         `${lot.kind === "auction" ? "オークション" : "即決"}` +
         `${lot.buyer ? " ／ " + esc(lot.buyer) : ""}${names}</td>` +
+      // 1 件ごとの損益は出さない。**1 口ぶんの当たり外れでしかなく、
+      // その場の判断には使えない**（判断は右の「続けるか終了か」で見る）。
+      // 代わりに時刻を出す。あとから「何時ごろ動きが止まったか」を追える
+      `<td class="n">${lot.at ? fmtClock(lot.at) : "—"}` +
+        `${i > 0 && lot.at && S.lots[i - 1].at ? `<br><span class="hint">${fmtGap(lot.at - S.lots[i - 1].at)}</span>` : ""}</td>` +
       `<td class="n">${st.drawn}/${lot.qty}</td>` +
       `<td class="n">${yen(lot.price)}${lot.rem ? `<br><span class="hint">合計 ${yen(lotTotal(lot))}</span>` : ""}</td>` +
       `<td class="n">${yen(st.cost)}</td>` +
-      `<td class="n ${st.profit >= 0 ? "pos" : "neg"}">${syen(st.profit)}</td>` +
-      `<td>${S.closedAt || mode === "watch" ? "" : `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
+      `<td class="rowacts">${S.closedAt || mode === "watch" ? ""
+        : `<button type="button" class="rowedit" aria-label="この落札を直す">直す</button>`
+          + `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
+    const ed = tr.querySelector(".rowedit");
+    if(ed) ed.addEventListener("click", () => editLot(lot.id));
     const del = tr.querySelector(".rowdel");
     if(del) del.addEventListener("click", () => cancelLot(lot.id));
     tb.appendChild(tr);
@@ -5307,7 +5458,69 @@ function renderLiveSeat(){
   }
 }
 
+/**
+ * 配信中の時計。
+ *
+ * 配信は時間との勝負で、**いま何時か・いつ始めたか・あとどれくらいか**を
+ * 一番よく見る。毎回ペースの表を読み直すのは配信しながらだと重い。
+ *
+ * 「予想収量」は完売ではなく**解体まで**の口数。オリパは完売しないのが
+ * 普通（目玉が出尽くすか還元率が下限を割った時点で終わる）ので、
+ * 現実的な終わりの時刻はこちら。完売は参考として並べる。
+ */
+function renderClock(c){
+  const box = $("clockBar");
+  if(!box) return;
+  const e = etaOf(S, c);
+  const now = Date.now();
+
+  const cell = (k, v, sub, cls) =>
+    `<div class="${cls || ""}"><span class="k">${k}</span>`
+    + `<b class="v">${v}</b><span class="s">${sub || ""}</span></div>`;
+
+  const out = [cell("いま", fmtClock(now), fmtDate(now), "now")];
+
+  if(!e){
+    out.push(cell("開始", "—", "まだ排出なし"));
+  }else{
+    out.push(cell("開始", fmtClock(e.startedAt),
+      `${fmtDur(now - e.startedAt)} 経過`
+      + (e.pausedMs > 60000 ? `／中断 ${fmtDur(e.pausedMs)}` : "")));
+
+    // 解体まで＝予想収量。判断エンジンが見ている「あと何口さばけるか」で出す
+    const d = c.left > 0 && !S.closedAt ? decideNow(c) : null;
+    const more = d && d.best && d.best.r ? d.best.r.moreMed : null;
+    const perMs = e.recentPace > 0 ? 3600000 / e.recentPace : 0;
+
+    if(S.closedAt){
+      out.push(cell("終了", fmtClock(S.closedAt), `${e.slots} 口で締めた`));
+    }else if(more != null && more > 0 && perMs > 0){
+      const ms = more * perMs;
+      out.push(cell("予想収量まで", fmtDur(ms), `あと ${more} 口・${fmtWhen(now + ms)}`));
+    }else{
+      out.push(cell("予想収量まで", "—", more === 0 ? "もう回らない" : "ペースが出ない"));
+    }
+
+    if(e.done) out.push(cell("完売", "済", `${e.slots} 口すべて`));
+    else if(e.ms > 0) out.push(cell("完売まで", fmtDur(e.ms), `残り ${e.left} 口・${fmtWhen(e.at)}`));
+    else out.push(cell("完売まで", "—", e.stalled ? "動いていない" : "ペースが出ない"));
+  }
+  box.innerHTML = out.join("");
+}
+
+/* 時計を進める。30 秒ごとに数字だけ書き換える（全体は描き直さない）*/
+let clockTimer = null;
+function stopClock(){ clearInterval(clockTimer); clockTimer = null; }
+function startClock(){
+  clearInterval(clockTimer);
+  clockTimer = setInterval(() => {
+    if(mode !== "live" && mode !== "watch"){ clearInterval(clockTimer); clockTimer = null; return; }
+    if(S) renderClock(compute(S));
+  }, 30 * 1000);
+}
+
 function renderPace(c){
+  renderClock(c);
   const grid = $("paceGrid");
   const e = etaOf(S, c);
 
