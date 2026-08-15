@@ -709,6 +709,15 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .stepbtn:hover{ background:var(--gold-bg); color:var(--gold-ink); }
 .stepbtn:disabled{ opacity:.4; cursor:not-allowed; }
 /* 未確定のあいだは色を変える。押し忘れて「変えたのに効かない」を防ぐ */
+.rowacts{ white-space:nowrap; }
+.rowedit{
+  border:1px solid var(--line-2); background:var(--surface); color:var(--ink-2);
+  border-radius:6px; padding:2px 8px; font-size:11.5px; font-weight:700;
+  cursor:pointer; margin-right:4px;
+}
+.rowedit:hover{ border-color:var(--gold); color:var(--gold-ink); }
+.qtyset{ display:inline-flex; gap:5px; }
+.qtyset .stepbtn{ width:auto; padding:0 10px; height:32px; font-size:12.5px; font-weight:700; }
 .pricestep{ display:flex; gap:5px; margin-top:7px; flex-wrap:wrap; }
 .pricestep .stepbtn{ width:auto; min-width:52px; padding:0 9px; font-size:12.5px; }
 .mktbar.is-dirty{ border-left-color:var(--bad); }
@@ -4734,7 +4743,9 @@ function renderLotBar(c){
   const bar = $("lotBar");
   const lot = activeLot();
   const st  = lot ? lotStats(S, lot) : null;
+  // 口数・単価・落札者も鍵に入れる。入れないと**直したのに表示が変わらない**
   const key = [S.id, lot ? lot.id : "-", st ? st.drawn : 0, S.events.length,
+               lot ? lot.qty : 0, lot ? lot.price : 0, lot ? lot.buyer : "",
                S.price, S.closedAt ? 1 : 0].join("|");
   if(key === lotBarKey) return;
   lotBarKey = key;
@@ -4766,10 +4777,19 @@ function renderLotBar(c){
           `<i class="${i < st.drawn ? "on" : ""}"></i>`).join("")}</span>
         <span class="hint">開封待ち <b class="num">${rest}</b> 口。出たカードを押す（金額は聞かない）</span>
         <span class="spacer"></span>
+        <!-- TikTok は 2 口まとめて買われても落札は 1 件で立ち、セラー側で
+             在庫を 2 減らす運用。入金が確認できた時点で口数が分かるので、
+             ここで合わせられないと数が合わなくなる -->
+        <span class="qtyset">
+          <button type="button" class="stepbtn" id="btnQtyDown" aria-label="口数を 1 減らす">−1口</button>
+          <button type="button" class="stepbtn" id="btnQtyUp" aria-label="口数を 1 増やす">＋1口</button>
+        </span>
         <button type="button" class="btn" id="btnCancelLot">この落札を取り消す</button>
       </div>
     </div>`;
   $("btnCancelLot").addEventListener("click", () => cancelLot(lot.id));
+  $("btnQtyUp").addEventListener("click", () => adjustLotQty(lot.id, 1));
+  $("btnQtyDown").addEventListener("click", () => adjustLotQty(lot.id, -1));
 }
 
 /* ------------------------------------------------------------
@@ -4852,6 +4872,62 @@ function askDraw(p, n, c){
   });
 }
 
+/**
+ * 記録済みの落札を直す。
+ *
+ * 打ち間違い・取り消し・入金後の口数変更は普通に起きるので、
+ * **あとから直せないと記録と現実がずれたまま残る**。ずれたことは画面に
+ * 出ないので、締めたあとの数字を見て初めて気づく。
+ *
+ * 金額を入れるときと同じダイアログを使い回す。単価・口数・落札者が
+ * 揃っていて、入れ方（単価／合計）の切り替えもそのまま使えるため。
+ */
+async function editLot(id){
+  const lot = S.lots.find(l => l.id === id);
+  if(!lot || S.closedAt || mode === "watch") return;
+  const c = compute(S);
+  const drawn = lotDrawn(S).get(lot.id) || 0;
+
+  drawForPrize = false;
+  $("drawTitle").textContent = "この落札を直す";
+  $("drawSub").textContent = `${fmtClock(lot.at)} に記録`
+    + (drawn ? ` ／ すでに ${drawn} 口ぶん出している（これより減らせない）` : "")
+    + ` ／ 残り ${c.left} 口`;
+  $("drawList").hidden = true;
+  $("drawOk").textContent = "この内容に直す";
+  $("drawPrice").value = String(lot.price);
+  $("drawQty").value   = String(lot.qty);
+  $("drawBuyer").value = lot.buyer || "";
+  lotDraft.mode = "unit";
+  $("drawModeUnit").setAttribute("aria-pressed", "true");
+  $("drawModeTotal").setAttribute("aria-pressed", "false");
+  updateDrawArm(c);
+  $("drawModal").hidden = false;
+
+  const r = await new Promise(resolve => {
+    drawDone = resolve;
+    setTimeout(() => { const el = $("drawPrice"); el.focus(); el.select(); }, 0);
+  });
+  if(!r) return;
+
+  if(r.qty < Math.max(1, drawn)){
+    await say(`すでに ${drawn} 口ぶん出しているので、それより減らせない。\n`
+      + `減らすなら先に排出を取り消すか、落札ごと取り消す。`);
+    return;
+  }
+  touchLive();
+  lot.price = Math.max(0, Math.round(r.price) || 0);
+  lot.qty   = Math.max(1, Math.round(r.qty) || 1);
+  lot.rem   = Math.max(0, Math.min(lot.qty - 1, Math.round(Number(r.rem) || 0)));
+  lot.buyer = String(r.buyer || "");
+  // 出した口の値段も直す。売上は 1 口ずつの値段の合計で出しているため、
+  // ここを直さないと**表の単価だけ変わって売上が動かない**
+  let i = 0;
+  for(const e of S.events) if(e.lotId === lot.id) e.price = lotSlotPrice(lot, i++);
+  save();
+  render();
+}
+
 /** 落札だけ先に登録する。カードは後から押す */
 async function registerLotOnly(){
   touchLive();          // 自動終了までの時計を戻す
@@ -4913,6 +4989,43 @@ function closeDraw(value){
   const done = drawDone;
   drawDone = null;
   if(done) done(value);
+}
+
+/**
+ * 落札の口数をあとから直す。
+ *
+ * TikTok のセラー画面は**在庫を手で減らす**運用で、2 口まとめて買われても
+ * 落札としては 1 件で立つ。「2 口ぶん買われたので総数を 2 減らす」という
+ * 直し方をするので、こちらも**あとから口数を合わせられないと数が合わない**。
+ * 入金が確認できた時点で分かることなので、落札のあとに直せる必要がある。
+ *
+ * 減らせるのは**出したぶんより下にはできない**（出したカードは戻せない）。
+ * 端数の 1 円は先頭の口に乗せているので、口数に収まるよう詰め直す。
+ */
+function adjustLotQty(id, delta){
+  const lot = S.lots.find(l => l.id === id);
+  if(!lot || S.closedAt || mode === "watch") return;
+  const drawn = lotDrawn(S).get(lot.id) || 0;
+  const c = compute(S);
+  const next = lot.qty + delta;
+
+  if(next < Math.max(1, drawn)){
+    say(drawn > 0
+      ? `この落札はもう ${drawn} 口ぶん出している。これより減らせない。\n`
+        + `減らすなら、先に排出を取り消すか、落札ごと取り消す。`
+      : "1 口より少なくはできない。");
+    return;
+  }
+  // 増やせるのは残っている口まで。全体の口数を超えて売れない
+  if(delta > 0 && c.left <= 0){
+    say("残りの口が無い。賞品を足すか、口数を増やさずに進める。");
+    return;
+  }
+  touchLive();
+  lot.qty = next;
+  lot.rem = Math.max(0, Math.min(next - 1, Number(lot.rem) || 0));
+  save();
+  render();
 }
 
 async function cancelLot(id, noConfirm){
@@ -5001,7 +5114,11 @@ function renderLotTable(){
       `<td class="n">${st.drawn}/${lot.qty}</td>` +
       `<td class="n">${yen(lot.price)}${lot.rem ? `<br><span class="hint">合計 ${yen(lotTotal(lot))}</span>` : ""}</td>` +
       `<td class="n">${yen(st.cost)}</td>` +
-      `<td>${S.closedAt || mode === "watch" ? "" : `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
+      `<td class="rowacts">${S.closedAt || mode === "watch" ? ""
+        : `<button type="button" class="rowedit" aria-label="この落札を直す">直す</button>`
+          + `<button type="button" class="rowdel" aria-label="この落札を取り消す">×</button>`}</td>`;
+    const ed = tr.querySelector(".rowedit");
+    if(ed) ed.addEventListener("click", () => editLot(lot.id));
     const del = tr.querySelector(".rowdel");
     if(del) del.addEventListener("click", () => cancelLot(lot.id));
     tb.appendChild(tr);
