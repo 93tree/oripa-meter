@@ -2016,6 +2016,11 @@ function normalizeOrder(x){
     qty: Math.max(1, Math.round(Number(x.qty) || 1)),
     buyer: String(x.buyer || ""),
     fee: Math.max(0, Math.round(Number(x.fee) || 0)),
+    // プロモーションの内訳。**TikTok 負担の値引きは、こちらの入金は減らない。**
+    // price がどこまで引かれた額なのかが未確定なので、判断できるよう持っておく
+    listPrice: Math.max(0, Math.round(Number(x.listPrice) || 0)),
+    platformDiscount: Math.max(0, Math.round(Number(x.platformDiscount) || 0)),
+    sellerDiscount: Math.max(0, Math.round(Number(x.sellerDiscount) || 0)),
     at: Number(x.at) || 0,
     status: String(x.status || ""),
     // 落札＝入金ではない。正式な売上にするのは入金が確認できたものだけ。
