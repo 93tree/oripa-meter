@@ -278,7 +278,22 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 }
 .prize:hover:not(:disabled){ border-color:var(--gold); background:color-mix(in srgb, var(--gold-bg) 55%, var(--surface-2)); }
 .prize:active:not(:disabled){ transform:scale(.994); }
-.prize:disabled{ opacity:.45; cursor:not-allowed; }
+.prize:disabled{ cursor:not-allowed; }
+
+/* まだ残っている＝これから押す対象。ひと目で拾えるよう黄色寄りにする */
+.prize.has{
+  background:color-mix(in srgb, var(--gold-bg) 45%, var(--surface-2));
+  border-color:color-mix(in srgb, var(--gold) 32%, var(--line));
+}
+.prize.has:hover:not(:disabled){ background:color-mix(in srgb, var(--gold-bg) 75%, var(--surface-2)); }
+.prize.has .rem{ color:var(--gold-ink); font-weight:700; }
+
+/* 出し切った＝もう押せない。沈めて視界から外す。
+   ブリッジは押せない代わりに disabled を付けていないので、
+   :disabled ではなくこのクラスで薄くする（見た目は同じにしたい）。 */
+.prize.out{ opacity:.42; background:var(--surface-2); border-color:var(--line); }
+.prize.out .nm span.t{ text-decoration:line-through; text-decoration-color:var(--ink-3); }
+.prize:disabled.has{ opacity:.55; }   /* 残っているが今は押せない（未開封が無い等）*/
 .prize > span:first-child{ min-width:0; }
 .prize .nm{ font-weight:700; font-size:14.5px; display:flex; align-items:center; gap:7px; min-width:0; }
 .prize .nm .key{
@@ -4576,7 +4591,9 @@ function renderPrizes(c){
 
     const el = document.createElement("button");
     el.type = "button";
-    el.className = "prize";
+    // 残っているものは黄色寄り、出し切ったものは沈める。
+    // 落札と排出を続けていると、どれがまだ入っているか見失いやすいため
+    el.className = "prize " + (out ? "out" : "has");
     // ブリッジでは残り口数を見せたいので薄くはしない。押せないだけ
     el.disabled = mode === "watch" ? false : (out || c.left === 0 || !!S.closedAt);
     if(mode === "watch") el.setAttribute("aria-disabled", "true");
