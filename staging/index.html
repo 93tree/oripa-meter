@@ -1948,6 +1948,10 @@ function normalizeOripa(o){
     // 配信の席。{by, name, at}。at が古くなれば自動的に空く
     live: o.live && o.live.by
       ? { by: String(o.live.by), name: String(o.live.name || ""), at: Number(o.live.at) || 0 }
+      : null,
+    // 編集の席。配信とは別に持つ（編集中の人が一覧で「配信中」に見えないように）
+    edit: o.edit && o.edit.by
+      ? { by: String(o.edit.by), name: String(o.edit.name || ""), at: Number(o.edit.at) || 0 }
       : null
   }));
 }
@@ -2243,6 +2247,43 @@ function heldByOther(o){
   const l = liveHolder(o);
   return l && l.by !== DEVICE_ID ? l : null;
 }
+
+/* ---- 編集の席 ----
+   配信の席とは別に持つ。編集しているだけの人が一覧で「配信中」と
+   出てしまうと、他の端末が入るのをためらう理由が変わってしまう。
+   期限の考え方は配信と同じ（合図が途切れれば空く）。 */
+function editHolder(o){
+  const e = o && o.edit;
+  if(!e || !e.by) return null;
+  if(Date.now() - (Number(e.at) || 0) > LIVE_LEASE_MS) return null;
+  return e;
+}
+function editHeldByOther(o){
+  const e = editHolder(o);
+  return e && e.by !== DEVICE_ID ? e : null;
+}
+function claimEdit(o){
+  if(!o) return;
+  o.edit = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+  o.updatedAt = Date.now();
+}
+function releaseEdit(o){
+  if(!o || !o.edit || o.edit.by !== DEVICE_ID) return;
+  o.edit = null;
+  o.updatedAt = Date.now();
+  scheduleSync();
+}
+let editBeatTimer = null;
+function startEditBeat(){
+  clearInterval(editBeatTimer);
+  editBeatTimer = setInterval(() => {
+    if(mode !== "edit" || !S){ clearInterval(editBeatTimer); editBeatTimer = null; return; }
+    S.edit = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+    S.updatedAt = Date.now();
+    scheduleSync();
+  }, LIVE_BEAT_MS);
+}
+function stopEditBeat(){ clearInterval(editBeatTimer); editBeatTimer = null; }
 function claimLive(o){
   o.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
   o.updatedAt = Date.now();
@@ -3980,9 +4021,11 @@ function render(){
 function go(m){
   if(m !== "live"){ const cp = document.getElementById("closePanel"); if(cp) cp.hidden = true; }
   if(mode === "live" && m !== "live"){ stopLiveBeat(); releaseLive(S); }
+  if(mode === "edit" && m !== "edit"){ stopEditBeat(); releaseEdit(S); }
   mode = m;
   if(m === "watch"){ lotBarKey = ""; syncNow(false); }   // 開いた瞬間にまず取りに行く
   if(m === "live" && S){ claimLive(S); startLiveBeat(); }
+  if(m === "edit" && S){ claimEdit(S); startEditBeat(); }
   render();
   setPoll();
   window.scrollTo({ top: 0 });
@@ -4069,7 +4112,7 @@ function renderWatchBar(){
   clock.className = "watchclock" + (age >= 30 ? " is-stale" : "");
 }
 
-function openOripa(id, m){
+async function openOripa(id, m){
   const o = DB.oripas.find(x => x.id === id);
   if(!o) return;
   S = o;
@@ -4077,7 +4120,47 @@ function openOripa(id, m){
   resetLotDraft();
   lotBarKey = "";
   if(m === "live"){ goLive(o); return; }
-  go(m || "edit");
+  if((m || "edit") === "edit"){ await goEdit(o); return; }
+  go(m);
+}
+
+/**
+ * 編集に入る前に席を確かめる。
+ *
+ * オリパは 1 本まるごとが 1 つの塊として同期される。2 人が同時に開いて
+ * 別々の直しをすると、**あとから保存したほうで片方の直しが丸ごと消える**。
+ * 消えたことは画面に出ないので、次に開いたときに「直したはずが戻っている」
+ * という形でしか気づけない。
+ *
+ * 入る直前に取りに行くのは、一覧の取得間隔（60 秒）ぶん古い札で判断すると
+ * すれ違うため。配信の席と同じ考え方。
+ */
+async function goEdit(o){
+  const target = o || S;
+  if(!target) return;
+  if(syncOn()) await syncNow(false);
+  const fresh = DB.oripas.find(x => String(x.id) === String(target.id)) || target;
+  S = fresh;
+  DB.currentId = fresh.id;
+
+  const live = heldByOther(fresh);
+  if(live){
+    await say(`「${fresh.name}」は ${live.name || "別の PC"} で配信中です。\n\n`
+      + `配信中に中身を書き換えると、口数や原価がずれて売上が狂います。\n`
+      + `配信が終わってから直してください。`);
+    go("list");
+    return;
+  }
+  const ed = editHeldByOther(fresh);
+  if(ed){
+    const yes = await ask(
+      `「${fresh.name}」は ${ed.name || "別の PC"} が編集中です（最後の合図 ${agoText(ed.at)}）。\n\n`
+      + `同時に直すと、あとから保存したほうで片方の直しが丸ごと消えます。\n\n`
+      + `※ 向こうの PC が閉じていても、合図が ${Math.round(LIVE_LEASE_MS / 60000)} 分途切れれば席は空きます。`,
+      { okLabel: "それでも開く", danger: true });
+    if(!yes){ go("list"); return; }
+  }
+  go("edit");
 }
 
 /* ============================================================
