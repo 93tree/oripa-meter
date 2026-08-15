@@ -479,6 +479,13 @@ table.tbl th{ font-size:11px; letter-spacing:.06em; color:var(--ink-3); font-wei
 table.tbl th:first-child, table.tbl td:first-child{ text-align:left; }
 table.tbl th.l, table.tbl td.l{ text-align:left; }
 #lotTable{ min-width:430px; }
+/* カード名が並ぶと 1 列だけ伸びて金額が押し出される。1 行に切る。
+   折り返すと行の高さが揃わず表が読みにくくなるので、切るほうを選ぶ。
+   切れたぶんは title（マウスを乗せる）で読める。 */
+#lotTable td.l{ max-width:26em; }
+#lotTable .names{ display:flex; gap:5px; align-items:baseline; min-width:0; }
+#lotTable .names .nlist{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+#lotTable .names .nmore{ flex:none; color:var(--ink-3); }
 #lotTable .lotno{
   display:inline-block; min-width:1.6em; margin-right:6px;
   font-family:var(--font-num); font-size:11px; font-weight:700; color:var(--ink-3);
@@ -805,6 +812,12 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .inbox .row.is-wait{ background:var(--surface-2); }
 .inbox .row.is-wait .amt,
 .inbox .row.is-wait .who{ color:var(--ink-3); }
+/* 受信箱から消すだけのボタン。売上に触らないので目立たせない */
+.inbox .btn.skip{
+  font-size:11.5px; padding:0 9px; height:28px; min-width:0;
+  color:var(--ink-3); background:transparent; border-color:var(--line-2);
+}
+.inbox .btn.skip:hover{ color:var(--bad); border-color:var(--bad); }
 .inbox .orphan{ padding:10px 13px; background:var(--surface); border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); }
 
 /* ---- 配信の席 ---- */
@@ -2327,6 +2340,12 @@ function syncApply(items){
     }else if(it.kind === "order"){
       // 届いた落札。こちらからは送らないので、上書きの取り合いは起きない
       if(!Array.isArray(DB.orders)) DB.orders = [];
+      // ただし「受信箱から消した」だけはこちらの意思なので墓標が立つ。
+      // 同じ版が次の取得でまた降ってくるため、見ないと消しても毎回戻る。
+      // **より新しい版なら通す**（TikTok 側で状況が動いたということなので、
+      // 消したまま握り潰すと取り消しや入金確認に気づけない）。
+      const g = graves().find(x => x.kind === "order" && String(x.id) === String(id));
+      if(g && Number(it.updatedAt) <= Number(g.updatedAt)) continue;
       const i = DB.orders.findIndex(x => String(x.id) === String(id));
       if(it.deleted){
         if(i >= 0){ DB.orders.splice(i, 1); changed++; }
@@ -4306,6 +4325,10 @@ function renderInbox(c){
   box.hidden = false;
 
   const busy = !!activeLot() || !!S.closedAt || c.left <= 0;
+  // 入金確認が取れた扱いで来ても、実際には成立していないことがある。
+  // そのまま残ると押し忘れに見えて毎回目に入るので、消せる口を用意しておく
+  const skipBtn = x => `<button type="button" class="btn skip" data-skip="${esc(x.id)}"`
+    + ` aria-label="この落札を受信箱から消す">キャンセル</button>`;
   const line = (x, tail, cls) => `<div class="row ${cls || ""}" data-order="${esc(x.id)}">
       <span class="amt">${yen(x.price * x.qty)}</span>
       <span class="who">${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(x.buyer || "落札者不明")}</span>
@@ -4319,7 +4342,8 @@ function renderInbox(c){
       ? `<div class="head">届いた落札 ${pending.length} 件`
         + `<span class="sub">${busy ? "いまの落札を出し切ってから取り込む" : "押すとその金額で落札が始まる。あとはカードを押すだけ"}</span></div>`
         + pending.map(x => line(x,
-            `<button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`)).join("")
+            `<button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`
+            + skipBtn(x))).join("")
       : "")
     // カードを渡したあとに取り消された。売上が実態と食い違っている
     // 落札は決まったが入金がまだ。灰色で出すだけで押せない。
@@ -4327,7 +4351,7 @@ function renderInbox(c){
     + (waiting.length
       ? `<div class="head is-wait">入金待ち ${waiting.length} 件`
         + `<span class="sub">落札は決まったが入金がまだ。確認できると上に移って押せるようになる</span></div>`
-        + waiting.map(x => line(x, `<span class="waittag">入金待ち</span>`, "is-wait")).join("")
+        + waiting.map(x => line(x, `<span class="waittag">入金待ち</span>` + skipBtn(x), "is-wait")).join("")
       : "")
     + (trouble.length
       ? `<div class="head is-bad">取り消された落札 ${trouble.length} 件`
@@ -4342,6 +4366,9 @@ function renderInbox(c){
 
   box.querySelectorAll("[data-take]").forEach(btn => {
     btn.addEventListener("click", () => takeOrder(btn.dataset.take));
+  });
+  box.querySelectorAll("[data-skip]").forEach(btn => {
+    btn.addEventListener("click", () => skipOrder(btn.dataset.skip));
   });
   box.querySelectorAll("[data-void]").forEach(btn => {
     btn.addEventListener("click", () => voidOrder(btn.dataset.void));
@@ -4519,6 +4546,32 @@ async function voidOrder(orderId){
   await cancelLot(lot.id, true);
 }
 
+/**
+ * 届いた落札を受信箱から消す。**売上には一切入らない。**
+ *
+ * 入金確認が取れた扱いで流れてきたのに、実際には成立していないことがある
+ * （TikTok 側の取り消し、決済の巻き戻し、こちらの取り違え）。そのまま残ると
+ * 「押し忘れ」に見えて毎回目に入り、押してしまうと売上が狂う。
+ *
+ * 消し方は墓標（`bury`）を使う。同期に「消した」という事実として乗るので、
+ * 他の端末でも消える。**TikTok がその注文を更新すればまた出てくる**
+ * （墓標より新しい版が来るため）。取り消しが後から確定した場合に
+ * 気づけなくなるより、出てきたほうがいい。
+ */
+async function skipOrder(orderId){
+  const x = (DB.orders || []).find(o => String(o.id) === String(orderId));
+  if(!x) return;
+  if(!await ask(`${yen(x.price * x.qty)}（${x.buyer || "落札者不明"}）を受信箱から消しますか？\n\n`
+    + `売上には入りません。TikTok 側でこの注文に新しい動きがあれば、また出てきます。`,
+    { okLabel: "消す", danger: true })) return;
+  touchLive();
+  const i = (DB.orders || []).findIndex(o => String(o.id) === String(orderId));
+  if(i >= 0) DB.orders.splice(i, 1);
+  bury("order", orderId);
+  save();
+  render();
+}
+
 function closeDraw(value){
   $("drawModal").hidden = true;
   const done = drawDone;
@@ -4541,6 +4594,33 @@ async function cancelLot(id, noConfirm){
   render();
 }
 
+/**
+ * 出たカードの並びを 1 行に収める。
+ *
+ * カード名は長い（「SAR ピカチュウ ex SV4a」のような表記）。10 口の落札だと
+ * 名前が 10 個並んで表が横に伸び、金額の列が押し出される。**表で読みたいのは
+ * 金額と損益**なので、名前は要約する。
+ *
+ *   1. 同じカードはまとめる（`R ミュウツー ×3`）
+ *   2. 先頭 2 種だけ出し、残りは `ほか N 種`
+ *   3. 全部は title に入れる（マウスを乗せれば読める）
+ *
+ * それでも長い場合は CSS 側で 1 行に切る。折り返すと行の高さが揃わず、
+ * 表全体が読みにくくなるため。
+ */
+function nameSummary(list){
+  const m = new Map();
+  for(const n of list) m.set(n, (m.get(n) || 0) + 1);
+  const all = [...m].map(([n, k]) => k > 1 ? `${n} ×${k}` : n);
+  const rest = all.length - 2;
+  // 「ほかN種」は省略で消えては意味がないので、切る対象の外に出す
+  return {
+    head: rest > 0 ? all.slice(0, 2).join("・") : all.join("・"),
+    more: rest > 0 ? `ほか${rest}種` : "",
+    full: all.join("・"),
+  };
+}
+
 function renderLotTable(){
   const tb = $("lotTable").querySelector("tbody");
   tb.innerHTML = "";
@@ -4559,8 +4639,12 @@ function renderLotTable(){
   S.lots.forEach((lot, i) => {
     const st = lotStats(S, lot);
     const tr = document.createElement("tr");
+    const nm = nameSummary(st.names);
     const names = st.names.length
-      ? `<br><span class="hint">${esc(st.names.slice(0, 4).join("・"))}${st.names.length > 4 ? " ほか" : ""}</span>`
+      ? `<br><span class="hint names" title="${esc(nm.full)}">`
+        + `<span class="nlist">${esc(nm.head)}</span>`
+        + (nm.more ? `<span class="nmore">${esc(nm.more)}</span>` : "")
+        + `</span>`
       : (st.drawn === 0 ? `<br><span class="hint">排出待ち</span>` : "");
     tr.innerHTML =
       `<td class="l"><span class="lotno">${i + 1}</span>` +
