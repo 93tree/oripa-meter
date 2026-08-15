@@ -2023,6 +2023,7 @@ function normalizeOrder(x){
     fee: Math.max(0, Math.round(Number(x.fee) || 0)),
     // プロモーションの内訳。**TikTok 負担の値引きは、こちらの入金は減らない。**
     // price がどこまで引かれた額なのかが未確定なので、判断できるよう持っておく
+    buyerPaid: Math.max(0, Math.round(Number(x.buyerPaid) || 0)),
     listPrice: Math.max(0, Math.round(Number(x.listPrice) || 0)),
     platformDiscount: Math.max(0, Math.round(Number(x.platformDiscount) || 0)),
     sellerDiscount: Math.max(0, Math.round(Number(x.sellerDiscount) || 0)),
@@ -4384,17 +4385,19 @@ function renderInbox(c){
   // そのまま残ると押し忘れに見えて毎回目に入るので、消せる口を用意しておく
   const skipBtn = x => `<button type="button" class="btn skip" data-skip="${esc(x.id)}"`
     + ` aria-label="この落札を受信箱から消す">キャンセル</button>`;
-  // プロモーションが乗った落札。**TikTok 負担なら入金はこの額では減らない。**
-  // いま売上にしているのが値引き前か後かは未確定なので、断定せず事実だけ出す。
-  // 押す前に「これは値引きが掛かった落札だ」と気づけるだけで、取り違えは防げる。
+  // プロモーションが乗った落札。**金額はこちらに入る額**（TikTok 負担ぶんは
+  // こちらの入金を減らさないので戻してある）。買い手の支払いはそれより安い。
+  // 数字の食い違いを黙って飲み込まず、どちらの額なのかを出しておく。
   const promo = x => {
     const p = Number(x.platformDiscount) || 0;
     const sd = Number(x.sellerDiscount) || 0;
     if(!p && !sd) return "";
+    const paid = Number(x.buyerPaid) || 0;
     return `<span class="promo" title="出品時 ${yen((Number(x.listPrice) || 0) * x.qty)}">`
       + (p ? `TikTok負担 ${yen(p * x.qty)}` : "")
       + (p && sd ? " ／ " : "")
       + (sd ? `自社値引 ${yen(sd * x.qty)}` : "")
+      + (paid && paid !== x.price ? `（買い手 ${yen(paid * x.qty)}）` : "")
       + `</span>`;
   };
   const line = (x, tail, cls) => `<div class="row ${cls || ""}" data-order="${esc(x.id)}">
