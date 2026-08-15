@@ -989,6 +989,7 @@ body.locked > header, body.locked > main { display:none; }
 
   <!-- ========== オリパ一覧 ========== -->
   <section id="view-list" class="stack">
+    <div id="orderNotice"></div>
     <!-- 相場想定。CSV に相場の列が無いオリパの相場をここで決める -->
     <div class="mktbar">
       <span class="label">相場想定</span>
@@ -3944,8 +3945,41 @@ function commonMarketMult(){
   return ms.length === 1 ? ms[0] : 1;
 }
 
+/* 落札は画面を見ていないときにも届く。配信中の受信箱だけに出していると、
+   一覧にいるあいだは届いたことに気づけない（実際それで「押しても何もない」になった）。 */
+function renderOrderNotice(){
+  const el = $("orderNotice");
+  const waiting = DB.oripas
+    .map(o => ({ o, n: pendingOrders(o).length }))
+    .filter(x => x.n > 0);
+  const orphans = orphanOrders().length;
+
+  if(!waiting.length && !orphans){ el.innerHTML = ""; return; }
+
+  const lines = waiting.map(x =>
+    `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
+    + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.n} 件）</button>`).join("");
+
+  el.innerHTML = `<div class="notice">`
+    + `<span>${waiting.length
+        ? `<b>落札が ${waiting.reduce((n, x) => n + x.n, 0)} 件届いている。</b>`
+          + `配信画面をひらくと取り込める。`
+        : ""}`
+    + `${orphans
+        ? `${waiting.length ? " " : ""}どのオリパにも結びつかない注文が ${orphans} 件ある`
+          + `（編集画面の「TikTok Shop の商品 ID」を入れると結びつく）。`
+        : ""}</span>`
+    + `<span>${lines}</span></div>`;
+
+  el.querySelectorAll("[data-open]").forEach(btn => {
+    const o = DB.oripas.find(x => String(x.id) === btn.dataset.open);
+    if(o) btn.addEventListener("click", () => { S = o; DB.currentId = o.id; goLive(o); });
+  });
+}
+
 function renderList(){
   renderMktBar();
+  renderOrderNotice();
   renderSyncBox();
   const wrap = $("oripaList");
   wrap.innerHTML = "";
@@ -3981,6 +4015,8 @@ function renderList(){
         + (c.state === "bad" ? "・下ぶれ" : "")
         + (!live && e ? `・${fmtDur(e.idleMs)} 動きなし` : "");
     }
+    const waiting = pendingOrders(o).length;
+    if(waiting) badge += `・<b>届いた落札 ${waiting} 件</b>`;
     const seat = liveHolder(o);
     if(seat){
       cls = "is-live";
