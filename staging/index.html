@@ -5071,7 +5071,13 @@ function renderPace(c){
     `全体 ${yen(Math.round(e.gmv))}/時`, "is-key");
 
   // --- 見込み ---
-  if(e.stalled){
+  // **終了済みなら「中断中」とは言わない。**記録して締めた回は止まっているのが正しく、
+  // 売り切らずに終えるのが普通の運用（解体して次に組み直す）。
+  // 動きが無いことを咎めるような出し方にすると、毎回の締めが失敗のように見える。
+  if(S.closedAt){
+    cell("完売見込み", "終了",
+      `${fmtDur(e.activeMs)} で ${e.slots} 口`);
+  }else if(e.stalled){
     cell("完売見込み", "中断中",
       `${fmtDur(e.idleMs)} 動いていない`, "is-stale");
   }else if(e.done){
