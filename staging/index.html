@@ -780,6 +780,13 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .inbox .who{ font-size:13px; color:var(--ink-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .inbox .when{ font-size:11.5px; color:var(--ink-3); font-family:var(--font-num); white-space:nowrap; }
 .inbox .spacer{ flex:1 1 auto; }
+.inbox .head.is-wait{ color:var(--gold-ink); border-top:1px solid var(--line); }
+.inbox .head.is-bad{ color:var(--bad); border-top:1px solid var(--line); }
+.inbox .waittag{
+  font-size:11.5px; font-weight:800; padding:3px 10px; border-radius:999px;
+  background:var(--gold-bg); color:var(--gold-ink); white-space:nowrap;
+}
+.inbox .row.is-wait .amt{ color:var(--ink-3); }
 .inbox .orphan{ padding:10px 13px; background:var(--surface); border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); }
 
 /* ---- 配信の席 ---- */
@@ -1969,27 +1976,45 @@ function normalizeOrder(x){
     fee: Math.max(0, Math.round(Number(x.fee) || 0)),
     at: Number(x.at) || 0,
     status: String(x.status || ""),
+    // 落札＝入金ではない。正式な売上にするのは入金が確認できたものだけ。
+    // 明示が無い古いデータ・手入力は「入金済み」とみなす（状態を持っていないため）
+    paid: x.paid !== undefined ? !!x.paid : !/UNPAID|PENDING|AWAITING_PAYMENT/i.test(String(x.status || "")),
+    cancelled: !!x.cancelled,
     source: String(x.source || "tiktok"),
   };
 }
 
-/** そのオリパ宛で、まだカードを押していない落札 */
-function pendingOrders(o){
-  if(!o || !DB.orders || !DB.orders.length) return [];
+/** そのオリパ宛の注文を、使ったもの／まだのもの に分ける */
+function ordersFor(o){
+  const none = { pending: [], waiting: [], trouble: [] };
+  if(!o || !DB.orders || !DB.orders.length) return none;
   const pid = String(o.shopProductId || "").trim();
-  if(!pid) return [];
-  // 使い終わった注文は lot.orderId として残るので、それ以外が未処理
+  if(!pid) return none;
   const used = new Set((o.lots || []).map(l => String(l.orderId || "")).filter(Boolean));
-  return DB.orders
-    .filter(x => x.productId && x.productId === pid && !used.has(String(x.id)))
-    .sort((a, b) => a.at - b.at);
+  const mine = DB.orders.filter(x => x.productId === pid).sort((a, b) => a.at - b.at);
+  return {
+    // 入金済みで、まだカードを押していない → いま取り込めるもの
+    pending: mine.filter(x => !used.has(String(x.id)) && x.paid && !x.cancelled),
+    // 落札はしたが入金がまだ → 見せるが取り込ませない
+    waiting: mine.filter(x => !used.has(String(x.id)) && !x.paid && !x.cancelled),
+    // カードを渡したあとに取り消された → 売上が狂うので知らせる
+    trouble: mine.filter(x => used.has(String(x.id)) && x.cancelled),
+  };
 }
+
+/** いま取り込める落札（入金済み・未処理） */
+function pendingOrders(o){ return ordersFor(o).pending; }
 
 /** どのオリパにも結びつかない注文（商品 ID の設定漏れ） */
 function orphanOrders(){
   if(!DB.orders || !DB.orders.length) return [];
   const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
-  return DB.orders.filter(x => !x.productId || !known.has(x.productId));
+  return DB.orders.filter(x => !x.productId || !known.has(x.productId) ? !x.cancelled : false);
+}
+
+/** 記録済みなのに取り消された落札。売上が実態と食い違っている状態 */
+function troubleOrders(){
+  return DB.oripas.flatMap(o => ordersFor(o).trouble.map(x => ({ o, x })));
 }
 
 /** 上書きの前に、そのときの中身をそのまま別キーへ退避する */
@@ -2348,7 +2373,8 @@ async function syncNow(manual){
     syncFails = 0;
     watchSeenAt = Date.now();
     if(mode === "watch") render();                    // 受信が 0 でも時計は進める
-    else if(changed && mode === "list") render();
+    // 配信中も描き直す。届いた落札を出すのはこの経路しかない
+    else if(changed && (mode === "list" || mode === "live")) render();
     return true;
   }catch(err){
     // 失敗しても since は進めない。次回また送り直す
@@ -2377,8 +2403,12 @@ function scheduleSync(){
   syncTimer = setTimeout(() => syncNow(false), SYNC_DEBOUNCE * Math.min(1 << syncFails, 20));
 }
 
-/* 画面ごとの取りに行く間隔。配信中・編集中は自分が主なので取りに行かない */
-const POLL_MS = { watch: 5000, list: 60000 };
+/* 画面ごとの取りに行く間隔。
+   配信中も取りに行く。落札（kind:"order"）は外から届くもので、
+   これを拾わないと配信中に入ってきた落札がいつまでも画面に出ない。
+   自分が編集しているオリパは syncApply() 側で差し替えを止めているので、
+   取りに行っても打っている内容がすり替わることはない。 */
+const POLL_MS = { watch: 5000, live: 10000, list: 60000 };
 function setPoll(){
   clearTimeout(pollTimer);
   pollTimer = null;
@@ -3949,27 +3979,46 @@ function commonMarketMult(){
    一覧にいるあいだは届いたことに気づけない（実際それで「押しても何もない」になった）。 */
 function renderOrderNotice(){
   const el = $("orderNotice");
-  const waiting = DB.oripas
-    .map(o => ({ o, n: pendingOrders(o).length }))
-    .filter(x => x.n > 0);
+  const per = DB.oripas.map(o => ({ o, ...ordersFor(o) }));
+  const ready  = per.filter(x => x.pending.length);
+  const wait   = per.reduce((n, x) => n + x.waiting.length, 0);
+  const bad    = troubleOrders();
   const orphans = orphanOrders().length;
 
-  if(!waiting.length && !orphans){ el.innerHTML = ""; return; }
+  if(!ready.length && !wait && !bad.length && !orphans){ el.innerHTML = ""; return; }
 
-  const lines = waiting.map(x =>
-    `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
-    + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.n} 件）</button>`).join("");
+  const out = [];
 
-  el.innerHTML = `<div class="notice">`
-    + `<span>${waiting.length
-        ? `<b>落札が ${waiting.reduce((n, x) => n + x.n, 0)} 件届いている。</b>`
-          + `配信画面をひらくと取り込める。`
-        : ""}`
-    + `${orphans
-        ? `${waiting.length ? " " : ""}どのオリパにも結びつかない注文が ${orphans} 件ある`
-          + `（編集画面の「TikTok Shop の商品 ID」を入れると結びつく）。`
-        : ""}</span>`
-    + `<span>${lines}</span></div>`;
+  // 売上が実態と食い違っている状態なので、いちばん強く出す
+  if(bad.length){
+    out.push(`<div class="notice is-bad"><span>`
+      + `<b>記録済みの落札 ${bad.length} 件が取り消し・返金になっている。</b>`
+      + `売上から外す必要がある。</span><span>`
+      + [...new Set(bad.map(t => String(t.o.id)))].map(id => {
+          const o = DB.oripas.find(x => String(x.id) === id);
+          return `<button type="button" class="btn" data-open="${esc(id)}">`
+            + `${esc(o.name || "無題のオリパ")} を確認する</button>`;
+        }).join("")
+      + `</span></div>`);
+  }
+
+  if(ready.length || wait || orphans){
+    const lines = ready.map(x =>
+      `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
+      + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.pending.length} 件）</button>`).join("");
+    out.push(`<div class="notice"><span>`
+      + (ready.length
+          ? `<b>落札が ${ready.reduce((n, x) => n + x.pending.length, 0)} 件届いている。</b>配信画面をひらくと取り込める。`
+          : "")
+      + (wait ? ` 入金待ちが ${wait} 件（入金が確認できると取り込めるようになる）。` : "")
+      + (orphans
+          ? ` どのオリパにも結びつかない注文が ${orphans} 件ある`
+            + `（編集画面の「TikTok Shop の商品 ID」を入れると結びつく）。`
+          : "")
+      + `</span><span>${lines}</span></div>`);
+  }
+
+  el.innerHTML = out.join("");
 
   el.querySelectorAll("[data-open]").forEach(btn => {
     const o = DB.oripas.find(x => String(x.id) === btn.dataset.open);
@@ -4217,27 +4266,41 @@ function renderInbox(c){
     return;
   }
 
-  const list = pendingOrders(S);
+  const { pending, waiting, trouble } = ordersFor(S);
   const orphans = orphanOrders();
-  if(!list.length && !orphans.length){ box.hidden = true; box.innerHTML = ""; return; }
+  if(!pending.length && !waiting.length && !trouble.length && !orphans.length){
+    box.hidden = true; box.innerHTML = ""; return;
+  }
   box.hidden = false;
 
   const busy = !!activeLot() || !!S.closedAt || c.left <= 0;
-  const rows = list.map(x => {
-    const total = x.price * x.qty;
-    return `<div class="row" data-order="${esc(x.id)}">
-      <span class="amt">${yen(total)}</span>
+  const line = (x, tail) => `<div class="row" data-order="${esc(x.id)}">
+      <span class="amt">${yen(x.price * x.qty)}</span>
       <span class="who">${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(x.buyer || "落札者不明")}</span>
       <span class="spacer"></span>
       <span class="when">${x.at ? fmtClock(x.at) : ""}</span>
-      <button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>
+      ${tail}
     </div>`;
-  }).join("");
 
   box.innerHTML =
-    (list.length
-      ? `<div class="head">届いた落札 ${list.length} 件`
-        + `<span class="sub">${busy ? "いまの落札を出し切ってから取り込む" : "押すとその金額で落札が始まる。あとはカードを押すだけ"}</span></div>` + rows
+    (pending.length
+      ? `<div class="head">届いた落札 ${pending.length} 件`
+        + `<span class="sub">${busy ? "いまの落札を出し切ってから取り込む" : "押すとその金額で落札が始まる。あとはカードを押すだけ"}</span></div>`
+        + pending.map(x => line(x,
+            `<button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`)).join("")
+      : "")
+    // 落札はしたが入金がまだ。見せるが取り込ませない（正式な売上は入金確認後）
+    + (waiting.length
+      ? `<div class="head is-wait">入金待ち ${waiting.length} 件`
+        + `<span class="sub">落札は決まったが、まだ入金が確認できていない。確認できると上に移る</span></div>`
+        + waiting.map(x => line(x, `<span class="waittag">入金待ち</span>`)).join("")
+      : "")
+    // カードを渡したあとに取り消された。売上が実態と食い違っている
+    + (trouble.length
+      ? `<div class="head is-bad">取り消された落札 ${trouble.length} 件`
+        + `<span class="sub">記録済みだが取り消し・返金になった。売上から外す必要がある</span></div>`
+        + trouble.map(x => line(x,
+            `<button type="button" class="btn" data-void="${esc(x.id)}">この落札を取り消す</button>`)).join("")
       : "")
     + (orphans.length
       ? `<div class="orphan">どのオリパにも結びつかない注文が ${orphans.length} 件ある。`
@@ -4247,6 +4310,9 @@ function renderInbox(c){
   box.querySelectorAll("[data-take]").forEach(btn => {
     btn.addEventListener("click", () => takeOrder(btn.dataset.take));
   });
+  box.querySelectorAll("[data-void]").forEach(btn => {
+    btn.addEventListener("click", () => voidOrder(btn.dataset.void));
+  });
 }
 
 /** 届いた落札を、進行中の落札として立てる */
@@ -4254,6 +4320,8 @@ function takeOrder(orderId){
   if(!S || S.closedAt || activeLot()) return;
   const x = (DB.orders || []).find(o => String(o.id) === String(orderId));
   if(!x) return;
+  // 入金が確認できていないものは売上にしない
+  if(!x.paid || x.cancelled){ say("この落札はまだ入金が確認できていない。"); return; }
   const c = compute();
   if(c.left <= 0){ say("残りの口数がない。"); return; }
   touchLive();
@@ -4403,6 +4471,21 @@ async function registerLotOnly(){
   render();
 }
 
+/** 記録したあとに取り消された落札を、売上から外す */
+async function voidOrder(orderId){
+  const x = (DB.orders || []).find(o => String(o.id) === String(orderId));
+  if(!x || !S) return;
+  const lot = (S.lots || []).find(l => String(l.orderId || "") === String(orderId));
+  if(!lot){ render(); return; }
+  const st = lotStats(S, lot);
+  if(!await ask(`${yen(x.price * x.qty)}（${x.buyer || "落札者不明"}）は取り消し・返金になった。\n`
+    + `この落札を売上から外しますか？\n\n`
+    + `${st.drawn > 0 ? `排出済みの ${st.drawn} 口も一緒に取り消されます。` : ""}`,
+    { okLabel: "売上から外す", danger: true })) return;
+  touchLive();
+  await cancelLot(lot.id, true);
+}
+
 function closeDraw(value){
   $("drawModal").hidden = true;
   const done = drawDone;
@@ -4410,12 +4493,13 @@ function closeDraw(value){
   if(done) done(value);
 }
 
-async function cancelLot(id){
+async function cancelLot(id, noConfirm){
   touchLive();          // 自動終了までの時計を戻す
   const lot = S.lots.find(l => l.id === id);
   if(!lot) return;
   const st = lotStats(S, lot);
-  if(st.drawn > 0 && !await ask(`この落札の排出 ${st.drawn} 件も取り消しますか？`,
+  // 取り消し済みの注文から呼ぶときは、手前で確認を出しているので二度聞かない
+  if(!noConfirm && st.drawn > 0 && !await ask(`この落札の排出 ${st.drawn} 件も取り消しますか？`,
                                 { okLabel: "取り消す", danger: true })) return;
   S.events = S.events.filter(e => e.lotId !== id);
   S.lots = S.lots.filter(l => l.id !== id);
