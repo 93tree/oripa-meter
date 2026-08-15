@@ -3750,7 +3750,7 @@ function render(){
     $("verdictPill").hidden = true;
     $("titleText").textContent = "使い方";
     $("subText").textContent = "配信オリパAI支援の手引き";
-    document.title = "使い方 — 配信オリパAI支援";
+    document.title = "[STG] 使い方 — 配信オリパAI支援";
     return;
   }
 
@@ -3773,7 +3773,7 @@ function render(){
     : mode === "edit"  ? "オリパの中身を編集"
     : mode === "watch" ? "ブリッジ — 配信中の進行を映すだけ。ここからは記録できない"
     : "配信中のリアルタイム利益率と値下げ判断";
-  document.title = (!inList && S && S.name ? S.name + " — " : "") + "配信オリパAI支援";
+  document.title = (!inList && S && S.name ? S.name + " — " : "") + "[STG] 配信オリパAI支援";
 
   if(inList){
     $("verdictPill").hidden = true;
