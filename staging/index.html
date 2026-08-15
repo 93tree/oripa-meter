@@ -821,6 +821,11 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .inbox .row.is-wait{ background:var(--surface-2); }
 .inbox .row.is-wait .amt,
 .inbox .row.is-wait .who{ color:var(--ink-3); }
+/* プロモーションの印。金額のすぐ下に小さく出す */
+.inbox .promo{
+  display:block; font-size:10.5px; font-weight:600; color:var(--gold-ink);
+  font-family:var(--font); margin-top:1px; white-space:nowrap;
+}
 /* 受信箱から消すだけのボタン。売上に触らないので目立たせない */
 .inbox .btn.skip{
   font-size:11.5px; padding:0 9px; height:28px; min-width:0;
@@ -4379,8 +4384,21 @@ function renderInbox(c){
   // そのまま残ると押し忘れに見えて毎回目に入るので、消せる口を用意しておく
   const skipBtn = x => `<button type="button" class="btn skip" data-skip="${esc(x.id)}"`
     + ` aria-label="この落札を受信箱から消す">キャンセル</button>`;
+  // プロモーションが乗った落札。**TikTok 負担なら入金はこの額では減らない。**
+  // いま売上にしているのが値引き前か後かは未確定なので、断定せず事実だけ出す。
+  // 押す前に「これは値引きが掛かった落札だ」と気づけるだけで、取り違えは防げる。
+  const promo = x => {
+    const p = Number(x.platformDiscount) || 0;
+    const sd = Number(x.sellerDiscount) || 0;
+    if(!p && !sd) return "";
+    return `<span class="promo" title="出品時 ${yen((Number(x.listPrice) || 0) * x.qty)}">`
+      + (p ? `TikTok負担 ${yen(p * x.qty)}` : "")
+      + (p && sd ? " ／ " : "")
+      + (sd ? `自社値引 ${yen(sd * x.qty)}` : "")
+      + `</span>`;
+  };
   const line = (x, tail, cls) => `<div class="row ${cls || ""}" data-order="${esc(x.id)}">
-      <span class="amt">${yen(x.price * x.qty)}</span>
+      <span class="amt">${yen(x.price * x.qty)}${promo(x)}</span>
       <span class="who">${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(x.buyer || "落札者不明")}</span>
       <span class="spacer"></span>
       <span class="when">${x.at ? fmtClock(x.at) : ""}</span>
