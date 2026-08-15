@@ -759,6 +759,29 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .guide .keys dt{ font-family:var(--font-num); font-weight:700; white-space:nowrap; }
 .guide .keys dd{ margin:0; color:var(--ink-2); }
 
+/* ---- 届いた落札の受信箱 ---- */
+.inbox{
+  border:1px solid color-mix(in srgb, var(--good) 40%, var(--line));
+  border-radius:9px; overflow:hidden; margin-bottom:14px; background:var(--good-bg);
+}
+.inbox .head{
+  display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+  padding:9px 13px; font-size:12px; font-weight:800; color:var(--good);
+}
+.inbox .head .sub{ font-size:11.5px; font-weight:400; color:var(--ink-3); }
+.inbox .row{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:10px 13px; background:var(--surface); border-top:1px solid var(--line);
+}
+.inbox .amt{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:20px; font-weight:600; letter-spacing:-.02em; white-space:nowrap;
+}
+.inbox .who{ font-size:13px; color:var(--ink-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.inbox .when{ font-size:11.5px; color:var(--ink-3); font-family:var(--font-num); white-space:nowrap; }
+.inbox .spacer{ flex:1 1 auto; }
+.inbox .orphan{ padding:10px 13px; background:var(--surface); border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); }
+
 /* ---- 配信の席 ---- */
 .seat{
   display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
@@ -1164,6 +1187,7 @@ body.locked > header, body.locked > main { display:none; }
           <span class="hint">落札を登録 → 出たカードを押す（定価ならカードだけでよい）</span>
         </header>
         <div class="body">
+          <div class="inbox" id="inbox" hidden></div>
           <div id="lotBar"></div>
           <div class="prizes" id="prizeList"></div>
           <div class="drawbar">
@@ -1613,7 +1637,16 @@ body.locked > header, body.locked > main { display:none; }
             <label for="fPrice">販売単価（円）</label>
             <input type="number" id="fPrice" min="0" step="1" inputmode="numeric">
           </div>
+          <div class="field" style="grid-column:span 2">
+            <label for="fShopId">TikTok Shop の商品 ID（任意）</label>
+            <input type="text" id="fShopId" placeholder="入れると落札が自動で届く" autocomplete="off" spellcheck="false">
+          </div>
         </div>
+        <p class="hint" style="margin:12px 0 0">
+          商品 ID を入れると、その商品のオークションで落札が決まったときに
+          <b>金額と落札者が配信画面へ自動で届く</b>（同期の設定が要る）。
+          押すのは出たカードだけになる。
+        </p>
 
 
       </div>
@@ -1789,6 +1822,8 @@ function normalizeOripa(o){
     simMinReturn: clamp(Number(o.simMinReturn ?? 0.50), 0, 2),
     // 相場想定。CSV に相場の列が無いオリパは 原価 × この倍率 を相場として使う
     marketMult: Number(o.marketMult) > 0 ? Number(o.marketMult) : 1,
+    // TikTok Shop の商品 ID。落札の自動取り込みで、注文とオリパを結ぶ鍵
+    shopProductId: String(o.shopProductId || "").trim(),
     prizes: (Array.isArray(o.prizes) ? o.prizes : []).map(p => ({
       id: p.id, name: String(p.name || ""),
       cost: Math.max(0, Number(p.cost) || 0),
@@ -1821,7 +1856,9 @@ function normalizeOripa(o){
         rem: clamp(Math.round(Number(l.rem) || 0), 0, q - 1),
         buyer: String(l.buyer || ""),
         kind: l.kind === "auction" ? "auction" : "instant",
-        at: Number(l.at) || Date.now()
+        at: Number(l.at) || Date.now(),
+        // 取り込み元の注文。これが残っている限り受信箱には出さない
+        orderId: l.orderId ? String(l.orderId) : ""
       };
     }),
     totalSlots: 0,
@@ -1896,7 +1933,51 @@ function normalizeDB(d){
   const gr = (Array.isArray(d.graves) ? d.graves : [])
     .filter(g => g && g.kind && g.id != null)
     .map(g => ({ kind: String(g.kind), id: String(g.id), updatedAt: Number(g.updatedAt) || 0 }));
-  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId, graves: gr };
+  // 外から届いた落札（TikTok Shop の注文）。こちらからは送らない、受け取るだけ
+  const orders = (Array.isArray(d.orders) ? d.orders : [])
+    .filter(x => x && x.id != null)
+    .map(normalizeOrder)
+    .sort((a, b) => b.at - a.at);
+  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId, graves: gr, orders };
+}
+
+/* ============================================================
+   届いた落札（TikTok Shop の注文）
+   Worker が同期シートへ kind:"order" で書き、アプリは受け取るだけ。
+   こちらから送り返さないので、取り合いにならない。
+   ============================================================ */
+function normalizeOrder(x){
+  return {
+    id: String(x.id),
+    productId: String(x.productId || "").trim(),
+    productName: String(x.productName || ""),
+    price: Math.max(0, Math.round(Number(x.price) || 0)),
+    qty: Math.max(1, Math.round(Number(x.qty) || 1)),
+    buyer: String(x.buyer || ""),
+    fee: Math.max(0, Math.round(Number(x.fee) || 0)),
+    at: Number(x.at) || 0,
+    status: String(x.status || ""),
+    source: String(x.source || "tiktok"),
+  };
+}
+
+/** そのオリパ宛で、まだカードを押していない落札 */
+function pendingOrders(o){
+  if(!o || !DB.orders || !DB.orders.length) return [];
+  const pid = String(o.shopProductId || "").trim();
+  if(!pid) return [];
+  // 使い終わった注文は lot.orderId として残るので、それ以外が未処理
+  const used = new Set((o.lots || []).map(l => String(l.orderId || "")).filter(Boolean));
+  return DB.orders
+    .filter(x => x.productId && x.productId === pid && !used.has(String(x.id)))
+    .sort((a, b) => a.at - b.at);
+}
+
+/** どのオリパにも結びつかない注文（商品 ID の設定漏れ） */
+function orphanOrders(){
+  if(!DB.orders || !DB.orders.length) return [];
+  const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
+  return DB.orders.filter(x => !x.productId || !known.has(x.productId));
 }
 
 /** 上書きの前に、そのときの中身をそのまま別キーへ退避する */
@@ -2179,6 +2260,18 @@ function syncApply(items){
         let r;
         try{ r = JSON.parse(it.json); }catch(_){ continue; }
         if(i >= 0) DB.records[i] = r; else DB.records.push(r);
+        changed++;
+      }
+    }else if(it.kind === "order"){
+      // 届いた落札。こちらからは送らないので、上書きの取り合いは起きない
+      if(!Array.isArray(DB.orders)) DB.orders = [];
+      const i = DB.orders.findIndex(x => String(x.id) === String(id));
+      if(it.deleted){
+        if(i >= 0){ DB.orders.splice(i, 1); changed++; }
+      }else{
+        let x;
+        try{ x = normalizeOrder(JSON.parse(it.json)); }catch(_){ continue; }
+        if(i >= 0) DB.orders[i] = x; else DB.orders.push(x);
         changed++;
       }
     }
@@ -4035,6 +4128,7 @@ function renderLive(c){
       + (c.left > 0 ? `（残り ${c.left} 口を回収 ${pct(c.recovery, 0)} で評価）` : "");
 
   renderCue(c);
+  renderInbox(c);
   renderLotBar(c);
   renderPrizes(c);
   renderLotTable();
@@ -4062,6 +4156,67 @@ function resetLotDraft(){
 function lotToDraft(lot){
   if(!lot || lot.kind !== "auction"){ resetLotDraft(); return; }
   lotDraft = { price: String(lot.price), buyer: lot.buyer || "", mode: "unit" };
+}
+
+/* TikTok から届いた落札。押すと、その金額の落札が始まった状態になる。
+   カードを押すのは今までどおり。金額と落札者を打つ手間だけが消える。 */
+function renderInbox(c){
+  const box = $("inbox");
+  if(mode === "watch"){                       // ブリッジからは取り込ませない
+    const w = pendingOrders(S);
+    box.hidden = !w.length;
+    if(w.length) box.innerHTML = `<div class="head">届いた落札 ${w.length} 件`
+      + `<span class="sub">配信している端末で取り込む</span></div>`;
+    return;
+  }
+
+  const list = pendingOrders(S);
+  const orphans = orphanOrders();
+  if(!list.length && !orphans.length){ box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+
+  const busy = !!activeLot() || !!S.closedAt || c.left <= 0;
+  const rows = list.map(x => {
+    const total = x.price * x.qty;
+    return `<div class="row" data-order="${esc(x.id)}">
+      <span class="amt">${yen(total)}</span>
+      <span class="who">${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(x.buyer || "落札者不明")}</span>
+      <span class="spacer"></span>
+      <span class="when">${x.at ? fmtClock(x.at) : ""}</span>
+      <button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>
+    </div>`;
+  }).join("");
+
+  box.innerHTML =
+    (list.length
+      ? `<div class="head">届いた落札 ${list.length} 件`
+        + `<span class="sub">${busy ? "いまの落札を出し切ってから取り込む" : "押すとその金額で落札が始まる。あとはカードを押すだけ"}</span></div>` + rows
+      : "")
+    + (orphans.length
+      ? `<div class="orphan">どのオリパにも結びつかない注文が ${orphans.length} 件ある。`
+        + `編集画面の「TikTok Shop の商品 ID」を入れると結びつく。</div>`
+      : "");
+
+  box.querySelectorAll("[data-take]").forEach(btn => {
+    btn.addEventListener("click", () => takeOrder(btn.dataset.take));
+  });
+}
+
+/** 届いた落札を、進行中の落札として立てる */
+function takeOrder(orderId){
+  if(!S || S.closedAt || activeLot()) return;
+  const x = (DB.orders || []).find(o => String(o.id) === String(orderId));
+  if(!x) return;
+  const c = compute();
+  if(c.left <= 0){ say("残りの口数がない。"); return; }
+  touchLive();
+  const qty = Math.max(1, Math.min(x.qty, c.left));
+  const total = x.price * x.qty;
+  const { price, rem } = lotUnitAndRem(total, qty);
+  const lot = addLot(price, qty, x.buyer, "auction", rem);
+  lot.orderId = String(x.id);          // これで受信箱から消える（二重取り込みの防止）
+  lotBarKey = "";
+  render();
 }
 
 function renderLotBar(c){
@@ -4712,6 +4867,7 @@ function renderEdit(c){
   $("editName").textContent = S.name || "無題のオリパ";
   if(document.activeElement !== $("fName"))  $("fName").value  = S.name;
   if(document.activeElement !== $("fPrice")) $("fPrice").value = S.price;
+  if(document.activeElement !== $("fShopId")) $("fShopId").value = S.shopProductId || "";
 
   $("setupNotice").innerHTML = "";
   const held = liveHolder(S);
@@ -5596,6 +5752,10 @@ $("fPrice").addEventListener("change", e => {
   render();
 });
 $("fName").addEventListener("change", e => { S.name = e.target.value; render(); });
+$("fShopId").addEventListener("change", e => {
+  S.shopProductId = e.target.value.trim();
+  render();
+});
 
 /* 「複数商品をまとめて1口」の操作 */
 const selRows = new Set();
