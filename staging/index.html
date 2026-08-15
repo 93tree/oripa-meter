@@ -3403,7 +3403,7 @@ function stockAtStop(c){
 
 /**
  * 価格を振って、在庫込み損益の期待値がいちばん高い売り方を探し、
- * 「いま止める」と比べる。
+ * 「終了してOK」（いま解体）と比べる。
  */
 function decideNow(c){
   if(c.left <= 0) return null;
@@ -4776,7 +4776,7 @@ function renderPrice(c){
   }else if(!dec || !dec.best){
     cls = "is-bad";
     $("recLabel").textContent = "解体";
-    $("recPrice").textContent = "いま止める";
+    $("recPrice").textContent = "終了してOK";
     $("recDelta").textContent = "売れる価格帯が無い";
     $("recCmp").innerHTML = "";
     msg = `買い手が動く価格まで下げると、売るより在庫として持つほうが上回る。`
@@ -4788,7 +4788,7 @@ function renderPrice(c){
     const b = dec.best.r;
 
     $("recLabel").textContent = go ? "続ける" : even ? "どちらでも大差ない" : "解体する";
-    $("recPrice").textContent = (go || even) && !dec.dead ? yen(goPrice) : "いま止める";
+    $("recPrice").textContent = (go || even) && !dec.dead ? yen(goPrice) : "終了してOK";
     const diff = c.price - goPrice;
     $("recDelta").textContent = (go || even)
       ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
