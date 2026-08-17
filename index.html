@@ -859,6 +859,11 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
   font-size:11.5px; font-weight:800; padding:3px 10px; border-radius:999px;
   background:var(--gold-bg); color:var(--gold-ink); white-space:nowrap;
 }
+/* TikTok から自動で立った落札の印。自分で入れたものと見分けが付くように */
+.lotbox .fromtt{
+  font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px;
+  background:var(--gold-bg); color:var(--gold-ink); white-space:nowrap;
+}
 /* 押せないことが見て分かるように、行ごと沈める */
 .inbox .row.is-wait{ background:var(--surface-2); }
 .inbox .row.is-wait .amt,
@@ -2124,9 +2129,16 @@ function ordersFor(o){
   const none = { pending: [], waiting: [], trouble: [] };
   if(!o || !DB.orders || !DB.orders.length) return none;
   const pid = String(o.shopProductId || "").trim();
-  if(!pid) return none;
   const used = new Set((o.lots || []).map(l => String(l.orderId || "")).filter(Boolean));
-  const mine = DB.orders.filter(x => x.productId === pid).sort((a, b) => a.at - b.at);
+  // 商品 ID が一致するもの。加えて、**どのオリパにも結びつかない注文は
+  // いま配信しているオリパが引き受ける。**商品 ID を入れ忘れても配信が
+  // 止まらないようにするため。引き受け先は 1 つに絞る（orphanHost）。
+  // 絞らないと、2 つ配信しているときに同じ注文が両方に出て二重に立つ。
+  const host = orphanHost();
+  const takesOrphans = !!host && String(host.id) === String(o.id);
+  const mine = DB.orders
+    .filter(x => (pid && String(x.productId || "") === pid) || (takesOrphans && isOrphanOrder(x)))
+    .sort((a, b) => a.at - b.at);
   const fresh = x => Date.now() - (x.at || 0) < UNPAID_TTL;
   return {
     // 入金済みで、まだカードを押していない → いま取り込めるもの
@@ -2141,11 +2153,27 @@ function ordersFor(o){
 /** いま取り込める落札（入金済み・未処理） */
 function pendingOrders(o){ return ordersFor(o).pending; }
 
-/** どのオリパにも結びつかない注文（商品 ID の設定漏れ） */
+/** その注文の商品 ID を持つオリパが 1 つも無いか */
+function isOrphanOrder(x){
+  const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
+  return !x.productId || !known.has(String(x.productId));
+}
+
+/* 迷子の注文を引き受けるオリパ＝**いま配信しているもの**。
+   2 つ配信している異常時は、席がいちばん新しいほうに寄せる。
+   1 つに絞らないと同じ注文が両方の受信箱に出て、二重に落札が立つ。 */
+function orphanHost(){
+  return DB.oripas
+    .filter(o => !o.closedAt && liveHolder(o))
+    .sort((a, b) => (Number(b.live && b.live.at) || 0) - (Number(a.live && a.live.at) || 0))[0] || null;
+}
+
+/** どのオリパにも結びつかない注文（商品 ID の設定漏れ）。
+    配信中のオリパが引き受けているあいだは「迷子」ではないので出さない。 */
 function orphanOrders(){
   if(!DB.orders || !DB.orders.length) return [];
-  const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
-  return DB.orders.filter(x => (!x.productId || !known.has(x.productId)) && !x.cancelled);
+  if(orphanHost()) return [];
+  return DB.orders.filter(x => isOrphanOrder(x) && !x.cancelled);
 }
 
 /** 記録済みなのに取り消された落札。売上が実態と食い違っている状態 */
@@ -2580,6 +2608,9 @@ async function syncNow(manual){
     if(!data.ok) throw new Error(data.error || "サーバが受け付けなかった");
 
     const changed = syncApply(data.items);
+    // 届いた落札はここでしか入ってこない。拾った直後に自動で立てる。
+    // 立てると takeOrder が描き直すので、下の render は要らなくなる
+    const took = autoTakeOrders();
     syncConf.since = Number(data.now) || Date.now();
     saveSyncConf();
     save();
@@ -2587,8 +2618,9 @@ async function syncNow(manual){
     syncFails = 0;
     watchSeenAt = Date.now();
     if(mode === "watch") render();                    // 受信が 0 でも時計は進める
-    // 配信中も描き直す。届いた落札を出すのはこの経路しかない
-    else if(changed && (mode === "list" || mode === "live")) render();
+    // 配信中も描き直す。届いた落札を出すのはこの経路しかない。
+    // 自動で立てたときは takeOrder が既に描き直している
+    else if(!took && changed && (mode === "list" || mode === "live")) render();
     return true;
   }catch(err){
     // 失敗しても since は進めない。次回また送り直す
@@ -4724,8 +4756,44 @@ function takeOrder(orderId){
   const { price, rem } = lotUnitAndRem(total, qty);
   const lot = addLot(price, qty, x.buyer, "auction", rem);
   lot.orderId = String(x.id);          // これで受信箱から消える（二重取り込みの防止）
+  // 迷子の注文を引き受けたなら、そのときに商品 ID を覚える。以降は
+  // 「配信中だから引き受けた」ではなく、正しく結びついた注文として届く
+  if(!String(S.shopProductId || "").trim() && x.productId){
+    S.shopProductId = String(x.productId);
+  }
   lotBarKey = "";
   render();
+  return lot;
+}
+
+/* ------------------------------------------------------------
+   届いた落札を自動で立てる。
+
+   配信中は「受信箱に出る → 押す」の一手が要らない。入金が確認できた
+   落札は、そのまま進行中の落札にしてよい（金額も口数も落札者も
+   TikTok 側で決まっているので、こちらが決める余地が無い）。
+
+   ただし**勝手に進めてよい範囲は狭い**。次の条件を全部満たすときだけ：
+
+     - 配信中の画面で、**席を持っているのがこの端末**
+       （持っていない端末まで立てると、同じ注文で二重に落札が立つ）
+     - 進行中の落札が無い
+       （出し切る前に次を立てると、どのカードがどの落札のものか分からなくなる）
+     - 締めていない・残り口数がある
+     - 入金が確認できている・取り消されていない（takeOrder 側でも見る）
+
+   条件から外れたものは受信箱に残る。出し切った直後と、次に取りに行った
+   ときに、また同じ判定をするので、順番に流れていく。
+   ------------------------------------------------------------ */
+function autoTakeOrders(){
+  if(mode !== "live" || !S || S.closedAt) return false;
+  const seat = liveHolder(S);
+  if(!seat || seat.by !== DEVICE_ID) return false;
+  if(activeLot()) return false;
+  if(compute().left <= 0) return false;
+  const next = pendingOrders(S)[0];         // 古いものから
+  if(!next) return false;
+  return !!takeOrder(next.id);
 }
 
 function renderLotBar(c){
@@ -4760,6 +4828,9 @@ function renderLotBar(c){
     <div class="lotbox active">
       <div class="lotnow">
         <span class="big">${yen(lot.price)} × ${lot.qty}<span class="u">口</span></span>
+        <!-- 自分で入れたのか TikTok から自動で入ったのかが見て分かるように。
+             金額が思っていたのと違うとき、どこを直せばよいかが変わる -->
+        ${lot.orderId ? `<span class="fromtt" title="注文 ${esc(lot.orderId)}">TikTokから自動</span>` : ""}
         ${lot.rem ? `<span class="who">合計 ${yen(lotTotal(lot))}</span>` : ""}
         ${lot.buyer ? `<span class="who">${esc(lot.buyer)}</span>` : ""}
         <span class="pipes">${Array.from({length: lot.qty}, (_, i) =>
@@ -6378,6 +6449,9 @@ async function draw(prizeId, n = 1){
     S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id, at: now });
   }
   render();
+  // 出し切ったなら、待っている落札をその場で立てる。次に取りに行くまで
+  // 待たせると、届いているのに手が止まって見える
+  autoTakeOrders();
 }
 
 function undo(){
