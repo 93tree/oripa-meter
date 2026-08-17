@@ -1076,7 +1076,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='93bb0b0 (08/18 04:22)';</script>
+<script>window.__BUILD='b9e3c9e (08/18 04:42)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -3826,17 +3826,31 @@ function paceOf(o){
   const recentRev = ev.slice(-k).reduce((a, e) => a + e.price, 0);
   const revAll    = ev.reduce((a, e) => a + e.price, 0);
 
+  /* **全体の数字は「開始から今まで」で割る。中断も込み。**
+     TikTok の LIVE マネージャーがそう数えているので、そちらに合わせる
+     （運用者の指示 2026-08-18）。以前は中断を除いた実働で割っていて、
+     8/17 の配信では 実働3h25m で ¥125,352/時、TikTok は 配信4h35m で
+     ¥89,500/時 と、同じ売上なのに数字が 1.4 倍ずれていた。
+
+     配信中はいまこの瞬間まで数える。止まっているあいだ数字が下がって
+     いくが、それが実態。締めたあとは最後の 1 口までで止める。
+
+     直近のペース（recentPace / recentGmv）は**この先いつ売り切れるか**を
+     読むためのもので、用途が違うので実働のまま。中断ぶんを混ぜると、
+     再開した直後に「あと 8 時間」のような使えない予測になる。 */
+  const endAt = o.closedAt ? ev[n-1].at : Math.max(ev[n-1].at, Date.now());
+  const wallMs = Math.max(0, endAt - ev[0].at);
+
   return {
     slots: n,
     startedAt: ev[0].at,
     lastAt: ev[n-1].at,
     activeMs,
-    wallMs: ev[n-1].at - ev[0].at,
-    pausedMs: Math.max(0, (ev[n-1].at - ev[0].at) - activeMs),
-    pace:       perHour(n - 1, activeMs),   // 口/時（全体）
-    recentPace: perHour(k, recentMs),       // 口/時（直近）
-    // 時給GMV。実働時間は「最初の1口ぶん」を含まないので、口数が少ないうちは強めに出る
-    gmv:       activeMs > 0 ? revAll * 3600000 / activeMs : 0,
+    wallMs,
+    pausedMs: Math.max(0, wallMs - activeMs),
+    pace:       perHour(n - 1, wallMs),     // 口/時（全体・中断込み）
+    recentPace: perHour(k, recentMs),       // 口/時（直近・実働）
+    gmv:       wallMs > 0 ? revAll * 3600000 / wallMs : 0,   // 時給GMV（中断込み）
     recentGmv: recentMs > 0 ? recentRev * 3600000 / recentMs : 0,
   };
 }
@@ -4386,10 +4400,12 @@ function listEta(o, c){
   const e = etaOf(o, c);
   if(!e) return { ...none, sub: c.sold ? "口数が足りない" : "未開始" };
 
-  const gmv = { gmv: yen(Math.round(e.recentGmv)), gmvSub: `実働 ${fmtDur(e.activeMs)}` };
+  // 時給GMV は中断込みで割っている（TikTok と同じ数え方）ので、
+  // 添える時間も配信時間にする。「実働」と書くと数字と説明が食い違う
+  const gmv = { gmv: yen(Math.round(e.recentGmv)), gmvSub: `配信 ${fmtDur(e.wallMs)}` };
 
-  if(o.closedAt) return { ...gmv, when: "記録済み", sub: `${fmtDur(e.activeMs)} で ${e.slots} 口` };
-  if(e.done)     return { ...gmv, when: "完売", sub: `${fmtDur(e.activeMs)} で ${e.slots} 口` };
+  if(o.closedAt) return { ...gmv, when: "記録済み", sub: `${fmtDur(e.wallMs)} で ${e.slots} 口` };
+  if(e.done)     return { ...gmv, when: "完売", sub: `${fmtDur(e.wallMs)} で ${e.slots} 口` };
   if(e.stalled)  return { ...gmv, when: "中断中", sub: `${fmtDur(e.idleMs)} 動きなし` };
   if(!(e.ms > 0))return { ...gmv, when: "—", sub: "ペースが出ない" };
   return { ...gmv, when: fmtWhen(e.at), sub: `あと ${fmtDur(e.ms)}・${e.recentPace.toFixed(1)} 口/時` };
@@ -5684,7 +5700,8 @@ function renderPace(c){
 
   // --- 実績 ---
   cell("開始", fmtClock(e.startedAt),
-    `実働 ${fmtDur(e.activeMs)}` + (e.pausedMs > 60000 ? `／中断 ${fmtDur(e.pausedMs)}` : ""));
+    `配信 ${fmtDur(e.wallMs)}`
+    + (e.pausedMs > 60000 ? `（うち中断 ${fmtDur(e.pausedMs)}）` : ""));
   cell("ペース", `${e.recentPace.toFixed(1)} 口/時`,
     `全体 ${e.pace.toFixed(1)} 口/時`, "is-key");
   cell("時給 GMV", yen(Math.round(e.recentGmv)),
@@ -5696,7 +5713,7 @@ function renderPace(c){
   // 動きが無いことを咎めるような出し方にすると、毎回の締めが失敗のように見える。
   if(S.closedAt){
     cell("完売見込み", "終了",
-      `${fmtDur(e.activeMs)} で ${e.slots} 口`);
+      `${fmtDur(e.wallMs)} で ${e.slots} 口`);
   }else if(e.stalled){
     cell("完売見込み", "中断中",
       `${fmtDur(e.idleMs)} 動いていない`, "is-stale");
@@ -5725,7 +5742,10 @@ function renderPace(c){
   const parts = [];
   if(e.stalled){
     parts.push(`最後の排出から ${fmtDur(e.idleMs)} 空いている。`
-      + `${Math.round(PACE_PAUSE_MS/60000)} 分を超えた空白は実働から外しているので、再開すればペースはそのまま使える。`);
+      + `全体の数字（時給GMV・全体ペース）は**中断も込みで**開始からの時間で割る。`
+      + `TikTok の LIVE マネージャーと同じ数え方にしてある。`
+      + `直近のペースだけは ${Math.round(PACE_PAUSE_MS/60000)} 分を超えた空白を外しているので、`
+      + `再開直後でも「あと何時間」が使える値のまま出る。`);
   }else if(!e.done){
     parts.push(`いまの直近ペース（${e.recentPace.toFixed(1)} 口/時）が続けばの話。値下げすれば速くなる。`);
   }
