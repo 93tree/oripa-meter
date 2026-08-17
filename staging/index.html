@@ -1046,7 +1046,18 @@ body.locked > header, body.locked > main { display:none; }
 <script>
 // 同期は既定で繋がっている状態にする。**端末ごとに設定させない。**
 // 合言葉は入口を通ったときに導出して置いてあるので、ここでは組み立てるだけ。
-window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync", room: "2ndline-stg", key: "oripa-stg-sync-key" };
+//
+// ただし**自動操作のブラウザは別の部屋に隔離する。**検査はこのページを
+// そのまま開いて入口も通るので、放っておくと本物の部屋へ書き込む。実際
+// 2026-08-15 以降、本番の部屋に「デモ用オリパ」「本番のオリパ」が 11 件
+// 溜まっていた（配信中の一覧にも並ぶ）。navigator.webdriver は Playwright
+// では必ず true になるので、これで取りこぼさない。
+var __auto = (typeof navigator !== "undefined" && navigator.webdriver === true);
+window.__SYNC_DEFAULTS = {
+  url: "https://empty-dream-1ff2.zasu.workers.dev/sync",
+  room: __auto ? "2ndline-stg-auto" : "2ndline-stg",
+  key: "oripa-stg-sync-key",
+};
 </script>
 
 <div class="gate" id="gate">
@@ -1065,6 +1076,7 @@ window.__SYNC_DEFAULTS = { url: "https://empty-dream-1ff2.zasu.workers.dev/sync"
   </form>
 </div>
 
+<script>window.__BUILD='12502ee (08/18 03:48)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1896,6 +1908,15 @@ const STORE_KEY  = "oripa-stg-v2";
 const LEGACY_KEY = "oripa-stg-live-v1";
 const BACKUP_PREFIX = "oripa-stg-backup-";
 const APP_DATA_VERSION = 2;   // 保存形式の版。上げるときは migrate() に段を足す
+
+/* 配っている版の印。
+   配布時に build_public.py が window.__BUILD へ入れる。開いたままの
+   ファイルを直接見ているときは "開発中" のまま。
+   **画面に出すだけでなく、席の情報にも載せる。**2026-08-18 に、現場の
+   端末へ新しい版が届いているのかどうかを 30 分ぶん確かめられなかった
+   （公開が GitHub 側の不調で止まっていたのに、手元からは見分けが
+   付かなかった）。席に載せておけば、サーバを見るだけで分かる。 */
+const BUILD = (typeof window !== "undefined" && window.__BUILD) ? String(window.__BUILD) : "開発中";
 const KEEP_BACKUPS = 5;
 
 let uid = 1;
@@ -2021,11 +2042,13 @@ function normalizeOripa(o){
     closedAt: Number(o.closedAt) || 0,       // 配信を記録した時刻。0 なら未終了
     // 配信の席。{by, name, at}。at が古くなれば自動的に空く
     live: o.live && o.live.by
-      ? { by: String(o.live.by), name: String(o.live.name || ""), at: Number(o.live.at) || 0 }
+      ? { by: String(o.live.by), name: String(o.live.name || ""), at: Number(o.live.at) || 0,
+          ver: String(o.live.ver || "") }
       : null,
     // 編集の席。配信とは別に持つ（編集中の人が一覧で「配信中」に見えないように）
     edit: o.edit && o.edit.by
-      ? { by: String(o.edit.by), name: String(o.edit.name || ""), at: Number(o.edit.at) || 0 }
+      ? { by: String(o.edit.by), name: String(o.edit.name || ""), at: Number(o.edit.at) || 0,
+          ver: String(o.edit.ver || "") }
       : null
   }));
 }
@@ -2361,7 +2384,7 @@ function editHeldByOther(o){
 }
 function claimEdit(o){
   if(!o) return;
-  o.edit = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+  o.edit = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
   o.updatedAt = Date.now();
 }
 function releaseEdit(o){
@@ -2375,14 +2398,14 @@ function startEditBeat(){
   clearInterval(editBeatTimer);
   editBeatTimer = setInterval(() => {
     if(mode !== "edit" || !S){ clearInterval(editBeatTimer); editBeatTimer = null; return; }
-    S.edit = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+    S.edit = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
     S.updatedAt = Date.now();
     scheduleSync();
   }, LIVE_BEAT_MS);
 }
 function stopEditBeat(){ clearInterval(editBeatTimer); editBeatTimer = null; }
 function claimLive(o){
-  o.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+  o.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
   o.updatedAt = Date.now();
 }
 function releaseLive(o){
@@ -2398,7 +2421,7 @@ function startLiveBeat(){
   liveBeatTimer = setInterval(() => {
     if(mode !== "live" || !S){ clearInterval(liveBeatTimer); liveBeatTimer = null; return; }
     if(Date.now() - lastActionAt >= LIVE_AUTO_END_MS){ autoLeaveLive(); return; }
-    S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+    S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
     S.updatedAt = Date.now();
     scheduleSync();
     renderLiveSeat();          // 残り時間の表示だけ更新する（全体は描き直さない）
@@ -2420,7 +2443,7 @@ function autoLeaveLive(){
 /** 排出・落札・値付けのたびに呼ぶ。これが無いと自動で席を立つ */
 function touchLive(){
   lastActionAt = Date.now();
-  if(mode === "live" && S && !heldByOther(S)) S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now() };
+  if(mode === "live" && S && !heldByOther(S)) S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
 }
 
 const agoText = at => {
@@ -2492,12 +2515,24 @@ function bury(kind, id){
 }
 
 /** 送るもの。前回同期より新しいものだけ */
+/** そのオリパは自分のものか。席（配信）か編集の札を持っていれば自分のもの */
+function iOwnOripa(id){
+  const o = DB.oripas.find(x => String(x.id) === String(id));
+  if(!o) return false;
+  const l = liveHolder(o), e = editHolder(o);
+  return (!!l && l.by === DEVICE_ID) || (!!e && e.by === DEVICE_ID);
+}
+
 function syncOutbox(){
   const since = Number(syncConf.since) || 0;
   const out = [];
   for(const o of DB.oripas){
     const at = Number(o.updatedAt) || 0;
-    if(at > since) out.push({ kind: "oripa", id: String(o.id), updatedAt: at, json: JSON.stringify(o) });
+    if(at <= since) continue;
+    // **他の端末が握っているものは送らない。**握っている側が本物を持っている。
+    // 送ってしまうと、こちらの古い写しが新しい時刻で相手を上書きする。
+    if(heldByOther(o) || editHeldByOther(o)) continue;
+    out.push({ kind: "oripa", id: String(o.id), updatedAt: at, json: JSON.stringify(o) });
   }
   for(const r of DB.records){
     const at = Number(r.updatedAt || r.endedAt) || 0;
@@ -2515,13 +2550,21 @@ function syncApply(items){
   for(const it of items || []){
     const id = it.id;
     if(it.kind === "oripa"){
-      // 配信中・編集中のオリパは、他の端末の更新で差し替えない。
-      // 打っている最中に中身がすり替わるのがいちばん困る。
-      // こちらの版はこのあと送られるので、新しければ相手に反映される。
-      // ブリッジ（見るだけ）は逆で、相手の更新を映すのが仕事なので必ず受け取る。
-      if(S && String(S.id) === String(id) && (mode === "live" || mode === "edit")) continue;
+      // 打っている最中に中身がすり替わらないよう、自分のものは差し替えない。
+      //
+      // **「自分のもの」は席で決める。**画面を開いているかどうかでは決めない。
+      // 以前はここが `mode === "live"` だけだった。そのせいで、席を持って
+      // いない端末が配信画面を開いたまま放置されていると、
+      //   ・届いた更新を「自分のものだから」と捨て続け
+      //   ・自分の古い写しを新しい時刻で送り続け
+      //   ・時刻が新しいので勝つ
+      // という形で**本物を上書きしていた**。2026-08-18 に、締めた記録が
+      // これで消えている（記録は残ったのにオリパが「途中のまま」に戻った）。
+      // ブリッジ（見るだけ）は相手を映すのが仕事なので、当然受け取る。
+      if(iOwnOripa(id)) continue;
       const i = DB.oripas.findIndex(o => String(o.id) === String(id));
-      const mine = i >= 0 ? Number(DB.oripas[i].updatedAt) || 0 : -1;
+      const local = i >= 0 ? DB.oripas[i] : null;
+      const mine = local ? Number(local.updatedAt) || 0 : -1;
       if(Number(it.updatedAt) < mine) continue;          // こちらが新しい
       if(it.deleted){
         if(i >= 0){ DB.oripas.splice(i, 1); changed++; }
@@ -2530,6 +2573,14 @@ function syncApply(items){
         let o;
         try{ o = normalizeOripa(JSON.parse(it.json)); }catch(_){ continue; }
         o.id = String(o.id) === String(id) ? o.id : id;
+        // 締めは一度きりの出来事で、戻すには「記録を取り消して再開」が要る。
+        // 記録がまだ手元にあるのに締めが外れた版が届いたら、それは締めを
+        // 受け取っていない端末の写し。締めだけ残す（再開のときは記録も
+        // 消えるので、この条件から外れて素通りする）。
+        if(local && local.closedAt && !o.closedAt
+           && DB.records.some(r => String(r.oripaId) === String(id))){
+          o.closedAt = local.closedAt;
+        }
         if(i >= 0) DB.oripas[i] = o; else DB.oripas.push(o);
         changed++;
       }
@@ -4448,9 +4499,11 @@ function renderList(){
   const items = DB.oripas.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const flashed = flashId; flashId = null;
   const stock = items.reduce((n, o) => n + o.prizes.reduce((m, p) => m + costOf(p) * p.count, 0), 0);
-  $("listSummary").textContent = items.length
-    ? `${items.length} 件 ／ 賞品の原価合計 ${yen(stock)}`
-    : "";
+  // 版を必ず出す。どの版が動いているか画面で分からないと、
+  // 「直したのに変わらない」の切り分けができない
+  $("listSummary").textContent = (items.length
+    ? `${items.length} 件 ／ 賞品の原価合計 ${yen(stock)} ／ `
+    : "") + `版 ${BUILD}`;
 
   if(!items.length){
     wrap.innerHTML = `<div class="empty">まだオリパがない。「＋ 新しいオリパ」で作るか、在庫 CSV をこの画面にドロップする。</div>`;
