@@ -1076,7 +1076,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='c82ecd9 (08/18 04:01)';</script>
+<script>window.__BUILD='93bb0b0 (08/18 04:22)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2322,7 +2322,7 @@ function save(){
 const SYNC_KEY = "oripa-stg-sync-conf";
 const SYNC_DEBOUNCE = 3000;
 
-let syncConf = { url: "", room: "", token: "", since: 0 };
+let syncConf = { url: "", room: "", token: "", since: 0, sentAt: 0 };
 let syncBusy = false, syncTimer = null, syncMsg = "";
 let syncFails = 0, pollTimer = null;
 
@@ -2492,6 +2492,7 @@ function adoptSyncDefaults(){
   syncConf.room = d.room;
   syncConf.token = token;
   syncConf.since = 0;                                // 初回は手元のものを全部送る
+  syncConf.sentAt = 0;
   saveSyncConf();
 }
 function saveSyncConf(){
@@ -2523,8 +2524,13 @@ function iOwnOripa(id){
   return (!!l && l.by === DEVICE_ID) || (!!e && e.by === DEVICE_ID);
 }
 
+/* 送るものを選ぶ目印は **手元の時計だけ** で決める。
+   受け取る目印（since）はサーバの時計から来るので、混ぜてはいけない。
+   端末の時計がサーバより遅れていると `updatedAt <= since` が成り立ち
+   続けて、**直したのに永久に送られない**。受信側で起きていた 8/18 の
+   取りこぼしと同じ取り違えが、送信側にも残っていた。 */
 function syncOutbox(){
-  const since = Number(syncConf.since) || 0;
+  const since = Number(syncConf.sentAt) || 0;
   const out = [];
   for(const o of DB.oripas){
     const at = Number(o.updatedAt) || 0;
@@ -2655,6 +2661,7 @@ async function syncNow(manual){
   syncBusy = true;
   setSyncState("is-busy", "送信中…");
   const sentSince = Number(syncConf.since) || 0;
+  const localMark = Date.now();        // 送る目印は手元の時計で進める
   try{
     const body = JSON.stringify({
       token: syncConf.token, room: syncConf.room, action: "sync",
@@ -2673,7 +2680,8 @@ async function syncNow(manual){
     // 届いた落札はここでしか入ってこない。拾った直後に自動で立てる。
     // 立てると takeOrder が描き直すので、下の render は要らなくなる
     const took = autoTakeOrders();
-    syncConf.since = Number(data.now) || Date.now();
+    syncConf.since  = Number(data.now) || Date.now();   // 受け取る目印＝サーバ側
+    syncConf.sentAt = localMark;                        // 送る目印＝手元側
     saveSyncConf();
     save();
     setSyncState("is-on", `${fmtClock(Date.now())} に同期（受信 ${changed} 件）`);
@@ -6626,7 +6634,7 @@ $("btnBackupAll").addEventListener("click", () => {
     const room = $("syncRoom").value.trim();
     const token = $("syncToken").value;
     // 同期先やコードが変わったら、取り込み位置は最初から
-    if(url !== syncConf.url || room !== syncConf.room) syncConf.since = 0;
+    if(url !== syncConf.url || room !== syncConf.room){ syncConf.since = 0; syncConf.sentAt = 0; }
     syncConf.url = url; syncConf.room = room; syncConf.token = token;
     saveSyncConf();
     setPoll();
@@ -6640,7 +6648,7 @@ $("btnSyncNow").addEventListener("click", async () => {
 
 $("btnSyncOff").addEventListener("click", async () => {
   if(!await ask("同期をやめますか？\nこの端末の内容はそのまま残ります。", { okLabel: "やめる" })) return;
-  syncConf = { url: "", room: "", token: "", since: 0 };
+  syncConf = { url: "", room: "", token: "", since: 0, sentAt: 0 };
   saveSyncConf();
   setPoll();
   renderSyncBox();
