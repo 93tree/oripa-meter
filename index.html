@@ -754,6 +754,12 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
   font-size:19px; font-weight:600; margin-top:2px; letter-spacing:-.02em;
 }
 .pacegrid .sub{ display:block; font-size:11.5px; color:var(--ink-3); margin-top:2px; overflow-wrap:anywhere; }
+/* 「開始」を直すための小さなボタン。配信中に押すので、指で届く高さは確保する */
+.pacegrid .sub button{
+  font:inherit; color:var(--ink-2); background:none; border:1px solid var(--line-2);
+  border-radius:5px; padding:2px 7px; margin-left:4px; min-height:22px; cursor:pointer;
+}
+.pacegrid .sub button:hover{ border-color:var(--ink-3); color:var(--ink); }
 
 /* ---- ブリッジ（見るだけ） ----
    配信中の画面をそのまま流用して、書き込む操作だけ消す。
@@ -1069,7 +1075,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='b9e3c9e (08/18 04:53)';</script>
+<script>window.__BUILD='f6593d7 (08/18 05:23)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -1185,6 +1191,7 @@ window.__SYNC_DEFAULTS = {
             </p>
             <div class="drawbar">
               <button type="button" class="btn primary" id="btnSyncNow">いま取り込む</button>
+              <button type="button" class="btn ghost" id="btnSyncRefetch">最初から取り直す</button>
               <button type="button" class="btn ghost" id="btnSyncOff">この端末だけにする</button>
               <span class="hint" id="syncNote"></span>
             </div>
@@ -2029,6 +2036,8 @@ function normalizeOripa(o){
     createdAt: Number(o.createdAt) || t,
     updatedAt: Number(o.updatedAt) || t,
     closedAt: Number(o.closedAt) || 0,       // 配信を記録した時刻。0 なら未終了
+    // この配信を始めた時刻。席に座った瞬間を入れる。0 なら 1 口目から数える
+    liveStartedAt: Number(o.liveStartedAt) || 0,
     // 配信の席。{by, name, at}。at が古くなれば自動的に空く
     live: o.live && o.live.by
       ? { by: String(o.live.by), name: String(o.live.name || ""), at: Number(o.live.at) || 0,
@@ -2329,6 +2338,9 @@ const LIVE_BEAT_MS  = 30 * 1000;        // 席を握っているあいだの合�
 const LIVE_LEASE_MS = 3 * 60 * 1000;    // 合図が途切れてこれだけ経てば席は空く
 const LIVE_AUTO_END_MS = 30 * 60 * 1000;// 操作がこれだけ無ければ自分から席を立つ
 const LIVE_WARN_MS = 5 * 60 * 1000;     // 席を立つ何分前から画面で知らせるか
+// 配信の区切り。前の動きからこれだけ空いて席に座ったら「別の日の配信」として
+// 開始時刻を取り直す。席が自動で空くのと同じ長さにそろえてある
+const LIVE_SESSION_GAP_MS = LIVE_AUTO_END_MS;
 
 let DEVICE_ID = "", DEVICE_NAME = "";
 try{
@@ -2393,9 +2405,76 @@ function startEditBeat(){
   }, LIVE_BEAT_MS);
 }
 function stopEditBeat(){ clearInterval(editBeatTimer); editBeatTimer = null; }
+/**
+ * この配信の開始時刻を決める。**席に座った瞬間が配信の開始**（運用者の指示 2026-08-18）。
+ *
+ * TikTok の LIVE マネージャーは「配信の開始から終了まで」で割るので、1 口目から
+ * 数えていると足りない。8/17 は 配信開始 21:51 → 初落札 22:08 の 17 分が抜けていた。
+ *
+ * オリパに 1 つ持たせるだけでは足りない。同じオリパを何晩かに分けて出すため
+ * （8/17 は 99 口のうち 52 口で終わっている）、前の動きから離れていれば
+ * **別の日の配信として取り直す**。席の引き継ぎ（配信中に別の端末が座る）では
+ * 動きが続いているので取り直さない。
+ */
+function armLiveStart(o){
+  if(!o || o.closedAt) return;
+  const ev = eventTimes(o);
+  const lastAct = Math.max(ev.length ? ev[ev.length - 1].at : 0,
+                           (o.live && Number(o.live.at)) || 0);
+  // まだ動きが続いている＝この配信の途中。席の引き継ぎや読み込み直しがここに来る
+  const running = lastAct > 0 && Date.now() - lastAct <= LIVE_SESSION_GAP_MS;
+
+  if(running && o.liveStartedAt) return;              // 続き。開始は動かさない
+
+  if(running){
+    // まだ 1 口も出ていない（席だけ先にある）。座った合図の時刻を開始にする
+    if(!ev.length){ o.liveStartedAt = lastAct; return; }
+
+    /* 開始を持たないまま配信が始まっている（この仕組みより前のデータ、配信中に
+       読み込み直した、など）。**いま座った時刻を開始にすると、すでに売れたぶんが
+       窓の外に落ちて数字が壊れる。**この配信のひと続きの最初の 1 口までさかのぼる。 */
+    let first = ev[ev.length - 1].at;
+    for(let i = ev.length - 1; i > 0; i--){
+      if(ev[i].at - ev[i-1].at > LIVE_SESSION_GAP_MS) break;   // ここで前の配信と切れる
+      first = ev[i-1].at;
+    }
+    o.liveStartedAt = first;
+    return;
+  }
+
+  o.liveStartedAt = Date.now();                       // これから始める
+}
+
 function claimLive(o){
+  armLiveStart(o);
   o.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
   o.updatedAt = Date.now();
+}
+
+/**
+ * 配信の開始時刻を手で直す。
+ *
+ * 席に座った時刻を開始にしているので、**アプリを早く開いた日は前にぶれる**。
+ * それだけのために配信の開始を別に持たせるのは重いので、その場で直せるようにした。
+ */
+async function fixLiveStart(){
+  if(!S || mode === "watch" || S.closedAt) return;
+  const p = paceOf(S);
+  const cur = Number(S.liveStartedAt) || (p ? p.firstLotAt : 0) || Date.now();
+  const v = await askText("配信を始めた時刻を入れる（例 21:51）。\n"
+    + "席に座った時刻を開始にしているので、アプリを早く開いた日はここで直す。\n"
+    + "時給GMV と全体ペースは、ここからの時間で割る。", fmtClock(cur));
+  if(v == null) return;
+  const m = /^(\d{1,2})\s*[:：]\s*(\d{1,2})$/.exec(String(v).trim());
+  if(!m || +m[1] > 23 || +m[2] > 59){ say("時刻は 21:51 のように入れる。"); return; }
+  const d = new Date();
+  d.setHours(+m[1], +m[2], 0, 0);
+  // 日をまたぐ配信。これから来る時刻を入れたのなら前の日のこと
+  if(d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
+  S.liveStartedAt = d.getTime();
+  save();
+  render();
+  say(`開始を ${fmtClock(S.liveStartedAt)} にした。`);
 }
 function releaseLive(o){
   if(!o || !o.live || o.live.by !== DEVICE_ID) return;
@@ -3800,7 +3879,12 @@ const perHour = (slots, ms) => ms > 0 ? slots * 3600000 / ms : 0;
 
 /** 実働時間・ペース・時給GMV。2口以上そろわないと出せないので null を返す */
 function paceOf(o){
-  const ev = eventTimes(o);
+  /* 数えるのは**この配信のぶんだけ**。席に座った時刻より前の口は別の日の配信
+     （同じオリパを何晩かに分けて出す）なので、窓の外として外す。
+     liveStartedAt が無い過去のデータは今までどおり 1 口目から数える。 */
+  const from = Number(o.liveStartedAt) || 0;
+  const all = eventTimes(o);
+  const ev = from ? all.filter(e => e.at >= from) : all;
   const n = ev.length;
   if(n < 2) return null;
 
@@ -3827,17 +3911,25 @@ function paceOf(o){
      直近のペース（recentPace / recentGmv）は**この先いつ売り切れるか**を
      読むためのもので、用途が違うので実働のまま。中断ぶんを混ぜると、
      再開した直後に「あと 8 時間」のような使えない予測になる。 */
+  /* 窓の始まり。席に座った時刻があればそこから。1 口目より後ろにずれている
+     （席を取り直した直後など）ときは 1 口目に合わせる。 */
+  const startAt = from && from <= ev[0].at ? from : ev[0].at;
   const endAt = o.closedAt ? ev[n-1].at : Math.max(ev[n-1].at, Date.now());
-  const wallMs = Math.max(0, endAt - ev[0].at);
+  const wallMs = Math.max(0, endAt - startAt);
+
+  /* 割る口数。窓の始まりが 1 口目そのものなら、その 1 口は境界（柵の杭）なので
+     あいだの数＝n-1 で割る。席の時刻から数えるときは n 口すべてが窓の中にある。 */
+  const slotsInWindow = startAt < ev[0].at ? n : n - 1;
 
   return {
     slots: n,
-    startedAt: ev[0].at,
+    startedAt: startAt,       // 配信の開始（席に座った時刻。無ければ 1 口目）
+    firstLotAt: ev[0].at,     // 最初の 1 口
     lastAt: ev[n-1].at,
     activeMs,
     wallMs,
     pausedMs: Math.max(0, wallMs - activeMs),
-    pace:       perHour(n - 1, wallMs),     // 口/時（全体・中断込み）
+    pace:       perHour(slotsInWindow, wallMs),  // 口/時（全体・中断込み）
     recentPace: perHour(k, recentMs),       // 口/時（直近・実働）
     gmv:       wallMs > 0 ? revAll * 3600000 / wallMs : 0,   // 時給GMV（中断込み）
     recentGmv: recentMs > 0 ? recentRev * 3600000 / recentMs : 0,
@@ -3887,8 +3979,10 @@ function buildRecord(o, endedAt, memo){
     name: o.name,
     endedAt: endedAt,
     memo: memo || "",
-    // 時間。中断を外した実働で、時給GMV もこれで割っている
+    // 時間。startedAt は配信の開始（席に座った時刻。無ければ 1 口目）で、
+    // 時給GMV と全体ペースは中断も込みでここから割っている
     startedAt: p ? p.startedAt : 0,
+    firstLotAt: p ? p.firstLotAt : 0,
     lastAt:    p ? p.lastAt : 0,
     activeMs:  p ? p.activeMs : 0,
     pausedMs:  p ? p.pausedMs : 0,
@@ -3943,7 +4037,7 @@ function parseDateInput(v, fallback){
 }
 
 function recordsToCsv(){
-  const head = ["配信日","オリパ名","開始","終了","実働(分)","中断(分)","ペース(口/時)","時給GMV",
+  const head = ["配信日","オリパ名","開始","初落札","終了","実働(分)","中断(分)","ペース(口/時)","時給GMV",
                 "総口数","販売口数","消化率","最終単価","落札件数",
                 "平均落札単価","最高落札","最低落札","売上",
                 "排出原価","現金損益","利益率","未消化口数","未消化の相場",
@@ -3956,7 +4050,9 @@ function recordsToCsv(){
   for(const r of DB.records.slice().sort((a, b) => a.endedAt - b.endedAt)){
     lines.push([
       fmtDate(r.endedAt), r.name,
-      r.startedAt ? fmtClock(r.startedAt) : "", r.lastAt ? fmtClock(r.lastAt) : "",
+      r.startedAt ? fmtClock(r.startedAt) : "",
+      r.firstLotAt ? fmtClock(r.firstLotAt) : "",
+      r.lastAt ? fmtClock(r.lastAt) : "",
       r.activeMs ? Math.round(r.activeMs / 60000) : "",
       r.pausedMs ? Math.round(r.pausedMs / 60000) : "",
       r.pace ? r.pace.toFixed(1) : "",
@@ -5629,7 +5725,10 @@ function renderClock(c){
   const out = [cell("いま", fmtClock(now), fmtDate(now), "now")];
 
   if(!e){
-    out.push(cell("開始", "—", "まだ排出なし"));
+    // 排出が 2 口そろう前でも、席に座った時刻は分かっているので出す
+    const from = S ? Number(S.liveStartedAt) || 0 : 0;
+    if(from) out.push(cell("開始", fmtClock(from), `${fmtDur(now - from)} 経過／まだ排出なし`));
+    else out.push(cell("開始", "—", "まだ排出なし"));
   }else{
     out.push(cell("開始", fmtClock(e.startedAt),
       `${fmtDur(now - e.startedAt)} 経過`
@@ -5688,9 +5787,11 @@ function renderPace(c){
       + `<b>${value}</b><span class="sub">${sub || ""}</span></div>`);
 
   // --- 実績 ---
+  // 開始は席に座った時刻。アプリを早く開いた日は前にぶれるので、その場で直せるようにする
   cell("開始", fmtClock(e.startedAt),
     `配信 ${fmtDur(e.wallMs)}`
-    + (e.pausedMs > 60000 ? `（うち中断 ${fmtDur(e.pausedMs)}）` : ""));
+    + (e.pausedMs > 60000 ? `（うち中断 ${fmtDur(e.pausedMs)}）` : "")
+    + (mode === "watch" || S.closedAt ? "" : ` <button type="button" id="btnFixStart">直す</button>`));
   cell("ペース", `${e.recentPace.toFixed(1)} 口/時`,
     `全体 ${e.pace.toFixed(1)} 口/時`, "is-key");
   cell("時給 GMV", yen(Math.round(e.recentGmv)),
@@ -5724,6 +5825,8 @@ function renderPace(c){
   }
 
   grid.innerHTML = cells.join("");
+  const fix = $("btnFixStart");
+  if(fix) fix.addEventListener("click", fixLiveStart);
 
   $("paceNote").textContent = `${e.slots} 口ぶんの時刻から算出`;
 
@@ -6473,6 +6576,8 @@ function duplicateOripa(src, suffix, openIt){
   copy.events = [];
   copy.lots = [];
   copy.closedAt = 0;
+  copy.liveStartedAt = 0;      // 複製は別の配信。開始時刻は座ったときに入る
+  copy.live = null;
   copy.createdAt = copy.updatedAt = Date.now();
   DB.oripas.push(copy);
   if(openIt) openOripa(copy.id, "edit");
@@ -6652,6 +6757,28 @@ $("btnBackupAll").addEventListener("click", () => {
 
 $("btnSyncNow").addEventListener("click", async () => {
   if(!syncOn()){ setSyncState("is-bad", "URL・同期コード・合言葉をすべて入れる。"); return; }
+  await syncNow(true);
+});
+
+/**
+ * 部屋にあるものを最初から取り直す。
+ *
+ * 目印（since）を 0 に戻すだけ。サーバは「目印より後に届いたもの」を返すので、
+ * 0 にすれば部屋の中身が全部返ってくる。**手元のものは消さない**（届いたほうが
+ * 新しければ差し替わるだけ）。
+ *
+ * 8/18 に「サーバにあるのに永久に届かない」取りこぼしが起きたとき、復旧手段が
+ * **繋ぎ先を別の部屋に変えて戻す**しか無かった。配信中にそれをやるのは危ないので、
+ * 押すだけで済むようにした。
+ */
+$("btnSyncRefetch").addEventListener("click", async () => {
+  if(!syncOn()){ setSyncState("is-bad", "URL・同期コード・合言葉をすべて入れる。"); return; }
+  if(!await ask("部屋にあるものを最初から取り直しますか？\n"
+    + "この端末の内容は消えません。届いたほうが新しいものだけ差し替わります。\n"
+    + "「直したのに他の PC に届かない」ときに使う。",
+    { okLabel: "取り直す" })) return;
+  syncConf.since = 0;
+  saveSyncConf();
   await syncNow(true);
 });
 
