@@ -897,6 +897,12 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .picks .pick b{ font-family:var(--font-num); font-variant-numeric:tabular-nums; color:var(--ink); }
 .picks .pick .sp{ flex:1 1 auto; }
 .picks .pick code{ font-size:11.5px; color:var(--ink-3); }
+/* 結びついていない注文の一覧（見るだけ）。商品ごとに束ねて並べる */
+#unlinkedPanel .ugroup + .ugroup{ margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+#unlinkedPanel .uhead{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:8px; font-weight:600; }
+#unlinkedPanel .uhead .hint{ font-weight:400; }
+#unlinkedPanel .uhead code{ font-size:11.5px; }
+#unlinkedPanel .tbl{ font-size:12.5px; }
 
 /* ---- 配信の席 ---- */
 .seat{
@@ -1093,7 +1099,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='e21dec0 (08/19 04:11)';</script>
+<script>window.__BUILD='c51bfc9 (08/19 04:22)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1227,6 +1233,18 @@ window.__SYNC_DEFAULTS = {
     </section>
 
     <div id="oripaList" class="stack"></div>
+
+    <!-- 結びついていない注文。**見るだけ。**中身が分からないまま「168 件ある」
+         とだけ言われても判断できないので、実物を並べる -->
+    <section class="panel" id="unlinkedPanel" hidden>
+      <header>
+        <h2>結びついていない注文</h2>
+        <span class="hint" id="unlinkedSummary"></span>
+      </header>
+      <div class="body">
+        <div id="unlinkedList"></div>
+      </div>
+    </section>
 
     <section class="panel" id="recordsPanel">
       <header>
@@ -4756,9 +4774,72 @@ function renderOrderNotice(){
   if(drop) drop.addEventListener("click", dropUnlinkedOrders);
 }
 
+/**
+ * 結びついていない注文の一覧。**見るだけ。**
+ *
+ * 「168 件ある」とだけ言われても、それが何なのか（いつの・いくらの・どの商品の
+ * 注文なのか）が分からないと消すも結びつけるも判断できない。実物を並べる。
+ * 商品 ID ごとにまとめ、その中は新しい順。取り込み済みのものは出さない
+ * （もう迷子ではない）。
+ */
+function renderUnlinkedPanel(){
+  const panel = $("unlinkedPanel");
+  if(!panel) return;
+  const used = new Set(DB.oripas.flatMap(o =>
+    (o.lots || []).map(l => String(l.orderId || "")).filter(Boolean)));
+  const list = (DB.orders || [])
+    .filter(x => isOrphanOrder(x) && !used.has(String(x.id)))
+    .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0));
+
+  if(!list.length){ panel.hidden = true; $("unlinkedList").innerHTML = ""; return; }
+  panel.hidden = false;
+
+  const money = x => (Number(x.price) || 0) * (Number(x.qty) || 1);
+  const sum = list.reduce((n, x) => n + money(x), 0);
+  const paid = list.filter(x => x.paid && !x.cancelled).length;
+  const first = Math.min(...list.map(x => Number(x.at) || Infinity));
+  const last  = Math.max(...list.map(x => Number(x.at) || 0));
+  $("unlinkedSummary").textContent =
+    `${list.length} 件 ／ ${yen(sum)}（入金済み ${paid} 件）`
+    + (isFinite(first) && last ? ` ／ ${fmtDate(first)}〜${fmtDate(last)}` : "");
+
+  // 商品 ID ごとにまとめる。どの商品の注文が溜まっているのかが要点
+  const byPid = new Map();
+  for(const x of list){
+    const pid = String(x.productId || "");
+    if(!byPid.has(pid)) byPid.set(pid, []);
+    byPid.get(pid).push(x);
+  }
+  const groups = [...byPid.entries()]
+    .sort((a, b) => (Number(b[1][0].at) || 0) - (Number(a[1][0].at) || 0));
+
+  const state = x => x.cancelled ? `<span class="waittag">取り消し</span>`
+    : x.paid ? "" : `<span class="waittag">入金待ち</span>`;
+
+  $("unlinkedList").innerHTML = groups.map(([pid, xs]) => {
+    const name = xs.find(x => x.productName)?.productName || "";
+    const gsum = xs.reduce((n, x) => n + money(x), 0);
+    return `<div class="ugroup">`
+      + `<div class="uhead">${name ? esc(name) : "商品名なし"}`
+      + `<span class="hint">${pid ? `商品 ID <code>${esc(pid)}</code>` : "商品 ID を持たない"}`
+      + ` ／ ${xs.length} 件 ／ ${yen(gsum)}</span></div>`
+      + `<div class="scroll-x"><table class="tbl"><thead><tr>`
+      + `<th>注文の時刻</th><th class="l">落札者</th><th>口数</th><th>金額</th><th></th>`
+      + `</tr></thead><tbody>`
+      + xs.map(x => `<tr>`
+          + `<td>${x.at ? fmtDate(x.at) + " " + fmtClock(x.at) : "—"}</td>`
+          + `<td class="l">${esc(x.buyer || "落札者不明")}</td>`
+          + `<td>${Number(x.qty) || 1}</td>`
+          + `<td class="n">${yen(money(x))}</td>`
+          + `<td>${state(x)}</td></tr>`).join("")
+      + `</tbody></table></div></div>`;
+  }).join("");
+}
+
 function renderList(){
   renderMktBar();
   renderOrderNotice();
+  renderUnlinkedPanel();
   renderSyncBox();
   const wrap = $("oripaList");
   wrap.innerHTML = "";
