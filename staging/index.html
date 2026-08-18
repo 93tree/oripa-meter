@@ -886,6 +886,17 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 }
 .inbox .btn.skip:hover{ color:var(--bad); border-color:var(--bad); }
 .inbox .orphan{ padding:10px 13px; background:var(--surface); border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-3); }
+/* 商品 ID の候補（結びついていない注文から作る）。押すだけで入る */
+.picks{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.picks:empty{ display:none; }
+.picks .pick{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--surface);
+  font-size:12.5px; color:var(--ink-2);
+}
+.picks .pick b{ font-family:var(--font-num); font-variant-numeric:tabular-nums; color:var(--ink); }
+.picks .pick .sp{ flex:1 1 auto; }
+.picks .pick code{ font-size:11.5px; color:var(--ink-3); }
 
 /* ---- 配信の席 ---- */
 .seat{
@@ -1082,7 +1093,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='d95613b (08/18 14:16)';</script>
+<script>window.__BUILD='98cf6c7 (08/19 03:55)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1811,6 +1822,7 @@ window.__SYNC_DEFAULTS = {
           <div class="field" style="grid-column:span 2">
             <label for="fShopId">TikTok Shop の商品 ID（任意）</label>
             <input type="text" id="fShopId" placeholder="入れると落札が自動で届く" autocomplete="off" spellcheck="false">
+            <div id="shopIdPicks" class="picks"></div>
           </div>
         </div>
         <p class="hint" style="margin:12px 0 0">
@@ -2173,7 +2185,7 @@ const UNPAID_TTL = 60 * 60 * 1000;
 /** そのオリパ宛の注文を、状態ごとに分ける。
     **売上になるのは pending（入金確認済み）だけ。**waiting は見せるだけで押せない。 */
 function ordersFor(o){
-  const none = { pending: [], waiting: [], trouble: [] };
+  const none = { pending: [], earlier: [], waiting: [], trouble: [] };
   if(!o || !DB.orders || !DB.orders.length) return none;
   const pid = String(o.shopProductId || "").trim();
   const used = new Set((o.lots || []).map(l => String(l.orderId || "")).filter(Boolean));
@@ -2187,9 +2199,24 @@ function ordersFor(o){
     .filter(x => (pid && String(x.productId || "") === pid) || (takesOrphans && isOrphanOrder(x)))
     .sort((a, b) => a.at - b.at);
   const fresh = x => Date.now() - (x.at || 0) < UNPAID_TTL;
+
+  /* **配信前から溜まっていた注文は、自動では立てない。**
+     商品 ID を結びつけた瞬間、あるいは配信中のオリパが迷子を引き受けた瞬間に、
+     過去の注文が一気に「取り込める」側へ入る。自動取り込みは古いものから順に
+     立てるので、そのまま配信を始めると**何日も前の注文が次々と落札として立つ**
+     （8/18 の時点で迷子が 168 件溜まっていた）。
+     線は配信の開始から 30 分前。それより前に届いたものは受信箱の別の欄に出し、
+     押すかどうかは人が決める。開始を `直す` で戻せば、この線も一緒に戻る。 */
+  const from = Number(o.liveStartedAt) || 0;
+  const backlogLine = from ? from - LIVE_SESSION_GAP_MS : 0;
+  const isBacklog = x => !!backlogLine && (Number(x.at) || 0) < backlogLine;
+  const takeable = mine.filter(x => !used.has(String(x.id)) && x.paid && !x.cancelled);
+
   return {
     // 入金済みで、まだカードを押していない → いま取り込めるもの
-    pending: mine.filter(x => !used.has(String(x.id)) && x.paid && !x.cancelled),
+    pending: takeable.filter(x => !isBacklog(x)),
+    // 同じだが**配信前から溜まっていたぶん**。自動では立てない
+    earlier: takeable.filter(isBacklog),
     // 落札は決まったが入金がまだ → 灰色で出すだけ。押せない
     waiting: mine.filter(x => !used.has(String(x.id)) && !x.paid && !x.cancelled && fresh(x)),
     // カードを渡したあとに取り消された → 売上が狂うので知らせる
@@ -2213,6 +2240,31 @@ function orphanHost(){
   return DB.oripas
     .filter(o => !o.closedAt && liveHolder(o))
     .sort((a, b) => (Number(b.live && b.live.at) || 0) - (Number(a.live && a.live.at) || 0))[0] || null;
+}
+
+/**
+ * どのオリパにも結びつかない注文を、**商品 ID ごとに束ねる**。
+ *
+ * 結びつけるのに必要な商品 ID は、その注文が最初から持っている。編集画面で
+ * TikTok Shop の画面を見ながら手で打ち込む理由が無いので、候補として出して
+ * 押すだけで入るようにする（`orphanOrders()` と違って、配信中でも隠さない）。
+ */
+function unlinkedGroups(){
+  const m = new Map();
+  for(const x of DB.orders || []){
+    if(!isOrphanOrder(x) || x.cancelled) continue;
+    const pid = String(x.productId || "").trim();
+    if(!pid) continue;                 // 商品 ID を持たない注文は結びつけようがない
+    const g = m.get(pid) || { pid, name: "", n: 0, paid: 0, yen: 0, first: 0, last: 0 };
+    g.n++;
+    if(x.paid) g.paid++;
+    g.yen += (Number(x.price) || 0) * (Number(x.qty) || 1);
+    if(!g.name && x.productName) g.name = String(x.productName);
+    const at = Number(x.at) || 0;
+    if(at){ g.first = g.first ? Math.min(g.first, at) : at; g.last = Math.max(g.last, at); }
+    m.set(pid, g);
+  }
+  return [...m.values()].sort((a, b) => b.last - a.last);
 }
 
 /** どのオリパにも結びつかない注文（商品 ID の設定漏れ）。
@@ -4615,10 +4667,11 @@ function renderOrderNotice(){
   const per = DB.oripas.map(o => ({ o, ...ordersFor(o) }));
   const ready  = per.filter(x => x.pending.length);
   const wait   = per.reduce((n, x) => n + x.waiting.length, 0);
+  const older  = per.reduce((n, x) => n + x.earlier.length, 0);
   const bad    = troubleOrders();
   const orphans = orphanOrders().length;
 
-  if(!ready.length && !wait && !bad.length && !orphans){ el.innerHTML = ""; return; }
+  if(!ready.length && !wait && !older && !bad.length && !orphans){ el.innerHTML = ""; return; }
 
   const out = [];
 
@@ -4635,7 +4688,7 @@ function renderOrderNotice(){
       + `</span></div>`);
   }
 
-  if(ready.length || wait || orphans){
+  if(ready.length || wait || older || orphans){
     const lines = ready.map(x =>
       `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
       + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.pending.length} 件）</button>`).join("");
@@ -4644,6 +4697,8 @@ function renderOrderNotice(){
           ? `<b>落札が ${ready.reduce((n, x) => n + x.pending.length, 0)} 件届いている。</b>配信画面をひらくと取り込める。`
           : "")
       + (wait ? ` 入金待ちが ${wait} 件（入金が確認できると押せるようになる）。` : "")
+      + (older ? ` 配信前に届いていた注文が ${older} 件（自動では立たない。`
+          + `配信画面の受信箱から選んで取り込む）。` : "")
       + (orphans
           ? ` どのオリパにも結びつかない注文が ${orphans} 件ある`
             + `（編集画面の「TikTok Shop の商品 ID」を入れると結びつく）。`
@@ -4904,9 +4959,9 @@ function renderInbox(c){
     return;
   }
 
-  const { pending, waiting, trouble } = ordersFor(S);
+  const { pending, earlier, waiting, trouble } = ordersFor(S);
   const orphans = orphanOrders();
-  if(!pending.length && !waiting.length && !trouble.length && !orphans.length){
+  if(!pending.length && !earlier.length && !waiting.length && !trouble.length && !orphans.length){
     box.hidden = true; box.innerHTML = ""; return;
   }
   box.hidden = false;
@@ -4961,9 +5016,19 @@ function renderInbox(c){
         + trouble.map(x => line(x,
             `<button type="button" class="btn" data-void="${esc(x.id)}">この落札を取り消す</button>`)).join("")
       : "")
+    // 配信前から溜まっていたぶん。**自動では立たない。**古い注文が次々と
+    // 落札になるのを防ぐため、人が選んで押す欄に分けてある
+    + (earlier.length
+      ? `<div class="head is-wait">配信前に届いた注文 ${earlier.length} 件`
+        + `<span class="sub">この配信より前のぶん。自動では立たないので、`
+        + `この配信で出すものだけ押す</span></div>`
+        + earlier.map(x => line(x,
+            `<button type="button" class="btn" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`
+            + skipBtn(x), "is-wait")).join("")
+      : "")
     + (orphans.length
       ? `<div class="orphan">どのオリパにも結びつかない注文が ${orphans.length} 件ある。`
-        + `編集画面の「TikTok Shop の商品 ID」を入れると結びつく。</div>`
+        + `編集画面の「TikTok Shop の商品 ID」に候補が出るので、押すと結びつく。</div>`
       : "");
 
   box.querySelectorAll("[data-take]").forEach(btn => {
@@ -6004,6 +6069,7 @@ function renderEdit(c){
   if(document.activeElement !== $("fName"))  $("fName").value  = S.name;
   if(document.activeElement !== $("fPrice")) $("fPrice").value = S.price;
   if(document.activeElement !== $("fShopId")) $("fShopId").value = S.shopProductId || "";
+  renderShopIdPicks();
 
   $("setupNotice").innerHTML = "";
   const held = liveHolder(S);
@@ -6941,6 +7007,67 @@ $("fShopId").addEventListener("change", e => {
   S.shopProductId = e.target.value.trim();
   render();
 });
+
+/**
+ * 商品 ID の候補を出す。
+ *
+ * 結びつけに要る商品 ID は、届いた注文が最初から持っている。それなのに
+ * 「編集画面で商品 ID を入れてください」と書いてあるだけで、運用者は
+ * TikTok Shop の画面を開いて ID を探して打ち込む必要があった。
+ * どの商品の注文が何件溜まっているかを出して、押すだけで入るようにする。
+ */
+function renderShopIdPicks(){
+  const box = $("shopIdPicks");
+  if(!box || !S) return;
+  const groups = unlinkedGroups();
+  // 商品 ID を持たない注文は押しても結びつけられない。件数が合わないと
+  // 「候補に出ていないぶんは何なのか」で悩むので、数だけ出しておく
+  const noPid = (DB.orders || [])
+    .filter(x => isOrphanOrder(x) && !x.cancelled && !String(x.productId || "").trim()).length;
+  if(!groups.length && !noPid){ box.innerHTML = ""; return; }
+
+  box.innerHTML = (groups.length
+      ? `<div class="hint" style="margin:0">結びついていない注文がある。`
+        + `この中にこのオリパのものがあれば押す（商品 ID が入る）。</div>`
+      : "")
+    + groups.slice(0, 8).map(g => `<div class="pick">`
+        + `<span>${g.name ? esc(g.name) : "<code>" + esc(g.pid) + "</code>"}</span>`
+        + `<span class="sp"></span>`
+        + `<span><b>${g.n}</b> 件`
+        + (g.paid < g.n ? `（入金済 ${g.paid}）` : "")
+        + ` ／ ${yen(g.yen)}</span>`
+        + `<span class="when">${g.last ? fmtDate(g.last) : ""}</span>`
+        + `<button type="button" class="btn" data-pick="${esc(g.pid)}">このオリパにする</button>`
+      + `</div>`).join("")
+    + (groups.length > 8 ? `<div class="hint" style="margin:0">ほか ${groups.length - 8} 種類</div>` : "")
+    + (noPid
+      ? `<div class="hint" style="margin:0">商品 ID を持たない注文が ${noPid} 件ある。`
+        + `これは結びつけられないので、配信中のオリパが引き受ける。</div>`
+      : "");
+
+  box.querySelectorAll("[data-pick]").forEach(btn => {
+    btn.addEventListener("click", () => linkShopId(btn.dataset.pick));
+  });
+}
+
+async function linkShopId(pid){
+  if(!S || !pid) return;
+  const g = unlinkedGroups().find(x => x.pid === pid);
+  const cur = String(S.shopProductId || "").trim();
+  if(cur && cur !== pid){
+    if(!await ask(`このオリパの商品 ID を差し替えますか？\n\n`
+      + `いま：${cur}\nあとで：${pid}\n\n`
+      + `いま入っている ID の注文は、このオリパに届かなくなります。`,
+      { okLabel: "差し替える", danger: true })) return;
+  }
+  S.shopProductId = pid;
+  save();
+  render();
+  say(`商品 ID を結びつけた。\n`
+    + (g ? `この商品の注文 ${g.n} 件がこのオリパのものになる。\n\n` : "\n")
+    + `**配信前から溜まっていたぶんは自動では立たない。**受信箱の`
+    + `「配信前に届いた注文」から、必要なものだけ押して取り込む。`);
+}
 
 /* 「複数商品をまとめて1口」の操作 */
 const selRows = new Set();
