@@ -1082,7 +1082,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='f6593d7 (08/18 05:30)';</script>
+<script>window.__BUILD='d95613b (08/18 14:13)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2046,6 +2046,8 @@ function normalizeOripa(o){
     totalSlots: 0,
     createdAt: Number(o.createdAt) || t,
     updatedAt: Number(o.updatedAt) || t,
+    // 版番号。どちらが新しいかを時計ではなくこれで決める（0 = 持っていない）
+    rev: Math.max(0, Math.round(Number(o.rev) || 0)),
     closedAt: Number(o.closedAt) || 0,       // 配信を記録した時刻。0 なら未終了
     // この配信を始めた時刻。席に座った瞬間を入れる。0 なら 1 口目から数える
     liveStartedAt: Number(o.liveStartedAt) || 0,
@@ -2116,13 +2118,15 @@ function normalizeDB(d){
   const records = (Array.isArray(d.records) ? d.records : [])
     .filter(r => r && typeof r === "object")
     .map(r => ({ ...r, id: r.id || newId(), endedAt: Number(r.endedAt) || Date.now(),
-                 updatedAt: Number(r.updatedAt) || Number(r.endedAt) || Date.now() }))
+                 updatedAt: Number(r.updatedAt) || Number(r.endedAt) || Date.now(),
+                 rev: Math.max(0, Math.round(Number(r.rev) || 0)) }))
     .sort((a, b) => b.endedAt - a.endedAt);
   const currentId = oripas.some(o => o.id === d.currentId) ? d.currentId : null;
   // 墓標（消したという事実）。同期していないときも持っておく
   const gr = (Array.isArray(d.graves) ? d.graves : [])
     .filter(g => g && g.kind && g.id != null)
-    .map(g => ({ kind: String(g.kind), id: String(g.id), updatedAt: Number(g.updatedAt) || 0 }));
+    .map(g => ({ kind: String(g.kind), id: String(g.id), updatedAt: Number(g.updatedAt) || 0,
+                 rev: Math.max(0, Math.round(Number(g.rev) || 0)) }));
   // 外から届いた落札（TikTok Shop の注文）。こちらからは送らない、受け取るだけ
   const orders = (Array.isArray(d.orders) ? d.orders : [])
     .filter(x => x && x.id != null)
@@ -2587,9 +2591,13 @@ function graves(){
 function bury(kind, id){
   const g = graves();
   const at = Date.now();
+  /* 消される側より必ず 1 つ先の版にする。時計が戻っている端末でも、
+     消したものが生き返らない。
+     **呼ぶのは中身を消す前。**あとから呼ぶと版が拾えず 1 になる。 */
+  const rev = revOfLive(kind, id) + 1;
   const hit = g.find(x => x.kind === kind && String(x.id) === String(id));
-  if(hit) hit.updatedAt = at;
-  else g.push({ kind, id: String(id), updatedAt: at });
+  if(hit){ hit.updatedAt = at; hit.rev = Math.max(Number(hit.rev) || 0, rev); }
+  else g.push({ kind, id: String(id), updatedAt: at, rev });
   if(g.length > 500) g.splice(0, g.length - 500);
   scheduleSync();
 }
@@ -2608,6 +2616,34 @@ function iOwnOripa(id){
    端末の時計がサーバより遅れていると `updatedAt <= since` が成り立ち
    続けて、**直したのに永久に送られない**。受信側で起きていた 8/18 の
    取りこぼしと同じ取り違えが、送信側にも残っていた。 */
+/**
+ * どちらが新しいかを決める物差し。**時計ではなく版番号（増える一方の数）で決める。**
+ *
+ * 2026-08-18 に締めた記録が消えたのは、勝ち負けを書き込み時刻だけで決めて
+ * いたため。席で入口は塞いだが、それは「送らせない」だけで、**時計がずれた
+ * 端末が古い写しを新しい時刻で送れば、まだ本物が負ける**理屈が残っていた。
+ *
+ * 版番号は受け取った版をそのまま引き継ぎ、**自分が直して送るときだけ 1 つ増える**。
+ * だから「相手の版を見たうえで直したもの」だけが相手に勝つ。時計は関係ない。
+ *
+ * 片方でも版番号を持っていなければ、今までどおり時刻で比べる。古い版のアプリと
+ * 混ざっているあいだ、相手の変更を版 0 として不当に負けさせないため。
+ * 同じ版のときも時刻で決める（同じ版＝同じ元から分かれた枝なので、優劣が無い）。
+ */
+function revBeats(inRev, inAt, myRev, myAt){
+  const a = Number(inRev) || 0, b = Number(myRev) || 0;
+  if(a > 0 && b > 0 && a !== b) return a > b;
+  return (Number(inAt) || 0) >= (Number(myAt) || 0);
+}
+
+/** 消される側の版。墓標をその 1 つ先に置くために使う */
+function revOfLive(kind, id){
+  const list = kind === "oripa" ? DB.oripas : kind === "record" ? DB.records : null;
+  if(!list) return 0;
+  const x = list.find(v => String(v.id) === String(id));
+  return Number(x && x.rev) || 0;
+}
+
 function syncOutbox(){
   const since = Number(syncConf.sentAt) || 0;
   const out = [];
@@ -2617,14 +2653,22 @@ function syncOutbox(){
     // **他の端末が握っているものは送らない。**握っている側が本物を持っている。
     // 送ってしまうと、こちらの古い写しが新しい時刻で相手を上書きする。
     if(heldByOther(o) || editHeldByOther(o)) continue;
-    out.push({ kind: "oripa", id: String(o.id), updatedAt: at, json: JSON.stringify(o) });
+    // 送るとき＝自分が直したときなので、ここで版を 1 つ進める。
+    // 中身（json）も版を上げたあとのものにする。envelope と食い違わせない
+    o.rev = (Number(o.rev) || 0) + 1;
+    out.push({ kind: "oripa", id: String(o.id), updatedAt: at, rev: o.rev, json: JSON.stringify(o) });
   }
   for(const r of DB.records){
     const at = Number(r.updatedAt || r.endedAt) || 0;
-    if(at > since) out.push({ kind: "record", id: String(r.id), updatedAt: at, json: JSON.stringify(r) });
+    if(at > since){
+      r.rev = (Number(r.rev) || 0) + 1;
+      out.push({ kind: "record", id: String(r.id), updatedAt: at, rev: r.rev, json: JSON.stringify(r) });
+    }
   }
   for(const g of graves()){
-    if((Number(g.updatedAt) || 0) > since) out.push({ kind: g.kind, id: String(g.id), updatedAt: g.updatedAt, deleted: true });
+    // 墓標は bury() のときに「消される側より 1 つ先」を持たせてある
+    if((Number(g.updatedAt) || 0) > since)
+      out.push({ kind: g.kind, id: String(g.id), updatedAt: g.updatedAt, rev: Number(g.rev) || 0, deleted: true });
   }
   return out;
 }
@@ -2650,10 +2694,11 @@ function syncApply(items){
       const i = DB.oripas.findIndex(o => String(o.id) === String(id));
       const local = i >= 0 ? DB.oripas[i] : null;
       const mine = local ? Number(local.updatedAt) || 0 : -1;
-      if(Number(it.updatedAt) < mine) continue;          // こちらが新しい
+      // 勝ち負けは版番号で決める（revBeats）。手元に無いものは無条件で受け取る
+      if(local && !revBeats(it.rev, it.updatedAt, local.rev, mine)) continue;
       if(it.deleted){
         if(i >= 0){ DB.oripas.splice(i, 1); changed++; }
-        bury0("oripa", id, it.updatedAt);
+        bury0("oripa", id, it.updatedAt, it.rev);
       }else{
         let o;
         try{ o = normalizeOripa(JSON.parse(it.json)); }catch(_){ continue; }
@@ -2671,11 +2716,12 @@ function syncApply(items){
       }
     }else if(it.kind === "record"){
       const i = DB.records.findIndex(r => String(r.id) === String(id));
-      const mine = i >= 0 ? Number(DB.records[i].updatedAt || DB.records[i].endedAt) || 0 : -1;
-      if(Number(it.updatedAt) < mine) continue;
+      const cur = i >= 0 ? DB.records[i] : null;
+      const mine = cur ? Number(cur.updatedAt || cur.endedAt) || 0 : -1;
+      if(cur && !revBeats(it.rev, it.updatedAt, cur.rev, mine)) continue;
       if(it.deleted){
         if(i >= 0){ DB.records.splice(i, 1); changed++; }
-        bury0("record", id, it.updatedAt);
+        bury0("record", id, it.updatedAt, it.rev);
       }else{
         let r;
         try{ r = JSON.parse(it.json); }catch(_){ continue; }
@@ -2716,11 +2762,15 @@ function syncApply(items){
 }
 
 /** 墓標を「相手から来た事実」として控える（自分が消したときは bury）*/
-function bury0(kind, id, at){
+function bury0(kind, id, at, rev){
   const g = graves();
   const hit = g.find(x => x.kind === kind && String(x.id) === String(id));
-  if(hit) hit.updatedAt = Math.max(Number(hit.updatedAt) || 0, Number(at) || 0);
-  else g.push({ kind, id: String(id), updatedAt: Number(at) || Date.now() });
+  if(hit){
+    hit.updatedAt = Math.max(Number(hit.updatedAt) || 0, Number(at) || 0);
+    hit.rev = Math.max(Number(hit.rev) || 0, Number(rev) || 0);
+  }else{
+    g.push({ kind, id: String(id), updatedAt: Number(at) || Date.now(), rev: Number(rev) || 0 });
+  }
 }
 
 function setSyncState(kind, msg){
@@ -4739,8 +4789,10 @@ function renderRecords(){
     tr.querySelector(".rowdel").addEventListener("click", async () => {
       if(!await ask(`${fmtDate(r.endedAt)}「${r.name}」の記録を削除しますか？`,
                     { okLabel: "削除する", danger: true })) return;
-      DB.records = DB.records.filter(x => x.id !== r.id);
+      // **消す前に墓標を立てる。**版は消される側から決めるので、順番が逆だと
+      // 版 1 の墓標になり、他の端末に残っている写しに負けて生き返る
       bury("record", r.id);
+      DB.records = DB.records.filter(x => x.id !== r.id);
       const o = DB.oripas.find(x => x.id === r.oripaId);
       if(o && !DB.records.some(x => x.oripaId === o.id)) o.closedAt = 0;
       render();
@@ -6589,6 +6641,7 @@ function duplicateOripa(src, suffix, openIt){
   copy.closedAt = 0;
   copy.liveStartedAt = 0;      // 複製は別の配信。開始時刻は座ったときに入る
   copy.live = null;
+  copy.rev = 0;                // 別の id の新しいもの。版は 1 から数え直す
   copy.createdAt = copy.updatedAt = Date.now();
   DB.oripas.push(copy);
   if(openIt) openOripa(copy.id, "edit");
@@ -6844,8 +6897,8 @@ async function deleteOripa(o){
   const detail = c.sold > 0 ? `\n排出 ${c.sold} 件の入力内容も消える。` : "";
   if(!await ask(`「${o.name}」を削除しますか？${detail}\n記録済みの実績は「配信の記録」に残ります。`,
                 { okLabel: "削除する", danger: true })) return false;
+  bury("oripa", o.id);          // 消す前に立てる（上と同じ理由）
   DB.oripas = DB.oripas.filter(x => x.id !== o.id);
-  bury("oripa", o.id);
   if(S && S.id === o.id){
     S = null;
     pending = null; draftId = null;
