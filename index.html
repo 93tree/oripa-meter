@@ -1086,7 +1086,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='98cf6c7 (08/19 03:56)';</script>
+<script>window.__BUILD='e21dec0 (08/19 04:09)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -2261,10 +2261,47 @@ function unlinkedGroups(){
 function orphanOrders(){
   if(!DB.orders || !DB.orders.length) return [];
   if(orphanHost()) return [];
-  return DB.orders.filter(x => isOrphanOrder(x) && !x.cancelled);
+  // **落札として取り込み済みのものは数えない。**もう出どころは辿れているので、
+  // 「結びつけてください」と言われても運用者にできることが無い
+  const used = new Set(DB.oripas.flatMap(o =>
+    (o.lots || []).map(l => String(l.orderId || "")).filter(Boolean)));
+  return DB.orders.filter(x => isOrphanOrder(x) && !x.cancelled && !used.has(String(x.id)));
 }
 
 /** 記録済みなのに取り消された落札。売上が実態と食い違っている状態 */
+/**
+ * 消してよい「結びついていない注文」。
+ *
+ * **落札として取り込み済みのものは外す。**取り込んだ注文は落札（lot.orderId）から
+ * 参照されていて、消すと売上の出どころが辿れなくなる。迷子かどうかは商品 ID の
+ * 話でしかないので、迷子でも取り込み済みなら残す。
+ */
+function unlinkedOrders(){
+  const used = new Set(DB.oripas.flatMap(o =>
+    (o.lots || []).map(l => String(l.orderId || "")).filter(Boolean)));
+  return (DB.orders || []).filter(x => isOrphanOrder(x) && !used.has(String(x.id)));
+}
+
+/** 結びついていない注文をまとめて消す。他の端末でも消えるよう墓標を立てる */
+async function dropUnlinkedOrders(){
+  const list = unlinkedOrders();
+  if(!list.length){ say("結びついていない注文は無い。"); return; }
+  const paid = list.filter(x => x.paid && !x.cancelled).length;
+  const sum = list.reduce((n, x) => n + (Number(x.price) || 0) * (Number(x.qty) || 1), 0);
+  if(!await ask(`結びついていない注文 ${list.length} 件を消しますか？\n\n`
+    + `うち入金済み ${paid} 件・合計 ${yen(sum)}\n\n`
+    + `他の端末からも消えます。TikTok 側でこの注文に新しい動きがあれば、また出てきます。\n`
+    + `落札として取り込み済みのものは消しません。`,
+    { okLabel: `${list.length} 件を消す`, danger: true })) return;
+
+  const ids = new Set(list.map(x => String(x.id)));
+  DB.orders = (DB.orders || []).filter(x => !ids.has(String(x.id)));
+  for(const id of ids) bury("order", id);
+  save();
+  render();
+  say(`${ids.size} 件を消した。`);
+}
+
 function troubleOrders(){
   return DB.oripas.flatMap(o => ordersFor(o).trouble.map(x => ({ o, x })));
 }
@@ -4690,9 +4727,12 @@ function renderOrderNotice(){
           + `配信画面の受信箱から選んで取り込む）。` : "")
       + (orphans
           ? ` どのオリパにも結びつかない注文が ${orphans} 件ある`
-            + `（編集画面の「TikTok Shop の商品 ID」を入れると結びつく）。`
+            + `（編集画面の「TikTok Shop の商品 ID」に候補が出る。押すと結びつく）。`
           : "")
-      + `</span><span>${lines}</span></div>`);
+      + `</span><span>${lines}`
+      + (orphans ? `<button type="button" class="btn" id="btnDropUnlinked">`
+          + `結びついていない注文を消す</button>` : "")
+      + `</span></div>`);
   }
 
   el.innerHTML = out.join("");
@@ -4701,6 +4741,8 @@ function renderOrderNotice(){
     const o = DB.oripas.find(x => String(x.id) === btn.dataset.open);
     if(o) btn.addEventListener("click", () => { S = o; DB.currentId = o.id; goLive(o); });
   });
+  const drop = $("btnDropUnlinked");
+  if(drop) drop.addEventListener("click", dropUnlinkedOrders);
 }
 
 function renderList(){
@@ -5017,7 +5059,8 @@ function renderInbox(c){
       : "")
     + (orphans.length
       ? `<div class="orphan">どのオリパにも結びつかない注文が ${orphans.length} 件ある。`
-        + `編集画面の「TikTok Shop の商品 ID」に候補が出るので、押すと結びつく。</div>`
+        + `編集画面の「TikTok Shop の商品 ID」に候補が出るので、押すと結びつく。`
+        + ` <button type="button" class="btn" data-dropunlinked="1">まとめて消す</button></div>`
       : "");
 
   box.querySelectorAll("[data-take]").forEach(btn => {
@@ -5028,6 +5071,9 @@ function renderInbox(c){
   });
   box.querySelectorAll("[data-void]").forEach(btn => {
     btn.addEventListener("click", () => voidOrder(btn.dataset.void));
+  });
+  box.querySelectorAll("[data-dropunlinked]").forEach(btn => {
+    btn.addEventListener("click", dropUnlinkedOrders);
   });
 }
 
@@ -7025,7 +7071,8 @@ function renderShopIdPicks(){
         + `<span><b>${g.n}</b> 件`
         + (g.paid < g.n ? `（入金済 ${g.paid}）` : "")
         + ` ／ ${yen(g.yen)}</span>`
-        + `<span class="when">${g.last ? fmtDate(g.last) : ""}</span>`
+        + `<span class="when">${g.first && g.last && fmtDate(g.first) !== fmtDate(g.last)
+             ? `${fmtDate(g.first)}〜${fmtDate(g.last)}` : (g.last ? fmtDate(g.last) : "")}</span>`
         + `<button type="button" class="btn" data-pick="${esc(g.pid)}">このオリパにする</button>`
       + `</div>`).join("")
     + (groups.length > 8 ? `<div class="hint" style="margin:0">ほか ${groups.length - 8} 種類</div>` : "")
