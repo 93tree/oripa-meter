@@ -1099,7 +1099,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='c51bfc9 (08/19 04:24)';</script>
+<script>window.__BUILD='cdf0128 (08/19 14:55)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2156,7 +2156,12 @@ function normalizeDB(d){
   const gr = (Array.isArray(d.graves) ? d.graves : [])
     .filter(g => g && g.kind && g.id != null)
     .map(g => ({ kind: String(g.kind), id: String(g.id), updatedAt: Number(g.updatedAt) || 0,
-                 rev: Math.max(0, Math.round(Number(g.rev) || 0)) }));
+                 rev: Math.max(0, Math.round(Number(g.rev) || 0)),
+                 // 消したときの姿（注文だけ）。状況が動いたかどうかの判断に使う
+                 mark: g.mark && typeof g.mark === "object"
+                   ? { paid: !!g.mark.paid, cancelled: !!g.mark.cancelled,
+                       price: Number(g.mark.price) || 0, qty: Number(g.mark.qty) || 0 }
+                   : null }));
   // 外から届いた落札（TikTok Shop の注文）。こちらからは送らない、受け取るだけ
   const orders = (Array.isArray(d.orders) ? d.orders : [])
     .filter(x => x && x.id != null)
@@ -2323,9 +2328,10 @@ async function dropUnlinkedOrders(){
     + `落札として取り込み済みのものは消しません。`,
     { okLabel: `${list.length} 件を消す`, danger: true })) return;
 
-  const ids = new Set(list.map(x => String(x.id)));
+  const marks = new Map(list.map(x => [String(x.id), orderMark(x)]));
+  const ids = new Set(marks.keys());
   DB.orders = (DB.orders || []).filter(x => !ids.has(String(x.id)));
-  for(const id of ids) bury("order", id);
+  for(const id of ids) bury("order", id, marks.get(id));
   save();
   render();
   say(`${ids.size} 件を消した。`);
@@ -2695,7 +2701,19 @@ function graves(){
   if(!Array.isArray(DB.graves)) DB.graves = [];
   return DB.graves;
 }
-function bury(kind, id){
+/** 注文を消したときの姿。これと違う姿で降ってきたときだけ通す */
+function orderMark(x){
+  return x ? { paid: !!x.paid, cancelled: !!x.cancelled,
+               price: Number(x.price) || 0, qty: Number(x.qty) || 1 } : null;
+}
+
+/* 墓標は「消した」という判断そのもの。数で切ると、まとめて消した直後に
+   古い判断から落ちて生き返る（168 件消した時点で 500 の上限は近い）。
+   **日数で落とす。**数の上限は暴走したときの保険として高めに置く。 */
+const GRAVE_KEEP_MS = 90 * 24 * 60 * 60 * 1000;
+const GRAVE_MAX = 3000;
+
+function bury(kind, id, mark){
   const g = graves();
   const at = Date.now();
   /* 消される側より必ず 1 つ先の版にする。時計が戻っている端末でも、
@@ -2703,9 +2721,17 @@ function bury(kind, id){
      **呼ぶのは中身を消す前。**あとから呼ぶと版が拾えず 1 になる。 */
   const rev = revOfLive(kind, id) + 1;
   const hit = g.find(x => x.kind === kind && String(x.id) === String(id));
-  if(hit){ hit.updatedAt = at; hit.rev = Math.max(Number(hit.rev) || 0, rev); }
-  else g.push({ kind, id: String(id), updatedAt: at, rev });
-  if(g.length > 500) g.splice(0, g.length - 500);
+  if(hit){
+    hit.updatedAt = at;
+    hit.rev = Math.max(Number(hit.rev) || 0, rev);
+    if(mark) hit.mark = mark;
+  }else{
+    g.push({ kind, id: String(id), updatedAt: at, rev, mark: mark || null });
+  }
+  const keepFrom = at - GRAVE_KEEP_MS;
+  const kept = g.filter(x => (Number(x.updatedAt) || 0) >= keepFrom);
+  if(kept.length !== g.length) g.splice(0, g.length, ...kept);
+  if(g.length > GRAVE_MAX) g.splice(0, g.length - GRAVE_MAX);
   scheduleSync();
 }
 
@@ -2838,18 +2864,36 @@ function syncApply(items){
     }else if(it.kind === "order"){
       // 届いた落札。こちらからは送らないので、上書きの取り合いは起きない
       if(!Array.isArray(DB.orders)) DB.orders = [];
-      // ただし「受信箱から消した」だけはこちらの意思なので墓標が立つ。
-      // 同じ版が次の取得でまた降ってくるため、見ないと消しても毎回戻る。
-      // **より新しい版なら通す**（TikTok 側で状況が動いたということなので、
-      // 消したまま握り潰すと取り消しや入金確認に気づけない）。
+      /* ただし「受信箱から消した」だけはこちらの意思なので墓標が立つ。
+         同じ版が次の取得でまた降ってくるため、見ないと消しても毎回戻る。
+
+         **以前はここが「墓標より新しい版なら通す」だった。**Worker は
+         `ORDER_STATUS_CHANGE` が来るたびに `updatedAt: Date.now()` で書き直すので、
+         発送・配達・完了といった**当たり前の状態変化のたびに消した注文が戻る**。
+         8/17 のぶんを消したあと、カードを発送した頃に 122 件が一斉に戻ったのが
+         これ（消しても消しても戻ってくる）。
+
+         いま通すのは**実質が変わったときだけ**：入金の有無・取り消し・金額。
+         取り消しや入金確認を握り潰さないという元の意図はそのまま。
+         姿を持たない古い墓標は、今までどおり時刻で判断する。 */
       const g = graves().find(x => x.kind === "order" && String(x.id) === String(id));
-      if(g && Number(it.updatedAt) <= Number(g.updatedAt)) continue;
       const i = DB.orders.findIndex(x => String(x.id) === String(id));
       if(it.deleted){
+        if(g && Number(it.updatedAt) <= Number(g.updatedAt)) continue;
         if(i >= 0){ DB.orders.splice(i, 1); changed++; }
       }else{
         let x;
         try{ x = normalizeOrder(JSON.parse(it.json)); }catch(_){ continue; }
+        if(g){
+          const m = g.mark;
+          if(m){
+            const moved = (!!x.paid !== !!m.paid)
+              || (!!x.cancelled !== !!m.cancelled)
+              || ((Number(x.price) || 0) !== (Number(m.price) || 0))
+              || ((Number(x.qty) || 1) !== (Number(m.qty) || 0));
+            if(!moved) continue;             // 状況は動いていない。消したままにする
+          }else if(Number(it.updatedAt) <= Number(g.updatedAt)) continue;
+        }
         if(i >= 0) DB.orders[i] = x; else DB.orders.push(x);
         changed++;
       }
@@ -5465,9 +5509,10 @@ async function skipOrder(orderId){
     + `売上には入りません。TikTok 側でこの注文に新しい動きがあれば、また出てきます。`,
     { okLabel: "消す", danger: true })) return;
   touchLive();
+  const mark = orderMark(x);
   const i = (DB.orders || []).findIndex(o => String(o.id) === String(orderId));
   if(i >= 0) DB.orders.splice(i, 1);
-  bury("order", orderId);
+  bury("order", orderId, mark);
   save();
   render();
 }
