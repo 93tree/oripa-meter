@@ -1092,7 +1092,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='c9c3e75 (08/20 17:39)';</script>
+<script>window.__BUILD='1a417c4 (08/20 17:52)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -4815,7 +4815,8 @@ function renderOrderNotice(){
     }).join("");
     out.push(`<div class="notice"><span>`
       + (ready.length
-          ? `<b>落札が ${ready.reduce((n, x) => n + x.pending.length, 0)} 件届いている。</b>配信画面をひらくと取り込める。`
+          ? `<b>入金済みの落札が ${ready.reduce((n, x) => n + x.pending.length, 0)} 件届いている。</b>`
+            + `配信画面をひらくと取り込める。`
           : "")
       + (wait ? ` 入金待ちが ${wait} 件（入金が確認できると押せるようになる）。` : "")
       + (older ? ` 配信前に届いていた注文が ${older} 件（自動では立たない。`
@@ -4952,7 +4953,7 @@ function renderList(){
         + (!live && e ? `・${fmtDur(e.idleMs)} 動きなし` : "");
     }
     const waiting = pendingOrders(o).length;
-    if(waiting) badge += `・<b>届いた落札 ${waiting} 件</b>`;
+    if(waiting) badge += `・<b>入金済みの落札 ${waiting} 件</b>`;
     const seat = liveHolder(o);
     if(seat){
       cls = "is-live";
@@ -5148,26 +5149,27 @@ function lotToDraft(lot){
    カードを押すのは今までどおり。金額と落札者を打つ手間だけが消える。 */
 function renderInbox(c){
   const box = $("inbox");
-  if(mode === "watch"){                       // ブリッジからは取り込ませない
-    const w = pendingOrders(S);
-    box.hidden = !w.length;
-    if(w.length) box.innerHTML = `<div class="head">届いた落札 ${w.length} 件`
-      + `<span class="sub">配信している端末で取り込む</span></div>`;
-    return;
-  }
+  /* ブリッジ（見るだけ）は押せないだけで、**見えるものは同じにする**。
+     以前は件数しか出しておらず、金額も落札者も、そもそも入金済みなのかも
+     分からなかった。見るための画面が何も見せていないのは本末転倒。 */
+  const watch = mode === "watch";
 
   const { pending, earlier, waiting, trouble } = ordersFor(S);
-  const orphans = orphanOrders();
+  const orphans = watch ? [] : orphanOrders();
   if(!pending.length && !earlier.length && !waiting.length && !trouble.length && !orphans.length){
     box.hidden = true; box.innerHTML = ""; return;
   }
   box.hidden = false;
 
-  const busy = !!activeLot() || !!S.closedAt || c.left <= 0;
+  const busy = watch || !!activeLot() || !!S.closedAt || c.left <= 0;
   // 入金確認が取れた扱いで来ても、実際には成立していないことがある。
   // そのまま残ると押し忘れに見えて毎回目に入るので、消せる口を用意しておく
-  const skipBtn = x => `<button type="button" class="btn skip" data-skip="${esc(x.id)}"`
+  const skipBtn = x => watch ? ""
+    : `<button type="button" class="btn skip" data-skip="${esc(x.id)}"`
     + ` aria-label="この落札を受信箱から消す">キャンセル</button>`;
+  const takeBtn = x => watch ? ""
+    : `<button type="button" class="btn primary" data-take="${esc(x.id)}"`
+    + `${busy ? " disabled" : ""}>これで登録</button>`;
   // プロモーションが乗った落札。**金額はこちらに入る額**（TikTok 負担ぶんは
   // こちらの入金を減らさないので戻してある）。買い手の支払いはそれより安い。
   // 数字の食い違いを黙って飲み込まず、どちらの額なのかを出しておく。
@@ -5196,34 +5198,36 @@ function renderInbox(c){
 
   box.innerHTML =
     (pending.length
-      ? `<div class="head">届いた落札 ${pending.length} 件`
-        + `<span class="sub">${busy ? "いまの落札を出し切ってから取り込む" : "押すとその金額で落札が始まる。あとはカードを押すだけ"}</span></div>`
-        + pending.map(x => line(x,
-            `<button type="button" class="btn primary" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`
-            + skipBtn(x))).join("")
+      ? `<div class="head">入金済みの落札 ${pending.length} 件`
+        + `<span class="sub">${watch ? "入金まで確認できたぶん。配信している端末で取り込む"
+            : busy ? "いまの落札を出し切ってから取り込む"
+            : "入金まで確認できたぶん。押すとその金額で落札が始まる"}</span></div>`
+        + pending.map(x => line(x, takeBtn(x) + skipBtn(x))).join("")
       : "")
     // カードを渡したあとに取り消された。売上が実態と食い違っている
     // 落札は決まったが入金がまだ。灰色で出すだけで押せない。
     // 入金が確認できると自動で上の「届いた落札」へ移り、押せるようになる。
     + (waiting.length
       ? `<div class="head is-wait">入金待ち ${waiting.length} 件`
-        + `<span class="sub">落札は決まったが入金がまだ。確認できると上に移って押せるようになる</span></div>`
+        + `<span class="sub">落札は決まったが入金がまだ。売上にはならない。`
+        + `確認できると上に移る</span></div>`
         + waiting.map(x => line(x, `<span class="waittag">入金待ち</span>` + skipBtn(x), "is-wait")).join("")
       : "")
     + (trouble.length
       ? `<div class="head is-bad">取り消された落札 ${trouble.length} 件`
         + `<span class="sub">記録済みだが取り消し・返金になった。売上から外す必要がある</span></div>`
-        + trouble.map(x => line(x,
-            `<button type="button" class="btn" data-void="${esc(x.id)}">この落札を取り消す</button>`)).join("")
+        + trouble.map(x => line(x, watch ? ""
+            : `<button type="button" class="btn" data-void="${esc(x.id)}">この落札を取り消す</button>`)).join("")
       : "")
     // 配信前から溜まっていたぶん。**自動では立たない。**古い注文が次々と
     // 落札になるのを防ぐため、人が選んで押す欄に分けてある
     + (earlier.length
       ? `<div class="head is-wait">配信前に届いた注文 ${earlier.length} 件`
-        + `<span class="sub">この配信より前のぶん。自動では立たないので、`
-        + `この配信で出すものだけ押す</span></div>`
+        + `<span class="sub">この配信より前のぶん。入金は確認できている。`
+        + `自動では立たないので、この配信で出すものだけ押す</span></div>`
         + earlier.map(x => line(x,
-            `<button type="button" class="btn" data-take="${esc(x.id)}"${busy ? " disabled" : ""}>これで登録</button>`
+            (watch ? "" : `<button type="button" class="btn" data-take="${esc(x.id)}"`
+              + `${busy ? " disabled" : ""}>これで登録</button>`)
             + skipBtn(x), "is-wait")).join("")
       : "")
     + (orphans.length
