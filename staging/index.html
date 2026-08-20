@@ -950,20 +950,53 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 }
 .watchclock{ font-family:var(--font-num); font-size:12px; color:var(--ink-3); white-space:nowrap; }
 .watchclock.is-stale{ color:var(--bad); font-weight:700; }
-/* 書き込む操作はブリッジには出さない。無効化ではなく非表示にして、押せると思わせない */
+/* 書き込む操作はブリッジ（見るだけ）と記録（終わった配信）には出さない。
+   無効化ではなく非表示にして、押せると思わせない。 */
 .is-watch #liveCrumb,
-.is-watch #closePanel,
-.is-watch #lotBar,
-.is-watch #lotEntry,
-.is-watch #btnUndo,
-.is-watch #btnResetDraws,
-.is-watch #btnApply,
+.is-watch #closePanel,  .is-replay #closePanel,
+.is-watch #lotBar,      .is-replay #lotBar,
+.is-watch #lotEntry,    .is-replay #lotEntry,
+.is-watch #btnUndo,     .is-replay #btnUndo,
+.is-watch #btnResetDraws, .is-replay #btnResetDraws,
+.is-watch #btnApply,    .is-replay #btnApply,
 .is-watch #btnReopen,
 .is-watch #btnNextRound{ display:none !important; }
-.is-watch .prize{ cursor:default; }
-.is-watch .prize:hover{ border-color:var(--line); background:var(--surface-2); }
-.is-watch .prize:active{ transform:none; }
-.is-watch .verdict-box .top{ padding-right:16px; }
+.is-watch .prize, .is-replay .prize{ cursor:default; }
+.is-watch .prize:hover, .is-replay .prize:hover{ border-color:var(--line); background:var(--surface-2); }
+.is-watch .prize:active, .is-replay .prize:active{ transform:none; }
+.is-watch .verdict-box .top, .is-replay .verdict-box .top{ padding-right:16px; }
+/* 履歴は記録を開いたときだけ。配信中に出すと、いま見るべき数字から目が離れる */
+#replayPanel{ display:none; }
+.is-replay #replayPanel{ display:block; }
+
+/* ---- 記録（終わった配信の再現）---- */
+.replaybar{
+  border:1px solid color-mix(in srgb, var(--gold) 40%, var(--line));
+  background:var(--gold-bg); border-radius:9px; padding:9px 12px;
+}
+.replaytag{
+  font-family:var(--font-num); font-size:10.5px; font-weight:800; letter-spacing:.16em;
+  padding:2px 8px; border-radius:999px; flex:none;
+  background:var(--gold); color:var(--on-gold);
+}
+.replaybar .when{ font-size:12.5px; color:var(--ink-3); white-space:nowrap; }
+/* 記録の一覧。行ごと押せる */
+#recTable tbody tr{ cursor:pointer; }
+#recTable tbody tr:hover{ background:var(--surface-2); }
+#recTable tbody tr:focus-visible{ outline:2px solid var(--gold); outline-offset:-2px; }
+#recTable tbody tr.is-gone{ cursor:default; }
+#recTable tbody tr.is-gone:hover{ background:transparent; }
+/* 履歴の表 */
+.rlog td.when{ font-family:var(--font-num); white-space:nowrap; }
+.rlog .tag{
+  display:inline-block; font-size:10.5px; font-weight:800; letter-spacing:.06em;
+  padding:1px 7px; border-radius:999px; white-space:nowrap;
+  background:var(--surface-2); color:var(--ink-2);
+}
+.rlog .tag.is-start{ background:var(--good-bg); color:var(--good); }
+.rlog .tag.is-end{ background:var(--gold-bg); color:var(--gold-ink); }
+.rlog .tag.is-pause{ background:var(--flat-bg); color:var(--flat); }
+.rlog tr.gapline td{ box-shadow: inset 0 1px 0 var(--line-2); }
 
 /* ---- 一時停止の覆い ----
    押しているあいだは**画面全体を灰色にして触れなくする**。押せるのは「再開」だけ。
@@ -1135,7 +1168,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='33aafe3 (08/20 20:50)';</script>
+<script>window.__BUILD='618e59e (08/20 21:52)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1333,6 +1366,15 @@ window.__SYNC_DEFAULTS = {
       <span class="watchclock" id="watchClock">—</span>
     </div>
 
+    <!-- 記録（終わった配信の再現）。配信画面をそのまま映して、書き込む操作だけ消す -->
+    <div class="crumb replaybar" id="replayCrumb" hidden>
+      <button type="button" class="btn ghost" id="btnReplayToList">← 配信の記録へ</button>
+      <span class="replaytag">記録</span>
+      <span class="crumb-name" id="replayName">—</span>
+      <span class="when" id="replayWhen"></span>
+      <span class="spacer"></span>
+    </div>
+
     <!-- 締めの確認 -->
     <section class="panel" id="closePanel" hidden>
       <header>
@@ -1522,6 +1564,28 @@ window.__SYNC_DEFAULTS = {
       </section>
       </div>
     </div>
+
+    <!-- 配信の履歴。記録を開いたときだけ出る -->
+    <section class="panel" id="replayPanel">
+      <header>
+        <h2>配信の履歴</h2>
+        <span class="hint" id="replaySummary"></span>
+      </header>
+      <div class="body">
+        <div class="scroll-x">
+          <table class="tbl rlog" id="replayLog">
+            <thead>
+              <tr>
+                <th>時刻</th><th>経過</th><th class="l">できごと</th><th class="l">中身</th>
+                <th>口数</th><th>金額</th><th>累計売上</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="hint" id="replayNote" style="margin:12px 0 0"></p>
+      </div>
+    </section>
   </section>
 
 
@@ -1589,6 +1653,9 @@ window.__SYNC_DEFAULTS = {
               <h4>終わったら <code>配信を終了して記録</code></h4>
               <p class="g-big">日付とメモを添えると、その回の結果が一覧の下に残る。</p>
               <p>売り切らなくてよい。途中で切り上げてもそこまでの結果が記録される。</p>
+              <p><b>記録の行を押すと、その配信を締めた時点のまま映す。</b>
+                 いつ何がいくらで売れたか（配信の履歴）が下に出る。
+                 書き込む操作は無いので、押しても記録は変わらない。</p>
             </div>
           </div>
         </div>
@@ -4806,13 +4873,15 @@ function renderBody(){
   // 押せると、席を手放した瞬間に映すものが無くなって一覧へ飛ばされる。
   const others = liveNow().filter(o => (o.live || {}).by !== DEVICE_ID);
   $("tabWatch").disabled = !others.length && mode !== "watch";
-  const onLive = mode === "live" || mode === "watch";
+  const onLive = mode === "live" || mode === "watch" || mode === "replay";
   $("view-list").hidden = mode !== "list";
   $("view-live").hidden = !onLive;
   $("view-edit").hidden = mode !== "edit";
   $("view-live").classList.toggle("is-watch", mode === "watch");
+  $("view-live").classList.toggle("is-replay", mode === "replay");
   $("liveCrumb").hidden  = mode !== "live";
   $("watchCrumb").hidden = mode !== "watch";
+  $("replayCrumb").hidden = mode !== "replay";
 
   const inList = mode === "list";
   $("titleText").textContent = inList ? "配信オリパAI支援" : (S.name || "配信オリパAI支援");
@@ -4820,6 +4889,7 @@ function renderBody(){
     ? "保存したオリパの一覧"
     : mode === "edit"  ? "オリパの中身を編集"
     : mode === "watch" ? "ブリッジ — 配信中の進行を映すだけ。ここからは記録できない"
+    : mode === "replay" ? "記録 — 終わった配信を、締めた時点のまま映している"
     : "配信中のリアルタイム利益率と値下げ判断";
   document.title = (!inList && S && S.name ? S.name + " — " : "") + "[STG] 配信オリパAI支援";
 
@@ -4839,18 +4909,22 @@ function renderBody(){
 
   if(onLive) renderLive(c); else renderEdit(c);
   if(mode === "watch") renderWatchBar();
+  if(mode === "replay") renderReplayBar();
   renderFormulas(c);
   save();
 }
 
 function go(m){
   if(m !== "live"){ const cp = document.getElementById("closePanel"); if(cp) cp.hidden = true; }
+  // 記録から離れたら、どの記録を開いていたかは忘れる
+  if(m !== "replay") replayRec = null;
   if(mode === "live" && m !== "live"){ stopLiveBeat(); releaseLive(S); }
   if(mode === "edit" && m !== "edit"){ stopEditBeat(); releaseEdit(S); }
   mode = m;
   if(m === "watch"){ lotBarKey = ""; syncNow(false); }   // 開いた瞬間にまず取りに行く
   if(m === "live" && S){ claimLive(S); startLiveBeat(); }
   if(m === "edit" && S){ claimEdit(S); startEditBeat(); }
+  // 記録は終わった配信なので時計は進めない（数字はもう動かない）
   if(m === "live" || m === "watch") startClock(); else stopClock();
   render();
   setPoll();
@@ -5326,9 +5400,24 @@ function renderRecords(){
 
   for(const r of rs){
     const tr = document.createElement("tr");
+    /* 行ごと押すと、その配信を締めた時点のまま映す。
+       オリパを消してしまった回は開けないので、押せる見た目にしない。 */
+    const gone = !recordOripa(r);
+    tr.className = gone ? "is-gone" : "";
+    if(!gone){
+      tr.tabIndex = 0;
+      tr.setAttribute("role", "button");
+      tr.title = "押すと、この配信を締めた時点のまま映す";
+      const open = e => { e.preventDefault(); openRecord(r); };
+      tr.addEventListener("click", e => { if(!e.target.closest(".rowdel")) open(e); });
+      tr.addEventListener("keydown", e => { if(e.key === "Enter" || e.key === " ") open(e); });
+    }
     tr.innerHTML =
       `<td class="n">${fmtDate(r.endedAt)}</td>` +
-      `<td class="l">${esc(r.name)}${r.memo ? `<br><span class="hint">${esc(r.memo)}</span>` : ""}</td>` +
+      `<td class="l">${esc(r.name)}` +
+        `${gone ? `<br><span class="hint">オリパを消したので開けない</span>`
+                : `<br><span class="hint">押すと配信画面を再現</span>`}` +
+        `${r.memo ? `<br><span class="hint">${esc(r.memo)}</span>` : ""}</td>` +
       `<td class="n">${r.sold}/${r.N}</td>` +
       `<td class="n">${r.activeMs ? fmtDur(r.activeMs) : "—"}` +
         `${r.startedAt ? `<br><span class="hint">${fmtClock(r.startedAt)}〜${fmtClock(r.lastAt)}</span>` : ""}</td>` +
@@ -5340,7 +5429,8 @@ function renderRecords(){
       `<td class="n ${r.margin >= 0 ? "pos" : "neg"}">${r.revenue > 0 ? spct(r.margin) : "—"}</td>` +
       `<td class="n ${r.withStock >= 0 ? "pos" : "neg"}">${syen(r.withStock)}</td>` +
       `<td><button type="button" class="rowdel" aria-label="この記録を削除">×</button></td>`;
-    tr.querySelector(".rowdel").addEventListener("click", async () => {
+    tr.querySelector(".rowdel").addEventListener("click", async e => {
+      e.stopPropagation();
       if(!await ask(`${fmtDate(r.endedAt)}「${r.name}」の記録を削除しますか？`,
                     { okLabel: "削除する", danger: true })) return;
       // **消す前に墓標を立てる。**版は消される側から決めるので、順番が逆だと
@@ -5353,6 +5443,170 @@ function renderRecords(){
     });
     tb.appendChild(tr);
   }
+}
+
+/* ============================================================
+   配信の記録を開く（終わった配信の再現）
+
+   記録の行を押すと、その配信を**終わった時点のまま**映す。使うのは配信画面と
+   同じ DOM（別画面を作ると片方だけ直すのを必ず忘れる。ブリッジと同じ考え）。
+   違うのは、書き込む操作が無いことと、下に**配信の履歴**が付くこと。
+
+   映すのは記録そのものではなく**オリパの中身**。記録は締めた時点の写しなので
+   時刻を持っておらず、履歴が出せない。オリパのほうには落札・排出の時刻が
+   残っている。オリパを消してしまった記録は開けない（そう言って断る）。
+   ============================================================ */
+let replayRec = null;      // いま開いている記録
+
+/** 記録に対応するオリパ。消していれば null */
+const recordOripa = r => DB.oripas.find(x => x.id === (r && r.oripaId)) || null;
+
+function openRecord(r){
+  const o = recordOripa(r);
+  if(!o){
+    say(`「${r.name}」のオリパはもう残っていないので、配信画面は再現できない。\n`
+      + `記録の数字（売上・損益）は一覧の行に出ているものがすべて。`);
+    return;
+  }
+  replayRec = r;
+  S = o;
+  DB.currentId = o.id;
+  go("replay");
+}
+
+/**
+ * 配信の流れ。落札・排出・一時停止を時刻順に並べる。
+ *
+ * 時刻を持たない古いデータ（`at` が無い排出）は落札の時刻で代用する。
+ * それも無ければ 0 のまま先頭に並ぶので、**時刻の欄は「—」**にして
+ * 分かるようにする（順番を捏造しない）。
+ */
+function replayLog(o){
+  const byId = new Map(o.prizes.map(p => [p.id, p]));
+  const rows = [];
+  const p = paceOf(o);
+  const start = Number(o.liveStartedAt) || (p ? p.firstLotAt : 0);
+
+  if(start) rows.push({ at: start, seq: 0, kind: "start",
+    what: "配信の開始",
+    detail: o.liveStartedAt ? "席を取った時刻" : "1 口目の時刻（開始を持っていない回）" });
+
+  (o.lots || []).forEach((l, i) => {
+    const st = lotStats(o, l);
+    rows.push({ at: Number(l.at) || 0, seq: 10 + i, kind: "lot", lot: l, st });
+  });
+
+  // 落札に紐づかない排出（カードだけ押したぶん）
+  o.events.filter(e => e.lotId == null).forEach((e, i) => {
+    rows.push({ at: Number(e.at) || 0, seq: 10000 + i, kind: "draw", ev: e,
+      what: "排出", detail: (byId.get(e.prizeId) || {}).name || "—" });
+  });
+
+  (o.pauses || []).forEach((z, i) => rows.push({
+    at: Number(z.from) || 0, seq: 20000 + i, kind: "pause", what: "一時停止",
+    detail: z.to ? `${fmtDur(z.to - z.from)}（${fmtClock(z.from)} 〜 ${fmtClock(z.to)}）`
+                 : "閉じないまま終わっている" }));
+
+  rows.sort((a, b) => (a.at - b.at) || (a.seq - b.seq));
+
+  if(o.closedAt) rows.push({ at: p ? p.lastAt : 0, seq: 30000, kind: "end",
+    what: "配信を終了して記録", detail: fmtDate(o.closedAt) });
+
+  // 累計と、ひとつ前からの間隔をここで足す
+  let sum = 0, prev = 0;
+  for(const r of rows){
+    if(r.kind === "lot")  { r.rev = r.st.revenue; }
+    if(r.kind === "draw") { r.rev = Number(r.ev.price) || 0; }
+    if(r.rev) sum += r.rev;
+    r.sum = sum;
+    r.since = start && r.at ? r.at - start : 0;
+    r.gap = prev && r.at ? r.at - prev : 0;
+    if(r.at) prev = r.at;
+  }
+  return { rows, start };
+}
+
+function renderReplay(){
+  const tb = $("replayLog").querySelector("tbody");
+  tb.innerHTML = "";
+  const r = replayRec;
+  const { rows } = replayLog(S);
+  const c = compute(S);
+
+  $("replaySummary").textContent = rows.length
+    ? `${rows.length} 件のできごと`
+    : "";
+
+  if(!rows.length){
+    tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--ink-3)">`
+      + `残っている記録が無い</td></tr>`;
+    return;
+  }
+
+  // 10 分以上空いたところに区切り線を引く。どこで動きが止まったかが目で分かる
+  const GAPLINE = 10 * 60 * 1000;
+
+  for(const x of rows){
+    const tr = document.createElement("tr");
+    if(x.gap >= GAPLINE) tr.className = "gapline";
+    let tag = "", body = "", slots = "—", money = "—";
+
+    if(x.kind === "lot"){
+      const nm = nameSummary(x.st.names);
+      tag = `<span class="tag">${x.lot.kind === "auction" ? "落札" : "即決"}</span>${lotSrc(x.lot)}`;
+      body = (x.lot.buyer ? esc(x.lot.buyer) + "　" : "")
+           + (x.st.names.length
+               ? `<span class="hint names" title="${esc(nm.full)}">`
+                 + `<span class="nlist">${esc(nm.head)}</span>`
+                 + (nm.more ? `<span class="nmore">${esc(nm.more)}</span>` : "")
+                 + `</span>`
+               : `<span class="hint">排出待ちのまま終わった</span>`);
+      slots = `${x.st.drawn}/${x.lot.qty}`;
+      money = yen(x.lot.price) + (x.lot.rem ? `<br><span class="hint">合計 ${yen(lotTotal(x.lot))}</span>` : "");
+    }else{
+      const cls = x.kind === "start" ? " is-start" : x.kind === "end" ? " is-end"
+                : x.kind === "pause" ? " is-pause" : "";
+      tag = `<span class="tag${cls}">${esc(x.what)}</span>`;
+      body = `<span class="hint">${esc(x.detail || "")}</span>`;
+      if(x.kind === "draw"){ slots = "1"; money = yen(x.rev || 0); }
+    }
+
+    tr.innerHTML =
+      `<td class="when">${x.at ? fmtClock(x.at) : "—"}</td>` +
+      `<td class="when">${x.since > 0 ? fmtDur(x.since) : "—"}` +
+        `${x.gap >= GAPLINE ? `<br><span class="hint">${fmtGap(x.gap)} 空き</span>` : ""}</td>` +
+      `<td class="l">${tag}</td>` +
+      `<td class="l">${body}</td>` +
+      `<td class="n">${slots}</td>` +
+      `<td class="n">${money}</td>` +
+      `<td class="n">${x.sum > 0 ? yen(x.sum) : "—"}</td>`;
+    tb.appendChild(tr);
+  }
+
+  // 記録の数字と、いま画面に出ている数字がずれていないか添える。
+  // ずれるのは記録したあとにオリパを触った場合で、そのときは記録のほうが正しい
+  const note = [];
+  if(r){
+    note.push(`記録した時点：売上 ${yen(r.revenue)}／現金損益 ${syen(r.profit)}`
+      + `／在庫込み ${syen(r.withStock)}。`);
+    if(Math.round(r.revenue) !== Math.round(c.revenue))
+      note.push(`⚠ いま映しているオリパの売上は ${yen(c.revenue)} で、記録と食い違う。`
+        + `記録したあとに中身を触っている。数字は記録のほうが正しい。`);
+    if(r.memo) note.push(`メモ：${r.memo}`);
+  }
+  note.push("この画面からは記録できない。押せるのは「記録を取り消して再開」だけ。");
+  $("replayNote").textContent = note.join(" ");
+}
+
+/** 記録のパンくず。どの回を映しているかを出す */
+function renderReplayBar(){
+  const r = replayRec;
+  $("replayName").textContent = S.name || "無題のオリパ";
+  const p = paceOf(S);
+  const when = r ? fmtDate(r.endedAt) : (S.closedAt ? fmtDate(S.closedAt) : "");
+  $("replayWhen").textContent = when
+    + (p ? `　${fmtClock(p.startedAt)} 〜 ${fmtClock(p.lastAt)}・${fmtDur(p.wallMs)}` : "");
+  renderReplay();
 }
 
 function renderLive(c){
@@ -6056,7 +6310,7 @@ function renderPrizes(c){
 
     // まとめ排出は「残りが多い行」に出す。ハズレ枠の印に頼っていたころは、
     // 印の付いていない 83 口の行を 1 口ずつ押すはめになっていた。
-    if(rest >= 5 && mode !== "watch"){
+    if(rest >= 5 && mode !== "watch" && mode !== "replay"){
       const bar = document.createElement("div");
       bar.className = "drawbar";
       bar.style.margin = "0 0 2px 0";
@@ -6136,6 +6390,35 @@ function renderPrice(c){
 
   const sold_out = c.left === 0;
   const box = $("recBox");
+
+  /* **終わった回に値下げの提案は出さない。**記録を開いて映しているだけなので、
+     「¥3,700 まで下げろ」と言われても押す先が無い。着地の数字を出す
+     （運用者の指示 2026-08-20：記録から配信画面を再現する）。 */
+  if(S.closedAt){
+    const stepBoxC = $("priceStep");
+    if(stepBoxC) stepBoxC.hidden = true;
+    decidedPrice = 0;
+    $("btnApply").disabled = true;
+    box.className = "verdict-box";
+    $("recLabel").textContent = "終了した回";
+    $("recPrice").textContent = yen(c.price);
+    $("recDelta").textContent = `最終単価／${c.sold}/${c.N} 口で解体`;
+    $("recCmp").className = "cmp three";
+    $("recCmp").innerHTML = `
+      <div class="lo"><span class="k">売上<span class="sub">この回</span></span>
+        <span class="v">${yen(c.revenue)}</span></div>
+      <div class="mid"><span class="k">現金損益<span class="sub">売れ残りは 0 円</span></span>
+        <span class="v">${syen(Math.round(c.profitNow))}</span></div>
+      <div class="hi"><span class="k">在庫込み<span class="sub">残りは原価×回収率</span></span>
+        <span class="v">${syen(Math.round(stockAtStop(c)))}</span></div>
+      <div class="foot">利益率 ${c.revenue > 0 ? spct(c.marginNow) : "—"}`
+      + `${c.left > 0 ? `／未消化 ${c.left} 口（原価 ${yen(c.costLeft)}）は在庫に戻した` : "／完売"}</div>`;
+    $("recMsg").innerHTML = `この回は記録済み。<b>数字は締めた時点のまま</b>で、`
+      + `ここからは動かない。下の「配信の履歴」で、いつ何が売れたかを追える。`;
+    renderTops(c);
+    renderPulse(c, null);
+    return;
+  }
 
   const bk = c.left > 0 ? liveBreakup(c) : null;
   const bBE  = bk ? bk.pBE : Infinity;      // 解体前提の損益分岐
@@ -6402,16 +6685,23 @@ function renderClock(c){
     `<div class="${cls || ""}"><span class="k">${k}</span>`
     + `<b class="v">${v}</b><span class="s">${sub || ""}</span></div>`;
 
-  const out = [cell("いま", fmtClock(now), fmtDate(now), "now")];
+  /* 終わった配信（記録）を映しているときは「いま」から数えない。
+     何日も前の回で「3日 経過」と出しても意味が無い。配信日と、
+     その日のうちに何時間やったかを出す。 */
+  const done = !!(S && S.closedAt);
+  const out = [done
+    ? cell("配信日", fmtDate(S.closedAt), "記録済み", "now")
+    : cell("いま", fmtClock(now), fmtDate(now), "now")];
 
   if(!e){
     // 排出が 2 口そろう前でも、席に座った時刻は分かっているので出す
     const from = S ? Number(S.liveStartedAt) || 0 : 0;
-    if(from) out.push(cell("開始", fmtClock(from), `${fmtDur(now - from)} 経過／まだ排出なし`));
-    else out.push(cell("開始", "—", "まだ排出なし"));
+    if(from) out.push(cell("開始", fmtClock(from),
+      done ? "排出なしで終わった" : `${fmtDur(now - from)} 経過／まだ排出なし`));
+    else out.push(cell("開始", "—", done ? "排出なしで終わった" : "まだ排出なし"));
   }else{
     out.push(cell("開始", fmtClock(e.startedAt),
-      `${fmtDur(now - e.startedAt)} 経過`
+      (done ? `${fmtDur(e.wallMs)} で ${e.slots} 口` : `${fmtDur(now - e.startedAt)} 経過`)
       + (e.pausedMs > 60000 ? `／一時停止 ${fmtDur(e.pausedMs)}` : "")));
 
     // 解体まで＝予想収量。判断エンジンが見ている「あと何口さばけるか」で出す
@@ -6420,7 +6710,9 @@ function renderClock(c){
     const perMs = e.recentPace > 0 ? 3600000 / e.recentPace : 0;
 
     if(S.closedAt){
-      out.push(cell("終了", fmtClock(S.closedAt), `${e.slots} 口で締めた`));
+      // closedAt は締めのダイアログの日付入力から作るので、時刻としては使えない
+      // （その日の正午が入る）。最後の 1 口の時刻を終わりとして出す
+      out.push(cell("最後の排出", fmtClock(e.lastAt), `${e.slots} 口で締めた`));
     }else if(more != null && more > 0 && perMs > 0){
       const ms = more * perMs;
       out.push(cell("予想収量まで", fmtDur(ms), `あと ${more} 口・${fmtWhen(now + ms)}`));
@@ -6429,6 +6721,8 @@ function renderClock(c){
     }
 
     if(e.done) out.push(cell("完売", "済", `${e.slots} 口すべて`));
+    // 終わった回に「完売まで」は無い。売り切らずに解体するのが普通の運用
+    else if(done) out.push(cell("未消化", `${e.left} 口`, "在庫に戻したぶん"));
     else if(e.paused) out.push(cell("完売まで", "—", "一時停止中"));
     else if(e.ms > 0) out.push(cell("完売まで", fmtDur(e.ms), `残り ${e.left} 口・${fmtWhen(e.at)}`));
     else out.push(cell("完売まで", "—", "ペースが出ない"));
@@ -7414,6 +7708,8 @@ $("btnSetApply").addEventListener("click", () => {
 });
 
 $("btnWatchToList").addEventListener("click", () => go("list"));
+// 記録から戻る先は一覧。戻ったところに「配信の記録」がある
+$("btnReplayToList").addEventListener("click", () => go("list"));
 $("watchPick").addEventListener("change", () => {
   watchPin = $("watchPick").value || "";
   lotBarKey = "";
