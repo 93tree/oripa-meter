@@ -865,10 +865,16 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
   font-size:11.5px; font-weight:800; padding:3px 10px; border-radius:999px;
   background:var(--gold-bg); color:var(--gold-ink); white-space:nowrap;
 }
-/* TikTok から自動で立った落札の印。自分で入れたものと見分けが付くように */
-.lotbox .fromtt{
+/* どこから入った落札なのかの印。**片方だけに印を付けると、印の無い行が
+   「手入力」ではなく「まだ読み込めていない」に見える。**だから両方に出す。 */
+.lotbox .fromtt, .src{
   font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px;
   background:var(--gold-bg); color:var(--gold-ink); white-space:nowrap;
+}
+.src{ font-size:10.5px; padding:2px 7px; margin-left:6px; vertical-align:1px; }
+/* 手入力は色を持たせない。目立たせたいのは「自動で入った」ほう */
+.src.by-hand, .lotbox .fromtt.by-hand{
+  background:var(--surface-2); color:var(--ink-3); font-weight:600;
 }
 /* 押せないことが見て分かるように、行ごと沈める */
 .inbox .row.is-wait{ background:var(--surface-2); }
@@ -1099,7 +1105,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='1a417c4 (08/20 17:53)';</script>
+<script>window.__BUILD='3ad06ba (08/20 18:11)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -5349,8 +5355,11 @@ function renderLotBar(c){
       <div class="lotnow">
         <span class="big">${yen(lot.price)} × ${lot.qty}<span class="u">口</span></span>
         <!-- 自分で入れたのか TikTok から自動で入ったのかが見て分かるように。
-             金額が思っていたのと違うとき、どこを直せばよいかが変わる -->
-        ${lot.orderId ? `<span class="fromtt" title="注文 ${esc(lot.orderId)}">TikTokから自動</span>` : ""}
+             金額が思っていたのと違うとき、どこを直せばよいかが変わる。
+             **どちらの場合も出す。**印が無いと「まだ読めていない」に見える -->
+        ${lot.orderId
+          ? `<span class="fromtt" title="TikTok の注文 ${esc(lot.orderId)} から取り込んだ">TikTokから自動</span>`
+          : `<span class="fromtt by-hand" title="この端末で入力した">手入力</span>`}
         ${lot.rem ? `<span class="who">合計 ${yen(lotTotal(lot))}</span>` : ""}
         ${lot.buyer ? `<span class="who">${esc(lot.buyer)}</span>` : ""}
         <span class="pipes">${Array.from({length: lot.qty}, (_, i) =>
@@ -5658,6 +5667,20 @@ function nameSummary(list){
   };
 }
 
+/**
+ * その落札がどこから入ったのかの印。
+ *
+ * 取り込みぶんは TikTok の金額そのままで、手入力ぶんは現場で打った額。
+ * **金額が思っていたのと違うとき、どちらなのかで直す場所が変わる**
+ * （手入力なら `直す`、取り込みなら TikTok 側の見方が違う）。
+ * 8/17 は注文が届かない時間帯に手打ちしていて、端数が丸まっていた。
+ */
+function lotSrc(lot){
+  return lot && lot.orderId
+    ? `<span class="src" title="TikTok の注文 ${esc(lot.orderId)} から取り込んだ">自動</span>`
+    : `<span class="src by-hand" title="この端末で入力した">手入力</span>`;
+}
+
 function renderLotTable(){
   const tb = $("lotTable").querySelector("tbody");
   tb.innerHTML = "";
@@ -5686,6 +5709,7 @@ function renderLotTable(){
     tr.innerHTML =
       `<td class="l"><span class="lotno">${i + 1}</span>` +
         `${lot.kind === "auction" ? "オークション" : "即決"}` +
+        `${lotSrc(lot)}` +
         `${lot.buyer ? " ／ " + esc(lot.buyer) : ""}${names}</td>` +
       // 1 件ごとの損益は出さない。**1 口ぶんの当たり外れでしかなく、
       // その場の判断には使えない**（判断は右の「続けるか終了か」で見る）。
