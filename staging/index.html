@@ -1099,7 +1099,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='bfc7be9 (08/20 17:23)';</script>
+<script>window.__BUILD='c9c3e75 (08/20 17:38)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2320,14 +2320,17 @@ function unlinkedOrders(){
 }
 
 /** 結びついていない注文をまとめて消す。他の端末でも消えるよう墓標を立てる */
-async function dropUnlinkedOrders(){
-  const list = unlinkedOrders();
-  if(!list.length){ say("結びついていない注文は無い。"); return; }
+/**
+ * 注文をまとめて消す。**消したという判断は墓標に残す**ので、他の端末からも消え、
+ * 発送や配達では戻ってこない（戻るのは入金が付いたときだけ）。
+ */
+async function dropOrders(list, what){
+  if(!list.length){ say(`${what}は無い。`); return; }
   const paid = list.filter(x => x.paid && !x.cancelled).length;
   const sum = list.reduce((n, x) => n + (Number(x.price) || 0) * (Number(x.qty) || 1), 0);
-  if(!await ask(`結びついていない注文 ${list.length} 件を消しますか？\n\n`
+  if(!await ask(`${what} ${list.length} 件を消しますか？\n\n`
     + `うち入金済み ${paid} 件・合計 ${yen(sum)}\n\n`
-    + `他の端末からも消えます。TikTok 側でこの注文に新しい動きがあれば、また出てきます。\n`
+    + `売上には入りません。他の端末からも消えます。\n`
     + `落札として取り込み済みのものは消しません。`,
     { okLabel: `${list.length} 件を消す`, danger: true })) return;
 
@@ -2338,6 +2341,26 @@ async function dropUnlinkedOrders(){
   save();
   render();
   say(`${ids.size} 件を消した。`);
+}
+
+function dropUnlinkedOrders(){
+  return dropOrders(unlinkedOrders(), "結びついていない注文");
+}
+
+/**
+ * そのオリパ宛に届いている落札を、**取り込まずに**消す。
+ *
+ * 届いた落札は「配信画面をひらいて取り込む」しか出口が無かったが、出すつもりの
+ * 無い回のぶんまで取り込みたくはない（運用者の要望 2026-08-19）。配信画面を
+ * 開かずに片付けられるよう、一覧の知らせから直接消せるようにする。
+ * 配信前に溜まっていたぶん（earlier）も一緒に消す。どちらも「取り込んでいない
+ * 入金済みの落札」で、運用者から見れば同じものだから。
+ */
+function dropOrdersFor(oripaId){
+  const o = DB.oripas.find(x => String(x.id) === String(oripaId));
+  if(!o) return;
+  const f = ordersFor(o);
+  return dropOrders([...f.pending, ...f.earlier], `「${o.name || "無題のオリパ"}」に届いた落札`);
 }
 
 function troubleOrders(){
@@ -4793,9 +4816,14 @@ function renderOrderNotice(){
   }
 
   if(ready.length || wait || older || orphans){
-    const lines = ready.map(x =>
-      `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
-      + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.pending.length} 件）</button>`).join("");
+    const lines = ready.map(x => {
+      const n = x.pending.length + x.earlier.length;
+      return `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
+        + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.pending.length} 件）</button>`
+        // 出すつもりの無い回のぶんは、取り込まずにここで片付けられるようにする
+        + `<button type="button" class="btn" data-dropfor="${esc(String(x.o.id))}">`
+        + `取り込まずに消す（${n} 件）</button>`;
+    }).join("");
     out.push(`<div class="notice"><span>`
       + (ready.length
           ? `<b>落札が ${ready.reduce((n, x) => n + x.pending.length, 0)} 件届いている。</b>配信画面をひらくと取り込める。`
@@ -4821,6 +4849,9 @@ function renderOrderNotice(){
   });
   const drop = $("btnDropUnlinked");
   if(drop) drop.addEventListener("click", dropUnlinkedOrders);
+  el.querySelectorAll("[data-dropfor]").forEach(btn => {
+    btn.addEventListener("click", () => dropOrdersFor(btn.dataset.dropfor));
+  });
 }
 
 /**
@@ -7251,7 +7282,7 @@ async function linkShopId(pid){
   render();
   say(`商品 ID を結びつけた。\n`
     + (g ? `この商品の注文 ${g.n} 件がこのオリパのものになる。\n\n` : "\n")
-    + `**配信前から溜まっていたぶんは自動では立たない。**受信箱の`
+    + `配信前から溜まっていたぶんは自動では立たない。受信箱の`
     + `「配信前に届いた注文」から、必要なものだけ押して取り込む。`);
 }
 
