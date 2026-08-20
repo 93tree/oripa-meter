@@ -1098,7 +1098,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='3ad06ba (08/20 18:11)';</script>
+<script>window.__BUILD='d3d2e91 (08/20 18:38)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -4041,7 +4041,19 @@ function decideNow(c){
   if(!isFinite(hi) || hi <= 0){
     return { verdict: "stop", stop, best: null, gain: 0, hi: 0 };
   }
-  const lo = Math.max(10, Math.round(hi * 0.15));
+  /* 下限は**残り 1 口の中身の原価**（`evCost`）と**損益分岐**（`pBE`）の高いほう。
+     中身の原価を下回る値段は、売れば売るほど中身を捨てているのと同じなので提案しない。
+
+     以前は `hi * 0.15` を機械的に下限にしていた。**15% に根拠は無く**、相場が薄くて
+     `hi` が沈んだ日には、実際の落札額から著しく離れた額まで振れていた
+     （運用者の指摘 2026-08-19）。8/17 なら残り 47 口・原価 ¥328,360 ＝ 1 口 ¥6,986 で、
+     実際の落札 ¥8,228 と同じ桁に収まる。
+
+     上限を超えるとき（原価より安くしか売れない局面）は 1 点に潰す。**そこで
+     打ち切らずにエンジンに判断させる**（競り上がる読みがあるので、原価ちょうどでも
+     続けたほうが得なことがある）。 */
+  const floor = Math.max(10, Math.round(Math.max(Number(c.evCost) || 0, Number(c.pBE) || 0)));
+  const lo = Math.max(10, Math.min(hi, floor));
 
   // 粗く振ってから、いちばん良かったところの周りを細かく見る
   const tried = [];
@@ -4066,6 +4078,8 @@ function decideNow(c){
   // 上限（買い手が動く額）は超えられないので、はみ出したら 1 段下げる
   let rounded = Math.max(10, roundPrice(best.p) || best.p);
   if(rounded > hi) rounded = Math.max(10, roundPrice(hi) <= hi ? roundPrice(hi) : roundPrice(hi * 0.98));
+  // 丸めで下限（中身の原価）を割らない。キリのよさより、原価を割らないことが先
+  if(rounded < lo) rounded = lo;
   const rr = simAtPrice(c, rounded, topMult, minReturn);
   if(rr) best = { p: rounded, ev: rr.cashMean, r: rr };
 
@@ -5924,6 +5938,7 @@ function renderPrice(c){
     }else if(dec.dead){
       msg = `<b>もう回らない。</b>解体条件（目玉が出尽くす／残りが薄すぎる）に達しているので、`
           + `いくらに下げても買い手は動かない。終了して残りを在庫に戻す。`;
+
     }else{
       msg = `いま終わるほうが中央で <b>${yen(d)}</b> 得。買い手が動く ${yen(dec.hi)} 以下まで下げても、`
           + `売るほど手元が減る。終了して組み直すのが筋。`;
