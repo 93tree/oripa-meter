@@ -159,6 +159,13 @@ button{ cursor:pointer; }
   box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 22%, transparent);
 }
 .pill .dot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
+
+/* ---- 一時停止 ---- */
+.pausebtn{
+  border:1px solid var(--line-2); background:var(--surface-2); color:var(--ink-2);
+  padding:6px 13px; border-radius:8px; font-size:12.5px; font-weight:700; white-space:nowrap;
+}
+.pausebtn:hover{ border-color:var(--gold); color:var(--ink); }
 .pill.is-good{ background:var(--good-bg); color:var(--good); }
 .pill.is-bad{ background:var(--bad-bg); color:var(--bad); }
 .pill.is-warn{ background:var(--gold-bg); color:var(--gold-ink); }
@@ -958,6 +965,31 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .is-watch .prize:active{ transform:none; }
 .is-watch .verdict-box .top{ padding-right:16px; }
 
+/* ---- 一時停止の覆い ----
+   押しているあいだは**画面全体を灰色にして触れなくする**。押せるのは「再開」だけ。
+   ダイアログ（z-index 200）より上に出さないと、開いたまま止めたときに抜け道ができる。
+   ⚠ 覆いのマークアップは `<main>` の**外**に置く。`main` に filter を掛けるので、
+   中に入れると position:fixed が main 基準になって画面外へ飛ぶ（実際そうなった）。 */
+.pauseveil{
+  position:fixed; inset:0; z-index:400; display:grid; place-items:center;
+  padding:20px; background: color-mix(in srgb, #4b5563 82%, transparent);
+  backdrop-filter: grayscale(1) blur(2px);
+}
+.pauseveil-box{
+  width:min(380px, 100%); background:var(--surface);
+  border:1px solid var(--line-2); border-radius:var(--r); box-shadow:var(--shadow);
+  padding:24px; display:flex; flex-direction:column; gap:12px; text-align:center;
+}
+.pauseveil-box h3{ font-size:17px; font-weight:800; }
+.pauseveil-box .big{ font-family:var(--font-num); font-size:30px; font-weight:800; }
+.pauseveil-box .sub{ font-size:12px; color:var(--ink-3); line-height:1.6; }
+.pauseveil-box button{
+  margin-top:4px; padding:12px 18px; border-radius:9px; border:0;
+  background:var(--gold); color:#1b1305; font-size:15px; font-weight:800;
+}
+/* 覆いの下は色を抜く。触れないことが見て分かるようにする */
+body.is-paused .topbar, body.is-paused main{ filter: grayscale(1) opacity(.6); }
+
 /* ---- 画面内ダイアログ ---- */
 .modal{
   position:fixed; inset:0; z-index:200; display:grid; place-items:center;
@@ -1096,7 +1128,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='b4a1cbb (08/20 20:08)';</script>
+<script>window.__BUILD='33aafe3 (08/20 20:49)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -1107,6 +1139,7 @@ window.__SYNC_DEFAULTS = {
     </div>
   </div>
   <div class="topbar-right">
+    <button type="button" class="pausebtn" id="btnPause" hidden>一時停止</button>
     <span class="pill" id="verdictPill" hidden><span class="dot"></span><span id="verdictText">—</span></span>
     <nav class="modes" aria-label="表示切替">
       <button type="button" data-mode="list" aria-pressed="true">オリパ一覧</button>
@@ -1582,8 +1615,9 @@ window.__SYNC_DEFAULTS = {
 
         <h4>時間とペース</h4>
         <p>
-          <b>実働</b>は休憩を除いた時間（10 分を超える空白は中断として外す）。
-          予測には<b>直近のペース</b>を使う。値下げすれば速くなるため。
+          <b>実働</b>は<b>右上の「一時停止」を押していた時間</b>を除いた配信時間。
+          売れていない時間は中断ではないので、そのまま数える。
+          予測には<b>直近のペース</b>（ここ 30 分ぶん）を使う。値下げすれば速くなるため。
           <b>完売見込み</b>と<b>解体まで</b>は別物で、実際に終わるのはたいてい後者に近い。
           <b>時給 GMV は売上ベース</b>で、粗利ではない。
         </p>
@@ -1933,10 +1967,23 @@ window.__SYNC_DEFAULTS = {
       口数ごとの売上は、その口を売った時点の価格で積み上げるので、配信中に値段を変えても正しく集計される。
       値下げ判断は<b>完売前提ではなく解体前提</b>。目玉が出尽くすか残り還元率が下限を割った時点で
       オリパは終わるものとして、いまの残りから引き順を何千回も試し、その中央値で損益分岐と目標ラインを出している。
+      そのうえで比べるのは<b>今夜の利益額</b>。下げれば1口の利益は減るが、速くなるぶん今夜さばける口数（GMV）は増える。
+      時間が余っていて下げても口数が増えない局面では、そのままのほうが利益額は高く出る。
     </p>
     <dl id="formulas"></dl>
   </details>
 </main>
+
+<!-- 一時停止。押しているあいだだけ「中断」として実働から外れる -->
+<div class="pauseveil" id="pauseVeil" hidden>
+  <div class="pauseveil-box" role="dialog" aria-modal="true" aria-labelledby="pauseVeilTitle">
+    <h3 id="pauseVeilTitle">一時停止中</h3>
+    <b class="big" id="pauseVeilTime">0分</b>
+    <p class="sub">この時間は実働から外れる。時給GMV とペースは薄まらない。<br>
+      再開するまで記録も操作もできない。</p>
+    <button type="button" id="btnResume">再開する</button>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -2084,6 +2131,12 @@ function normalizeOripa(o){
     closedAt: Number(o.closedAt) || 0,       // 配信を記録した時刻。0 なら未終了
     // この配信を始めた時刻。席に座った瞬間を入れる。0 なら 1 口目から数える
     liveStartedAt: Number(o.liveStartedAt) || 0,
+    /* 一時停止の区間 [{from, to}]。**人が押したときだけ**入る。to=0 は停止中。
+       以前は「10 分以上空いたら中断」と機械で決めていたが、それはただ売れて
+       いなかっただけで、配信は続いている（運用者の指示 2026-08-19）。 */
+    pauses: (Array.isArray(o.pauses) ? o.pauses : [])
+      .map(x => ({ from: Number(x && x.from) || 0, to: Number(x && x.to) || 0 }))
+      .filter(x => x.from > 0),
     // 配信の席。{by, name, at}。at が古くなれば自動的に空く
     live: o.live && o.live.by
       ? { by: String(o.live.by), name: String(o.live.name || ""), at: Number(o.live.at) || 0,
@@ -2633,8 +2686,38 @@ async function fixLiveStart(){
   render();
   say(`開始を ${fmtClock(S.liveStartedAt)} にした。`);
 }
+/**
+ * 一時停止を切り替える。
+ *
+ * **中断はここでしか作られない。**空白を機械で中断と決めるのはやめた
+ * （運用者の指示 2026-08-19：売れていない時間もふつうに配信している）。
+ */
+function togglePause(){
+  if(!S || mode !== "live" || S.closedAt) return;
+  if(!Array.isArray(S.pauses)) S.pauses = [];
+  if(!closeOpenPause(S)) S.pauses.push({ from: Date.now(), to: 0 });
+  lastActionAt = Date.now();          // 止めているあいだに席を落とさない
+  S.updatedAt = Date.now();
+  save();
+  render();
+}
+
+/** 右上のボタンと覆い。押しているあいだは再開以外どこも触れない */
+function renderPauseUi(){
+  const btn = $("btnPause"), veil = $("pauseVeil");
+  if(!btn || !veil) return;
+  const canPause = mode === "live" && !!S && !S.closedAt;
+  const pz = canPause ? pauseNow(S) : null;
+  btn.hidden = !canPause;
+  btn.textContent = pz ? "再開する" : "一時停止";
+  veil.hidden = !pz;
+  document.body.classList.toggle("is-paused", !!pz);
+  if(pz) $("pauseVeilTime").textContent = fmtDur(Math.max(1, Date.now() - pz.from));
+}
+
 function releaseLive(o){
   if(!o || !o.live || o.live.by !== DEVICE_ID) return;
+  closeOpenPause(o);      // 配信画面を離れたら一時停止も終わる
   o.live = null;
   o.updatedAt = Date.now();
   scheduleSync();
@@ -2645,6 +2728,8 @@ function startLiveBeat(){
   lastActionAt = Date.now();
   liveBeatTimer = setInterval(() => {
     if(mode !== "live" || !S){ clearInterval(liveBeatTimer); liveBeatTimer = null; return; }
+    // 一時停止は「席を外している」と自分で言っている状態。放置とみなして降ろさない
+    if(pauseNow(S)) lastActionAt = Date.now();
     if(Date.now() - lastActionAt >= LIVE_AUTO_END_MS){ autoLeaveLive(); return; }
     S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
     S.updatedAt = Date.now();
@@ -3646,9 +3731,9 @@ function actionCards(c){
   const dec = c.left > 0 && !S.closedAt ? decideNow(c) : null;
   const p   = paceOf(S);
   const idle = p ? Date.now() - p.lastAt : 0;
-  // 止まっているとみなす時間は、ペースの中断判定と同じ物差しにそろえる。
-  // **定数として上に置かない**（PACE_PAUSE_MS より前に評価されて読み込みが止まる）
-  const idleLine = PACE_PAUSE_MS;
+  // 「動いていない」と言い出す線。**定数として上に置かない**
+  // （IDLE_LINE_MS より前に評価されて読み込みが止まる）
+  const idleLine = IDLE_LINE_MS;
   const add = x => { if(x) out.push(x); };
 
   // 1. 押すだけで売上に入るもの（取りこぼし）。いちばん強い
@@ -3667,22 +3752,30 @@ function actionCards(c){
     body: "入金まで済んだ落札。受信箱の「これで登録」を押すとそのまま落札になる。",
   });
 
-  // 2. 値下げ。**そのまま続けるより利益が高いときだけ**出す
+  /* 2. 値下げ。**そのまま続けるより利益額が高いときだけ**出す。
+        比べているのは「1 口の利益 × 売れる口数」だけではなく、**そこにかかる時間**も
+        入れた額（`cutGain`）。値下げで GMV は落ちるが速くなる、そのつり合い。 */
   const cut = dec && dec.best && dec.stay && dec.best.p < dec.stay.p ? dec : null;
   const cutGain = cut ? Math.round(cut.cutGain) : 0;
+  // GMV まで入れて比べていることを、その場の数字で見せる
+  const rateLine = (a, b) => a && b && a.sold > 0 && b.sold > 0
+    ? `今夜さばける口数 ${b.sold} → ${a.sold} 口、`
+      + `売上 ${yen(Math.round(b.gmv))} → ${yen(Math.round(a.gmv))}。`
+    : "";
   if(cut && cutGain > 0){
     const off = Math.round((1 - cut.best.p / cut.stay.p) * 100);
+    const line = rateLine(cut.plan, cut.stay);
     if(idle > idleLine) add({
       key: "idle", tone: "is-warn", score: cutGain,
       title: `${fmtDur(idle)} 動いていない`, num: `${yen(cut.best.p)} まで下げる`,
-      body: `そのまま ${yen(cut.stay.p)} で続けるより、中央で ${yen(cutGain)} 高い`
-          + `（${off}% オフ）。`,
+      body: `そのまま ${yen(cut.stay.p)} で続けるより、今夜の利益額が ${yen(cutGain)} 高い`
+          + `（${off}% オフ）。` + line,
       act: "price",
     });
     else add({
       key: "cut", tone: "is-warn", score: cutGain,
-      title: "下げたほうが利益が高い", num: `${yen(cut.best.p)} まで下げる`,
-      body: `そのまま続けた場合より中央で ${yen(cutGain)} 高い（${off}% オフ）。`,
+      title: "下げたほうが利益額が高い", num: `${yen(cut.best.p)} まで下げる`,
+      body: `そのまま続けた場合より今夜の利益額が ${yen(cutGain)} 高い（${off}% オフ）。` + line,
       act: "price",
     });
   }else if(idle > idleLine && dec && !dec.dead){
@@ -3690,8 +3783,8 @@ function actionCards(c){
     add({
       key: "idle-hold", tone: "is-warn", score: Math.max(1, Math.round(idle / 60000)),
       title: `${fmtDur(idle)} 動いていない`, num: "値下げは効かない読み",
-      body: "下げても中央の利益は増えない。目玉の見せ方を変えるか、"
-          + "残り口数と還元率を言って押す。",
+      body: "下げても今夜の利益額は増えない（速くなるぶんより 1 口の利益が減るぶんが大きい）。"
+          + "目玉の見せ方を変えるか、残り口数と還元率を言って押す。",
     });
   }
 
@@ -3729,7 +3822,7 @@ function actionCards(c){
 
   // 6. 完売が近い
   const eta = c.left > 0 ? etaOf(S, c) : null;
-  if(eta && !eta.stalled && eta.ms > 0 && eta.left > 0 && eta.ms < 30 * 60000) add({
+  if(eta && !eta.paused && eta.ms > 0 && eta.left > 0 && eta.ms < 30 * 60000) add({
     key: "eta", tone: "is-now", score: Math.round(c.left * (c.price || 0) / 10),
     title: "完売が近い", num: `残り ${eta.left} 口 ／ あと ${fmtDur(eta.ms)}`,
     body: "追い込みの声かけが効く。残り口数を出して締める。",
@@ -4032,13 +4125,42 @@ function decideNow(c){
      （運用者の指示 2026-08-19）。値上げはしないので現行価格が上限。 */
   const top = Math.max(hi, lo, Math.round(Number(c.price) || 0));
 
+  /* ---- GMV を数に入れる ----
+     比べるのは**今夜さばける口数まで**の利益額（運用者の指示 2026-08-19：
+     「GMV を加味しつつ、利益率を考え、利益額が最も高くなる方法を提案しろ」）。
+
+       今夜の口数 = min( 解体までの口数 , その値段でのペース × 今夜の残り時間 )
+       利益額     = いま解体した額 ＋ 1 口あたりの上積み × 今夜の口数
+
+     ここに値下げの損得が両方入る。**下げれば 1 口の利益（利益率）は減る**が、
+     **速くなるぶん今夜の口数（GMV）は増える**。時間が余っている局面では
+     下げても口数は増えないので、そのままのほうが利益額は高く出る。
+     ペースが出ていない（2 口未満）ときは枠を掛けずに、いままでどおり
+     最後まで売り切った利益額そのもので比べる。 */
+  const pm = paceModel(c.o, c);
+  const hoursLeft = pm ? hoursLeftTonight(c.o) : 0;
+  /** その値段で今夜さばける口数（解体までの口数が上限）*/
+  const soldTonight = r => {
+    const more = Math.max(0, Number(r && r.moreMean) || 0);
+    if(!pm || !r) return more;
+    const v = pm.at(r.price);
+    return v > 0 ? Math.min(more, v * hoursLeft) : more;
+  };
+  /** 今夜の利益額。1 口あたりの上積みを今夜の口数ぶんだけ積む */
+  const tonight = (r, end) => {
+    if(!r) return stop;
+    const more = Math.max(0, Number(r.moreMean) || 0);
+    if(!(more > 0)) return stop;
+    return stop + (end - stop) * (soldTonight(r) / more);
+  };
+
   // 粗く振ってから、いちばん良かったところの周りを細かく見る
   const tried = [];
   const probe = p => {
     const k = Math.max(10, Math.round(p));
     if(k > top || tried.some(t => t.p === k)) return;
     const r = simAtPrice(c, k, topMult, minReturn);
-    if(r) tried.push({ p: k, ev: r.cashMean, r });
+    if(r) tried.push({ p: k, ev: tonight(r, r.cashMean), r });
   };
   const STEPS = 9;
   for(let i = 0; i < STEPS; i++) probe(lo + (top - lo) * i / (STEPS - 1));
@@ -4061,11 +4183,31 @@ function decideNow(c){
      現行価格は超えない（配信中に値上げはしない）。 */
   if(rounded < lo) rounded = Math.min(c.price || Infinity, roundPriceUp(lo)) || lo;
   const rr = simAtPrice(c, rounded, topMult, minReturn);
-  if(rr) best = { p: rounded, ev: rr.cashMean, r: rr };
+  if(rr) best = { p: rounded, ev: tonight(rr, rr.cashMean), r: rr };
+
+  /* 案ごとの数字をひとまとめにする。画面と行動カードはここの数字で話す。
+       mid    … 今夜の利益額（中央値ベース）
+       gmv    … 今夜の売上。**値下げでここが下がる**ことを隠さない
+       sold   … 今夜さばける口数
+       hours  … それにかかる時間（今夜の残り時間で頭打ち）
+       perHour… 1 時間あたりいくら残るか */
+  const planOf = (price, r) => {
+    if(!r) return null;
+    const sold = soldTonight(r);
+    const pace = pm ? pm.at(r.price) : 0;
+    const hours = pace > 0 ? sold / pace : 0;
+    const mid = tonight(r, r.cashMed);
+    return { p: Math.round(price), r, mid,
+             sold: Math.round(sold), more: Math.round(Number(r.moreMean) || 0),
+             gmv: sold * (r.bidMean || r.price),
+             hours, ms: hours * 3600000,
+             perHour: hours > 0 ? (mid - stop) / hours : 0 };
+  };
 
   // 探すのは平均でいい（滑らかで極値に強い）が、**言い切るのは中央値**にする。
   // 画面に出しているのが中央なので、そこと違う数字で「◯円得」と言わない。
-  const gain = (best.r ? best.r.cashMed : best.ev) - stop;
+  const bestPlan = planOf(best.p, best.r);
+  const gain = (bestPlan ? bestPlan.mid : best.ev) - stop;
   // 誤差レベルの差で「続けろ」と言い切らない
   const near = Math.max(500, Math.abs(stop) * 0.01);
   let verdict = gain > near ? "go" : gain < -near ? "stop" : "even";
@@ -4076,12 +4218,14 @@ function decideNow(c){
   if(dead) verdict = "stop";
 
   /* 「そのまま続けた場合」も返す。画面と行動カードが**同じ数字**で話せるように。
-     値下げの判断はここを基準に「下げたほうが利益が高いか」で決める。 */
-  const stayR = simAtPrice(c, Math.max(10, Math.round(Number(c.price) || 0)), topMult, minReturn);
-  const stay = stayR ? { p: Math.round(Number(c.price) || 0), r: stayR, mid: stayR.cashMed } : null;
-  const cutGain = stay && best.r ? best.r.cashMed - stay.mid : 0;
+     値下げの判断はここを基準に「時間まで入れて利益額が高いほう」で決める。 */
+  const nowPrice = Math.max(10, Math.round(Number(c.price) || 0));
+  const stay = planOf(nowPrice, simAtPrice(c, nowPrice, topMult, minReturn));
+  const cutGain = stay && bestPlan ? bestPlan.mid - stay.mid : 0;
 
-  return { verdict, stop, best, gain, hi, lo, dead, stay, cutGain };
+  return { verdict, stop, best, gain, hi, lo, dead,
+           stay, cutGain, plan: bestPlan, hoursLeft,
+           elast: pm ? pm.elast : 0, elastMeasured: !!(pm && pm.measured) };
 }
 
 /* ============================================================
@@ -4091,10 +4235,19 @@ function decideNow(c){
 /** 締めた時点のスナップショット。あとから数字を追えるだけの粒度で残す。 */
 /* ============================================================
    時間とペース
-   配信は途中で止まる（休憩・トラブル・雑談）。壁時計をそのまま使うと
-   ペースが実態より遅く出るので、長い空白は「中断」として実働から外す。
+   **中断は機械で決めない。**売れていない時間もふつうに配信している時間で、
+   そこを勝手に「中断」と呼ぶと、配信が止まっていたことにされる。
+   実働から外すのは**人が右上の「一時停止」を押した区間だけ**
+   （運用者の指示 2026-08-19）。
    ============================================================ */
-const PACE_PAUSE_MS = 10 * 60 * 1000;   // これ以上空いたら中断とみなす（ペース計算用）
+// これ以上動きが無ければ「N 分間動いていない」と言う。**中断ではない**
+const IDLE_LINE_MS = 10 * 60 * 1000;
+/* 「直近のペース」を測る窓。**口数ではなく時間で切る。**
+   口数で切ると、長く売れていない時間が窓に残りっぱなしになり、値下げして
+   速くなったことが数字に出てこない。時間で切れば、売れていなければ窓の中の
+   口数が減って遅く出る＝実態がそのまま出る。 */
+const RECENT_WINDOW_MS = 30 * 60 * 1000;
+const RECENT_MIN_SLOTS = 8;      // 窓に足りなければこの口数までさかのぼる
 
 /* 値下げの上限。**現行価格からこれ以上は下げない。**
    原価や損益分岐から見ればまだ下げられる局面でも、配信の値付けとしては
@@ -4103,6 +4256,39 @@ const MAX_OFF = 0.15;
 // 一覧の「配信中」バッジ用。ペースより緩くしてある。遅い配信（16口/時なら1口4分）で
 // たまたま10分空いただけで「途中のまま」に落ちるとかえって紛らわしいため。
 const LIVE_IDLE_MS = 20 * 60 * 1000;
+
+/* ---- 一時停止（＝中断） ----
+   `o.pauses` は [{from, to}]。to=0 は「いま停止中」。人が押したときだけ入る。 */
+
+/** いま停止中ならその区間を返す。押していなければ null */
+function pauseNow(o){
+  const ps = (o && o.pauses) || [];
+  const last = ps[ps.length - 1];
+  return last && last.from > 0 && !last.to ? last : null;
+}
+
+/** [from, to] に重なっている停止時間の合計。to=0（停止中）は「いま」まで数える */
+function pausedBetween(o, from, to){
+  const ps = (o && o.pauses) || [];
+  const now = Date.now();
+  const end = to || now;
+  let ms = 0;
+  for(const p of ps){
+    const a = Math.max(Number(p.from) || 0, from);
+    const b = Math.min(Number(p.to) || now, end);
+    if(b > a) ms += b - a;
+  }
+  return ms;
+}
+
+/** 開いたままの停止を閉じる。配信を締めるときと席を手放すときに呼ぶ */
+function closeOpenPause(o){
+  const cur = pauseNow(o);
+  if(!cur) return false;
+  cur.to = Date.now();
+  if(cur.to <= cur.from) o.pauses.pop();
+  return true;
+}
 
 /** 排出1口ごとの {時刻, 単価}（昇順）。時刻が無い古いデータは落札の時刻で代用 */
 function eventTimes(o){
@@ -4128,16 +4314,7 @@ function paceOf(o){
   const n = ev.length;
   if(n < 2) return null;
 
-  // 口と口のあいだの時間。中断は頭打ちにして実働から外す
-  const gaps = [];
-  for(let i = 1; i < n; i++) gaps.push(Math.min(ev[i].at - ev[i-1].at, PACE_PAUSE_MS));
-  const activeMs = gaps.reduce((a, b) => a + b, 0);
-
-  // 直近のペース。値下げすれば速くなるので、全体平均より直近を信じる
-  const k = Math.min(n - 1, Math.max(8, Math.min(30, Math.ceil((n - 1) / 2))));
-  const recentMs  = gaps.slice(-k).reduce((a, b) => a + b, 0);
-  const recentRev = ev.slice(-k).reduce((a, e) => a + e.price, 0);
-  const revAll    = ev.reduce((a, e) => a + e.price, 0);
+  const revAll = ev.reduce((a, e) => a + e.price, 0);
 
   /* **全体の数字は「開始から今まで」で割る。中断も込み。**
      TikTok の LIVE マネージャーがそう数えているので、そちらに合わせる
@@ -4149,13 +4326,28 @@ function paceOf(o){
      いくが、それが実態。締めたあとは最後の 1 口までで止める。
 
      直近のペース（recentPace / recentGmv）は**この先いつ売り切れるか**を
-     読むためのもので、用途が違うので実働のまま。中断ぶんを混ぜると、
-     再開した直後に「あと 8 時間」のような使えない予測になる。 */
+     読むためのもので、用途が違う。こちらは「いままでの 30 分」で測る。 */
   /* 窓の始まり。席に座った時刻があればそこから。1 口目より後ろにずれている
      （席を取り直した直後など）ときは 1 口目に合わせる。 */
   const startAt = from && from <= ev[0].at ? from : ev[0].at;
   const endAt = o.closedAt ? ev[n-1].at : Math.max(ev[n-1].at, Date.now());
   const wallMs = Math.max(0, endAt - startAt);
+
+  /* 直近のペース。値下げすれば速くなるので、全体平均より直近を信じる。
+     窓は**いままでの 30 分**（締めた回は最後の 1 口まで）。売れていなければ
+     窓に口数が入らないので、`RECENT_MIN_SLOTS` 口そろうまでさかのぼる。
+     このとき窓の終わりは**いま**なので、止まっている時間はそのまま遅さとして出る。 */
+  let ri = n - 1;
+  while(ri > 0 && endAt - ev[ri - 1].at <= RECENT_WINDOW_MS) ri--;
+  if(n - 1 - ri < RECENT_MIN_SLOTS) ri = Math.max(0, n - 1 - RECENT_MIN_SLOTS);
+  ri = Math.min(ri, n - 2);
+  const k = n - 1 - ri;
+  const recentMs  = Math.max(0, (endAt - ev[ri].at) - pausedBetween(o, ev[ri].at, endAt));
+  const recentRev = ev.slice(ri + 1).reduce((a, e) => a + e.price, 0);
+  /* 実働＝配信時間から**人が止めた区間だけ**を引いたもの。空白は引かない。
+     一時停止を一度も押していない配信では 実働 = 配信時間 になる。 */
+  const pausedMs = pausedBetween(o, startAt, endAt);
+  const activeMs = Math.max(0, wallMs - pausedMs);
 
   /* 割る口数。窓の始まりが 1 口目そのものなら、その 1 口は境界（柵の杭）なので
      あいだの数＝n-1 で割る。席の時刻から数えるときは n 口すべてが窓の中にある。 */
@@ -4163,29 +4355,123 @@ function paceOf(o){
 
   return {
     slots: n,
+    rev: revAll,              // この窓で売れた額（時間あたり利益の分子に使う）
     startedAt: startAt,       // 配信の開始（席に座った時刻。無ければ 1 口目）
     firstLotAt: ev[0].at,     // 最初の 1 口
     lastAt: ev[n-1].at,
     activeMs,
     wallMs,
-    pausedMs: Math.max(0, wallMs - activeMs),
+    pausedMs,
+    paused: !!pauseNow(o),
     pace:       perHour(slotsInWindow, wallMs),  // 口/時（全体・中断込み）
-    recentPace: perHour(k, recentMs),       // 口/時（直近・実働）
+    recentPace: perHour(k, recentMs),       // 口/時（直近 30 分）
     gmv:       wallMs > 0 ? revAll * 3600000 / wallMs : 0,   // 時給GMV（中断込み）
     recentGmv: recentMs > 0 ? recentRev * 3600000 / recentMs : 0,
   };
 }
 
-/** 残りをいまのペースで売り切ったら何時になるか。中断中なら止まっていることを示す */
+/* ============================================================
+   値段と速さ（GMV を数に入れるための土台）
+
+   値下げは「1 口の利益」を減らすかわりに「1 時間に売れる口数」を増やす。
+   利益額で比べるには**時間**を入れないと片手落ちになる（運用者の指示 2026-08-19：
+   「GMV を加味しつつ、利益率を考え、利益額が最も高くなる方法を提案しろ」）。
+
+   速さの読み方は 1 本の式にした：
+
+       ペース(p) = いまのペース × ( いまの価格 ÷ p ) ^ 弾力性
+
+   弾力性は**この配信で実際に測る**。同じオリパを 2 段以上の値段で出していれば、
+   値段ごとの 口/時 が取れるので、その 2 点から出す。測れないときだけ既定値を使う。
+   ============================================================ */
+const PACE_ELASTICITY = 1.5;      // 既定。1 割下げるとおよそ 1.17 倍速く売れる読み
+const ELAST_MIN = 0.3, ELAST_MAX = 3;
+const ELAST_MIN_SLOTS = 5;        // 1 つの値段でこれだけ売れていないと点として使わない
+
+/**
+ * この配信で実際に測れた弾力性。値段を 1 段でしか出していなければ null。
+ * 「安いほうが速い」が出ていないときも測れていないとみなして null を返す。
+ */
+function measuredElasticity(o){
+  const ev = eventTimes(o).filter(e => e.price > 0);
+  if(ev.length < ELAST_MIN_SLOTS * 2 + 1) return null;
+  const by = new Map();
+  for(let i = 1; i < ev.length; i++){
+    const ms = (ev[i].at - ev[i-1].at) - pausedBetween(o, ev[i-1].at, ev[i].at);
+    if(!(ms > 0)) continue;
+    const g = by.get(ev[i].price) || { n: 0, ms: 0 };
+    g.n++; g.ms += ms; by.set(ev[i].price, g);
+  }
+  const pts = [...by.entries()]
+    .filter(([, g]) => g.n >= ELAST_MIN_SLOTS && g.ms > 0)
+    .map(([price, g]) => ({ price, pace: perHour(g.n, g.ms) }))
+    .sort((a, b) => a.price - b.price);
+  if(pts.length < 2) return null;
+  const cheap = pts[0], dear = pts[pts.length - 1];
+  if(!(dear.price > cheap.price) || !(cheap.pace > 0) || !(dear.pace > 0)) return null;
+  const e = Math.log(cheap.pace / dear.pace) / Math.log(dear.price / cheap.price);
+  if(!isFinite(e) || e <= 0) return null;   // 安いほうが遅い＝値段以外の要因。測れていない
+  return clamp(e, ELAST_MIN, ELAST_MAX);
+}
+
+/** 価格 → 口/時 の読み。ペースが出ていない（2 口未満）なら null */
+function paceModel(o, c){
+  const p = paceOf(o);
+  const base = p ? p.recentPace : 0;
+  const price0 = Math.round(Number(c.price) || 0);
+  if(!(base > 0) || !(price0 > 0)) return null;
+  const m = measuredElasticity(o);
+  const elast = m == null ? PACE_ELASTICITY : m;
+  return {
+    base, price0, elast, measured: m != null,
+    at: q => q > 0 ? base * Math.pow(price0 / q, elast) : 0,
+  };
+}
+
+/* ---- 今夜あと何時間やるか ----
+   利益額で比べるには**枠**が要る。時間が無限にあるなら、値下げして速く売る
+   意味は薄い（そのままでもいつかは売り切る）。実際には配信は数時間で終わり、
+   **その中で何口さばけたか＝GMV** が利益額を決める。
+   枠は過去の配信記録の中央値から取る。記録が無ければ既定値。 */
+const STREAM_HOURS_DEFAULT = 3;
+const STREAM_HOURS_MIN = 0.5;      // 終わり際でも最低これだけは残っているものとする
+
+/** いつもの配信の長さ（ms）。記録が無ければ既定値 */
+function typicalStreamMs(){
+  const xs = (DB.records || [])
+    .map(r => (Number(r.lastAt) || 0) - (Number(r.startedAt) || 0))
+    .filter(v => v > 20 * 60000 && v < 12 * 3600000)
+    .sort((a, b) => a - b);
+  if(!xs.length) return STREAM_HOURS_DEFAULT * 3600000;
+  return xs[Math.floor(xs.length / 2)];
+}
+
+/** 今夜あと何時間やれるか。開始からの経過を、いつもの長さから引く */
+function hoursLeftTonight(o){
+  const p = paceOf(o);
+  const done = p && p.startedAt ? Math.max(0, Date.now() - p.startedAt) : 0;
+  return Math.max(STREAM_HOURS_MIN, (typicalStreamMs() - done) / 3600000);
+}
+
+/**
+ * 残りをいまのペースで売り切ったら何時になるか。
+ *
+ * `paused` は**人が一時停止を押しているときだけ** true（＝中断）。
+ * `idleMs` は最後の 1 口からの時間で、これは中断ではなくただの「動いていない時間」。
+ */
 function etaOf(o, c, slotsLeft){
   const p = paceOf(o);
   if(!p) return null;
   const left = slotsLeft == null ? c.left : slotsLeft;
   const idleMs = Date.now() - p.lastAt;
-  const stalled = idleMs > PACE_PAUSE_MS;
-  if(left <= 0 || !(p.recentPace > 0)) return { ...p, left, ms: 0, at: 0, stalled, idleMs, done: left <= 0 };
+  const pz = pauseNow(o);
+  const base = { ...p, left, idleMs,
+                 paused: !!pz, pausedNowMs: pz ? Math.max(0, Date.now() - pz.from) : 0 };
+  // 止めているあいだは先の時刻を出さない（再開するまで進まないので嘘になる）
+  if(left <= 0 || !(p.recentPace > 0) || base.paused)
+    return { ...base, ms: 0, at: 0, done: left <= 0 };
   const ms = left / p.recentPace * 3600000;
-  return { ...p, left, ms, at: Date.now() + ms, stalled, idleMs, done: false };
+  return { ...base, ms, at: Date.now() + ms, done: false };
 }
 
 function fmtDur(ms){
@@ -4463,6 +4749,11 @@ function renderDataNotice(){
 }
 
 function render(){
+  renderBody();
+  renderPauseUi();     // 覆いは全部の画面の上に出る（一覧へ戻っても消えない）
+}
+
+function renderBody(){
   renderDataNotice();
 
   // ブリッジは「いま配信しているオリパ」を映す。開く前に決めておく。
@@ -4717,8 +5008,10 @@ function listEta(o, c){
 
   if(o.closedAt) return { ...gmv, when: "記録済み", sub: `${fmtDur(e.wallMs)} で ${e.slots} 口` };
   if(e.done)     return { ...gmv, when: "完売", sub: `${fmtDur(e.wallMs)} で ${e.slots} 口` };
-  if(e.stalled)  return { ...gmv, when: "中断中", sub: `${fmtDur(e.idleMs)} 動きなし` };
+  if(e.paused)   return { ...gmv, when: "一時停止中", sub: `${fmtDur(e.pausedNowMs)} 止めている` };
   if(!(e.ms > 0))return { ...gmv, when: "—", sub: "ペースが出ない" };
+  if(e.idleMs > IDLE_LINE_MS)
+    return { ...gmv, when: fmtWhen(e.at), sub: `${fmtDur(e.idleMs)}間 動いていない` };
   return { ...gmv, when: fmtWhen(e.at), sub: `あと ${fmtDur(e.ms)}・${e.recentPace.toFixed(1)} 口/時` };
 }
 
@@ -5911,11 +6204,24 @@ function renderPrice(c){
         いま終われば <b>${syen(Math.round(dec.stop))}</b>。
         ${yen(goPrice)} で出して あと <b>${b.moreMed} 口</b> さばける読み
         ${b.bidMean > goPrice * 1.02 ? `（競って平均 <b>${yen(Math.round(b.bidMean))}</b> で落ちる想定）` : ""}
+        ${dec.plan && dec.plan.sold > 0
+          ? `／今夜は <b>${dec.plan.sold} 口</b>・売上 <b>${yen(Math.round(dec.plan.gmv))}</b>`
+            + `（残り ${fmtDur(dec.hoursLeft * 3600000)} の読み）`
+          : ""}
       </div>`;
 
     const d = Math.abs(Math.round(dec.gain));
+    /* 値下げを勧めているときは、**そのまま続けた場合と何が違うのか**を必ず出す。
+       利益額だけを見ると下げないほうが高く見えるので、速さのぶんを言わないと
+       「なぜ下げるのか」が分からない（運用者の指示 2026-08-19）。 */
+    const vsStay = dec.stay && dec.plan && dec.plan.p < dec.stay.p && dec.cutGain > 0
+      ? `そのまま ${yen(dec.stay.p)} で続けるより、今夜さばける口数が`
+        + ` ${dec.stay.sold} → ${dec.plan.sold} 口に増えるぶん、`
+        + `<b>${yen(Math.round(dec.cutGain))}</b> 利益額が高い。`
+      : "";
     if(go){
       msg = `${yen(goPrice)} で続けるほうが、いま終わるより中央で <b>${yen(d)}</b> 得。`
+          + vsStay
           + `この価格なら還元率 ${pct(goPrice > 0 ? c.evMkt / goPrice : 0, 0)} で買い手も動く。`;
       if(b.cashP10 < dec.stop)
         msg += `ただし<b>下振れると ${yen(Math.round(dec.stop - b.cashP10))} 減る</b>目もある。`;
@@ -6017,7 +6323,7 @@ function renderPulse(c, dec){
     const more = dec.best.r.moreMed;
     const e = etaOf(S, c, more);
     cell("この先さばける口数", `${more} 口`,
-      e && e.ms > 0 && !e.stalled ? `いまのペースで ${fmtDur(e.ms)}` : `解体条件に達するまで`,
+      e && e.ms > 0 && !e.paused ? `いまのペースで ${fmtDur(e.ms)}` : `解体条件に達するまで`,
       "is-key");
   }
 
@@ -6095,7 +6401,7 @@ function renderClock(c){
   }else{
     out.push(cell("開始", fmtClock(e.startedAt),
       `${fmtDur(now - e.startedAt)} 経過`
-      + (e.pausedMs > 60000 ? `／中断 ${fmtDur(e.pausedMs)}` : "")));
+      + (e.pausedMs > 60000 ? `／一時停止 ${fmtDur(e.pausedMs)}` : "")));
 
     // 解体まで＝予想収量。判断エンジンが見ている「あと何口さばけるか」で出す
     const d = c.left > 0 && !S.closedAt ? decideNow(c) : null;
@@ -6112,8 +6418,9 @@ function renderClock(c){
     }
 
     if(e.done) out.push(cell("完売", "済", `${e.slots} 口すべて`));
+    else if(e.paused) out.push(cell("完売まで", "—", "一時停止中"));
     else if(e.ms > 0) out.push(cell("完売まで", fmtDur(e.ms), `残り ${e.left} 口・${fmtWhen(e.at)}`));
-    else out.push(cell("完売まで", "—", e.stalled ? "動いていない" : "ペースが出ない"));
+    else out.push(cell("完売まで", "—", "ペースが出ない"));
   }
   box.innerHTML = out.join("");
 }
@@ -6126,6 +6433,7 @@ function startClock(){
   clockTimer = setInterval(() => {
     if(mode !== "live" && mode !== "watch"){ clearInterval(clockTimer); clockTimer = null; return; }
     if(S) renderClock(compute(S));
+    renderPauseUi();          // 覆いの「何分止めているか」も一緒に進める
   }, 30 * 1000);
 }
 
@@ -6153,7 +6461,7 @@ function renderPace(c){
   // 開始は席に座った時刻。アプリを早く開いた日は前にぶれるので、その場で直せるようにする
   cell("開始", fmtClock(e.startedAt),
     `配信 ${fmtDur(e.wallMs)}`
-    + (e.pausedMs > 60000 ? `（うち中断 ${fmtDur(e.pausedMs)}）` : "")
+    + (e.pausedMs > 60000 ? `（うち一時停止 ${fmtDur(e.pausedMs)}）` : "")
     + (mode === "watch" || S.closedAt ? "" : ` <button type="button" id="btnFixStart">直す</button>`));
   cell("ペース", `${e.recentPace.toFixed(1)} 口/時`,
     `全体 ${e.pace.toFixed(1)} 口/時`, "is-key");
@@ -6161,25 +6469,32 @@ function renderPace(c){
     `全体 ${yen(Math.round(e.gmv))}/時`, "is-key");
 
   // --- 見込み ---
-  // **終了済みなら「中断中」とは言わない。**記録して締めた回は止まっているのが正しく、
-  // 売り切らずに終えるのが普通の運用（解体して次に組み直す）。
-  // 動きが無いことを咎めるような出し方にすると、毎回の締めが失敗のように見える。
+  /* **終了済みなら止まっていることを咎めない。**記録して締めた回は止まっているのが
+     正しく、売り切らずに終えるのが普通の運用（解体して次に組み直す）。
+     売れていない時間も「中断」とは呼ばない。中断は人が一時停止を押したときだけ。 */
+  const idleMs = e.idleMs;
+  const idling = !S.closedAt && !e.paused && idleMs > IDLE_LINE_MS;
   if(S.closedAt){
     cell("完売見込み", "終了",
       `${fmtDur(e.wallMs)} で ${e.slots} 口`);
-  }else if(e.stalled){
-    cell("完売見込み", "中断中",
-      `${fmtDur(e.idleMs)} 動いていない`, "is-stale");
+  }else if(e.paused){
+    cell("完売見込み", "一時停止中",
+      `${fmtDur(e.pausedNowMs)} 止めている`, "is-stale");
   }else if(e.done){
     cell("完売見込み", "完売", "全口出た");
+  }else if(!(e.ms > 0)){
+    cell("完売見込み", "—", "ペースが出ない");
   }else{
-    cell("完売見込み", fmtWhen(e.at), `残り ${e.left} 口・あと ${fmtDur(e.ms)}`);
+    cell("完売見込み", fmtWhen(e.at),
+      idling ? `${fmtDur(idleMs)}間 動いていない・残り ${e.left} 口`
+             : `残り ${e.left} 口・あと ${fmtDur(e.ms)}`,
+      idling ? "is-stale" : "");
   }
 
   // 解体まで。判断エンジンが「続ける」と言っている価格での見込み口数を使う
   const d = c.left > 0 ? decideNow(c) : null;
   const more = d && d.best && d.best.r ? d.best.r.moreMean : null;
-  if(more != null && more >= 0.5 && e.recentPace > 0 && !e.stalled){
+  if(more != null && more >= 0.5 && e.recentPace > 0 && !e.paused){
     const ms = more / e.recentPace * 3600000;
     cell("解体まで", fmtWhen(Date.now() + ms),
       `あと約 ${Math.round(more)} 口・${fmtDur(ms)}`);
@@ -6195,12 +6510,13 @@ function renderPace(c){
 
   // 完売と解体で着地時刻がだいぶ違うときは、そこを言葉で補う
   const parts = [];
-  if(e.stalled){
-    parts.push(`最後の排出から ${fmtDur(e.idleMs)} 空いている。`
-      + `全体の数字（時給GMV・全体ペース）は**中断も込みで**開始からの時間で割る。`
-      + `TikTok の LIVE マネージャーと同じ数え方にしてある。`
-      + `直近のペースだけは ${Math.round(PACE_PAUSE_MS/60000)} 分を超えた空白を外しているので、`
-      + `再開直後でも「あと何時間」が使える値のまま出る。`);
+  if(e.paused){
+    parts.push(`一時停止中。押しているあいだは実働から外れるので、`
+      + `時給GMV とペースはこの時間ぶん薄まらない。再開すればまた数え始める。`);
+  }else if(idling){
+    parts.push(`最後の排出から ${fmtDur(idleMs)} 空いている。`
+      + `これは中断ではなく、売れていない時間としてそのまま数える。`
+      + `席を外すのなら右上の「一時停止」を押すこと。押した区間だけが中断になる。`);
   }else if(!e.done){
     parts.push(`いまの直近ペース（${e.recentPace.toFixed(1)} 口/時）が続けばの話。値下げすれば速くなる。`);
   }
@@ -6614,7 +6930,12 @@ function renderFormulas(c){
     ["目標利益率の下限", "解体まで売って利益率が目標に届く価格（同上）"],
     ["解体までの販売口数", "目玉が出尽くす／残り還元率が下限を割る、どちらか早いほうまでの口数"],
     ["還元率ベース価格", "残り1口の相場期待値 ÷ 目標還元率"],
-    ["これ以上下げない", "残り1口の原価 × 在庫回収率"]
+    ["これ以上下げない", "残り1口の原価 × 在庫回収率"],
+    ["今夜さばける口数", "min( 解体までの口数 , その値段でのペース × 今夜の残り時間 )"],
+    ["今夜の利益額",     "いま解体した額 ＋ 1口あたりの上積み × 今夜さばける口数"],
+    ["値下げの判断",     "そのままと下げた場合の「今夜の利益額」を比べて高いほう（下げ幅は 15% まで）"],
+    ["値段と速さ",       "ペース(p) ＝ いまのペース × ( いまの価格 ÷ p ) ^ 弾力性（既定 1.5・2段の値段で出していれば実測）"],
+    ["今夜の残り時間",   "いつもの配信の長さ（記録の中央値・無ければ3時間）− 開始からの経過"]
   ];
   dl.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
 }
@@ -6904,6 +7225,7 @@ function renderCloseSummary(){
 function applyClose(){
   if(!S || S.closedAt) return;
   const at = parseDateInput($("closeDate").value, Date.now());
+  closeOpenPause(S);        // 止めたまま締めない。実働の数字が終わらなくなる
   const rec = buildRecord(S, at, $("closeMemo").value.trim());
   DB.records.push(rec);
   S.closedAt = at;
@@ -7040,6 +7362,8 @@ document.querySelectorAll(".modes button").forEach(b => {
 });
 
 $("btnHelp").addEventListener("click", () => go(mode === "help" ? "list" : "help"));
+$("btnPause").addEventListener("click", togglePause);
+$("btnResume").addEventListener("click", togglePause);
 
 $("devName").addEventListener("change", () => {
   const v = $("devName").value.trim().slice(0, 24);
@@ -7414,7 +7738,7 @@ $("btnExportCsv").addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", e => {
-  if(mode !== "live") return;
+  if(mode !== "live" || pauseNow(S)) return;
   const t = e.target;
   if(t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable)) return;
   if(e.key >= "1" && e.key <= "9"){
