@@ -1099,7 +1099,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='cdf0128 (08/19 23:46)';</script>
+<script>window.__BUILD='bfc7be9 (08/20 17:21)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2197,6 +2197,9 @@ function normalizeOrder(x){
     paid: x.paid !== undefined ? !!x.paid : !/UNPAID|PENDING|AWAITING_PAYMENT/i.test(String(x.status || "")),
     cancelled: !!x.cancelled,
     source: String(x.source || "tiktok"),
+    /* 一度消したのに戻ってきたときの理由。**戻したのは偶然ではない**ことを
+       画面で言えるようにする。理由が無いのに戻っていたら、それは不具合。 */
+    back: String(x.back || ""),
   };
 }
 
@@ -2887,12 +2890,14 @@ function syncApply(items){
         if(g){
           const m = g.mark;
           if(m){
-            const moved = (!!x.paid !== !!m.paid)
-              || (!!x.cancelled !== !!m.cancelled)
-              || ((Number(x.price) || 0) !== (Number(m.price) || 0))
-              || ((Number(x.qty) || 1) !== (Number(m.qty) || 0));
-            if(!moved) continue;             // 状況は動いていない。消したままにする
+            /* 戻すのは **入金が付いたときだけ**（運用者の方針 2026-08-19）。
+               この画面が扱うのは「落札 → 入金」までで、返金・取り消し・金額の
+               変更は配信とは別の場所で処理される。ここで拾うと、消したはずの
+               注文が発送や返金のたびに戻ってきて、消す作業が終わらない。 */
+            if(!(!!x.paid && !m.paid)) continue;
+            x.back = "入金が付いた";          // なぜ戻したのかを画面に出せるようにする
           }else if(Number(it.updatedAt) <= Number(g.updatedAt)) continue;
+          else x.back = x.back || "消したあとに更新が届いた";
         }
         if(i >= 0) DB.orders[i] = x; else DB.orders.push(x);
         changed++;
@@ -4857,8 +4862,13 @@ function renderUnlinkedPanel(){
   const groups = [...byPid.entries()]
     .sort((a, b) => (Number(b[1][0].at) || 0) - (Number(a[1][0].at) || 0));
 
-  const state = x => x.cancelled ? `<span class="waittag">取り消し</span>`
-    : x.paid ? "" : `<span class="waittag">入金待ち</span>`;
+  const state = x =>
+    (x.cancelled ? `<span class="waittag">取り消し</span>`
+      : x.paid ? "" : `<span class="waittag">入金待ち</span>`)
+    // 一度消したのに戻ってきたものは、**なぜ戻したのか**を必ず添える。
+    // これが無いと「消したはずのものがまた出た」としか見えない
+    + (x.back ? `<span class="waittag" title="一度消したが、この変化があったので戻した">`
+        + `${esc(x.back)}</span>` : "");
 
   $("unlinkedList").innerHTML = groups.map(([pid, xs]) => {
     const name = xs.find(x => x.productName)?.productName || "";
@@ -5153,8 +5163,11 @@ function renderInbox(c){
       + (paid && paid !== x.price ? `（買い手 ${yen(paid * x.qty)}）` : "")
       + `</span>`;
   };
+  const back = x => x.back
+    ? `<span class="waittag" title="一度消したが、この変化があったので戻した">${esc(x.back)}</span>`
+    : "";
   const line = (x, tail, cls) => `<div class="row ${cls || ""}" data-order="${esc(x.id)}">
-      <span class="amt">${yen(x.price * x.qty)}${promo(x)}</span>
+      <span class="amt">${yen(x.price * x.qty)}${promo(x)}${back(x)}</span>
       <span class="who">${x.qty > 1 ? `${x.qty} 口 ／ ` : ""}${esc(x.buyer || "落札者不明")}</span>
       <span class="spacer"></span>
       <span class="when">${x.at ? fmtClock(x.at) : ""}</span>
