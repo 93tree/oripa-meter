@@ -214,56 +214,33 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 .kpi .v.neg{ color:var(--bad); }
 
 /* ============================================================
-   カンペ（配信中に読み上げる用）
+   いま効く手（行動カード）
+
+   配信しながら「次に何をすれば売上が伸びるか」を 3 枚だけ出す。
+   読み上げ用のカンペは現場で使われていなかったので外した（2026-08-19）。
+   **数字は compute() / decideNow() のものをそのまま使う。**盛らない。
    ============================================================ */
-.cue{
-  background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
-  box-shadow:var(--shadow); padding:13px 16px 15px;
-  border-left:4px solid var(--flat);
+.actcards{
+  border:1px solid var(--line); border-radius:11px; background:var(--surface);
+  padding:13px 14px; margin-bottom:15px;
 }
-.cue.is-hot{ border-left-color:var(--good); }
-.cue.is-warm{ border-left-color:var(--gold); }
-.cue.is-cold{ border-left-color:var(--bad); }
-.cuehead{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.cuehead .spacer{ flex:1 1 auto; }
-.cuehead .btn{ padding:5px 10px; font-size:12px; }
-.cuehead .seg{ padding:2px; }
-.cuehead .seg button{ padding:4px 9px; font-size:11.5px; }
-.cuepill{
-  display:inline-flex; align-items:center; gap:6px;
-  padding:4px 12px; border-radius:999px; font-size:13.5px; font-weight:800; white-space:nowrap;
-  background:var(--flat-bg); color:var(--flat);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 25%, transparent);
+.actcards-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.actcards-head h3{ margin:0; font-size:13.5px; letter-spacing:.02em; }
+.actlist{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+.act{
+  border:1px solid var(--line); border-left:3px solid var(--line-2); border-radius:9px;
+  background:var(--surface-2); padding:10px 12px; min-width:0;
 }
-.cue.is-hot  .cuepill{ background:var(--good-bg); color:var(--good); }
-.cue.is-warm .cuepill{ background:var(--gold-bg); color:var(--gold-ink); }
-.cue.is-cold .cuepill{ background:var(--bad-bg);  color:var(--bad); }
-.cuepill .dot{ width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
-.cuesub{ font-size:12px; color:var(--ink-3); min-width:0; }
-.cuelines{ list-style:none; margin:11px 0 0; padding:0; display:flex; flex-direction:column; gap:7px; }
-.cuelines li{
-  font-size:16.5px; line-height:1.5; font-weight:700; letter-spacing:-.01em;
-  padding-left:15px; position:relative; overflow-wrap:anywhere;
+.act.is-now{ border-left-color:var(--good); }
+.act.is-warn{ border-left-color:var(--gold); }
+.act.is-bad{ border-left-color:var(--bad); }
+.act .t{ font-weight:700; font-size:13px; display:block; }
+.act .n{
+  display:block; margin-top:4px; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:17px; font-weight:600; letter-spacing:-.02em;
 }
-.cuelines li::before{
-  content:"「"; position:absolute; left:0; top:0; color:var(--ink-3); font-weight:400;
-}
-.cuelines li::after{ content:"」"; color:var(--ink-3); font-weight:400; }
-.cuelines li b{ color:var(--gold-ink); font-family:var(--font-num); font-variant-numeric:tabular-nums; }
-.cueact{
-  margin:12px 0 0; padding:9px 12px; border-radius:7px;
-  background:var(--surface-2); font-size:13px; color:var(--ink-2);
-}
-.cueact b{ color:var(--ink); }
-/* 読み上げ用の行と混ざらないよう、自分用のメモだと明示する */
-.cueact .tag{
-  display:inline-block; margin-right:8px; padding:1px 7px; border-radius:999px;
-  font-size:10.5px; font-weight:800; letter-spacing:.08em; vertical-align:1px;
-  background:var(--line); color:var(--ink-3);
-}
-@media (max-width: 560px){
-  .cuelines li{ font-size:15px; }
-}
+.act .b{ display:block; margin-top:4px; font-size:12px; color:var(--ink-2); line-height:1.55; }
+.act .btn{ margin-top:9px; padding:5px 11px; font-size:12px; }
 
 /* ============================================================
    排出パネル
@@ -1126,7 +1103,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='5f34d63 (08/20 19:47)';</script>
+<script>window.__BUILD='b4a1cbb (08/20 20:08)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1351,23 +1328,15 @@ window.__SYNC_DEFAULTS = {
 
     <div id="liveNotice"></div>
 
-    <!-- カンペ。いまの残りから読み上げる用の文を組み立てる -->
-    <section class="cue" id="cue">
-      <div class="cuehead">
-        <span class="cuepill" id="cuePill"><span class="dot"></span><span id="cueLevel">—</span></span>
-        <span class="cuesub" id="cueSub">—</span>
-        <span class="spacer"></span>
-        <div class="seg" role="group" aria-label="カンペの口調">
-          <button type="button" data-tone="hot"  id="toneHot">たたき売り</button>
-          <button type="button" data-tone="calm" id="toneCalm">ふつう</button>
-        </div>
-        <button type="button" class="btn ghost" id="btnCueSwap">別の言い方</button>
-        <button type="button" class="btn ghost" id="btnCueFold">たたむ</button>
+    <!-- いま何をすると売上が伸びるか。**上位 3 枚だけ**出す。
+         以前はここに読み上げ用のカンペを置いていたが、現場で使われていなかった
+         （運用者の判断 2026-08-19）。読む文ではなく、押す行動を出す -->
+    <section class="actcards" id="actCards" hidden>
+      <div class="actcards-head">
+        <h3>いま効く手</h3>
+        <span class="hint" id="actsSub"></span>
       </div>
-      <div id="cueBody">
-        <ul class="cuelines" id="cueLines"></ul>
-        <p class="cueact" id="cueAct"></p>
-      </div>
+      <div class="actlist" id="actList"></div>
     </section>
 
     <div class="kpis">
@@ -1552,10 +1521,10 @@ window.__SYNC_DEFAULTS = {
           <div class="g-step">
             <span class="g-num">2</span>
             <div>
-              <h4>上のカンペを読む</h4>
+              <h4>上の「いま効く手」を見る</h4>
               <p class="g-big">
-                <code>「」</code> が付いた行は<b>そのまま読み上げていい</b>。
-                いちばん下の <code>自分用</code> は読まない。
+                いまの数字から、<b>次にやると売上が伸びること</b>を 3 つまで出す。
+                上ほど効く（押すだけで売上に入るものが先に来る）。
               </p>
               <p>
                 読み上げ行に出る数字は<b>残り口数と相場だけ</b>。単価・還元率・確率は出さない。
@@ -3635,13 +3604,20 @@ function simulateBreakup(o, topMult, minReturn){
 }
 
 /* ============================================================
-   カンペ
+   いま効く手（行動カード）
 
-   配信しながら読み上げる文を、いまの残りから組み立てる。
-   このアプリは通信しないので、文はここで作る（外に問い合わせない）。
-   数字はすべて compute() の結果そのままで、盛らない。
-   盛ると「言ったのに出ない」で信用を落とすほうが高くつく。
+   「次に何をすれば売上が伸びるか」を、いまの状態から組み立てて**上位 3 枚**出す。
+   読み上げ用のカンペは現場で使われていなかったので外した（運用者の判断 2026-08-19）。
+
+   決まりごと：
+   ・**数字は compute() / decideNow() のものをそのまま使う。**盛らない
+   ・値下げの判断は decideNow に一本化する。**そのまま続けた場合の利益**と
+     **値下げして売り切った場合の利益**を比べ、高いほうを採る（運用者の指示）。
+     「N 分止まっている」も、下げたほうが利益が高いときだけ出す
+   ・並べ替えは**金額（取りこぼしている額・増える額）**で決める。時間や気分で
+     決めない。押すだけで売上が増えるものがいちばん上に来る
    ============================================================ */
+
 
 /** 残っている目玉。目玉の線は解体シミュレーションと同じ（単価 × 倍率）*/
 function topsLeft(c){
@@ -3656,6 +3632,7 @@ function topsLeft(c){
   return { line, list: out, count: out.reduce((n, x) => n + x.rest, 0) };
 }
 
+
 /** 残り L 口・当たり T 口のとき、N 口引いて1本以上出る確率（非復元） */
 function pWithin(L, T, N){
   if(T <= 0 || L <= 0) return 0;
@@ -3669,203 +3646,136 @@ function pWithin(L, T, N){
   return 1 - miss;
 }
 
-/** 半々（50%）に届くまでの口数。届かなければ 0 */
-function halfDraws(L, T){
-  if(T <= 0) return 0;
-  for(let n = 1; n <= L; n++) if(pWithin(L, T, n) >= 0.5) return n;
-  return 0;
+/**
+ * いま効く手を組み立てる。返すのは {key, tone, title, num, body, act} の配列。
+ * `score` は円。押すと増える／取りこぼしている額で並べる。
+ */
+function actionCards(c){
+  const out = [];
+  // 締めたあとに「次の手」は無い。記録を見る画面なので何も出さない
+  if(!S || S.closedAt) return out;
+  const dec = c.left > 0 && !S.closedAt ? decideNow(c) : null;
+  const p   = paceOf(S);
+  const idle = p ? Date.now() - p.lastAt : 0;
+  // 止まっているとみなす時間は、ペースの中断判定と同じ物差しにそろえる。
+  // **定数として上に置かない**（PACE_PAUSE_MS より前に評価されて読み込みが止まる）
+  const idleLine = PACE_PAUSE_MS;
+  const add = x => { if(x) out.push(x); };
+
+  // 1. 押すだけで売上に入るもの（取りこぼし）。いちばん強い
+  if(c.pendingSlots > 0) add({
+    key: "pending", tone: "is-now", score: c.pendingRev + 1e6,
+    title: "開封待ちが残っている", num: `${c.pendingSlots} 口 ／ ${yen(c.pendingRev)}`,
+    body: "出たカードを押すまで売上に入らない。押して確定させる。",
+  });
+
+  const inbox = !S.closedAt ? ordersFor(S).pending : [];
+  if(inbox.length) add({
+    key: "inbox", tone: "is-now",
+    score: inbox.reduce((n, x) => n + x.price * x.qty, 0) + 1e6,
+    title: "取り込んでいない入金がある",
+    num: `${inbox.length} 件 ／ ${yen(inbox.reduce((n, x) => n + x.price * x.qty, 0))}`,
+    body: "入金まで済んだ落札。受信箱の「これで登録」を押すとそのまま落札になる。",
+  });
+
+  // 2. 値下げ。**そのまま続けるより利益が高いときだけ**出す
+  const cut = dec && dec.best && dec.stay && dec.best.p < dec.stay.p ? dec : null;
+  const cutGain = cut ? Math.round(cut.cutGain) : 0;
+  if(cut && cutGain > 0){
+    const off = Math.round((1 - cut.best.p / cut.stay.p) * 100);
+    if(idle > idleLine) add({
+      key: "idle", tone: "is-warn", score: cutGain,
+      title: `${fmtDur(idle)} 動いていない`, num: `${yen(cut.best.p)} まで下げる`,
+      body: `そのまま ${yen(cut.stay.p)} で続けるより、中央で ${yen(cutGain)} 高い`
+          + `（${off}% オフ）。`,
+      act: "price",
+    });
+    else add({
+      key: "cut", tone: "is-warn", score: cutGain,
+      title: "下げたほうが利益が高い", num: `${yen(cut.best.p)} まで下げる`,
+      body: `そのまま続けた場合より中央で ${yen(cutGain)} 高い（${off}% オフ）。`,
+      act: "price",
+    });
+  }else if(idle > idleLine && dec && !dec.dead){
+    // 止まってはいるが、下げても利益は増えない読み。**下げろとは言わない**
+    add({
+      key: "idle-hold", tone: "is-warn", score: Math.max(1, Math.round(idle / 60000)),
+      title: `${fmtDur(idle)} 動いていない`, num: "値下げは効かない読み",
+      body: "下げても中央の利益は増えない。目玉の見せ方を変えるか、"
+          + "残り口数と還元率を言って押す。",
+    });
+  }
+
+  // 3. 終わりどき
+  if(dec && dec.verdict === "stop") add({
+    key: "stop", tone: "is-bad", score: Math.abs(Math.round(dec.gain)),
+    title: dec.dead ? "もう回らない" : "ここで終了したほうが得",
+    num: "解体して組み直す",
+    body: dec.dead
+      ? "解体条件に達している。下げても買い手は動かない。"
+      : `続けるより ${yen(Math.abs(Math.round(dec.gain)))} 上回る。`
+        + `残り還元率 ${pct(c.returnLeft, 0)}。`,
+  });
+
+  // 4. 売り文句になる材料
+  const T = topsLeft(c);
+  if(T.count > 0 && c.left > 0) add({
+    key: "tops", tone: "",
+    // 残っている目玉の相場合計。**言える材料の大きさ**でほかの札と比べる
+    score: Math.round(T.list.reduce((n, x) => n + (x.mkt || 0) * x.rest, 0) / 100),
+    title: "目玉がまだ残っている",
+    num: `${T.count} 口 ／ 残り ${c.left} 口`,
+    body: `残り還元率 ${pct(c.returnLeft, 0)}。この 2 つは配信で言える数字。`,
+  });
+
+  // 5. ペースが落ちている（値下げの話とは別に、見せ方の問題として出す）
+  if(p && p.pace > 0 && p.recentPace > 0 && p.recentPace < p.pace * 0.6 && idle <= idleLine){
+    add({
+      key: "slow", tone: "is-warn", score: Math.round(p.gmv - p.recentGmv),
+      title: "ペースが落ちている",
+      num: `${p.recentPace.toFixed(1)} 口/時（全体 ${p.pace.toFixed(1)}）`,
+      body: "同じ見せ方で回らなくなっている。目玉を出し直すか、口数を言って締める。",
+    });
+  }
+
+  // 6. 完売が近い
+  const eta = c.left > 0 ? etaOf(S, c) : null;
+  if(eta && !eta.stalled && eta.ms > 0 && eta.left > 0 && eta.ms < 30 * 60000) add({
+    key: "eta", tone: "is-now", score: Math.round(c.left * (c.price || 0) / 10),
+    title: "完売が近い", num: `残り ${eta.left} 口 ／ あと ${fmtDur(eta.ms)}`,
+    body: "追い込みの声かけが効く。残り口数を出して締める。",
+  });
+
+  // 7. 時給が落ちている
+  if(p && p.gmv > 0 && p.recentGmv > 0 && p.recentGmv < p.gmv * 0.7 && idle <= idleLine) add({
+    key: "gmv", tone: "is-warn", score: Math.round(p.gmv - p.recentGmv),
+    title: "時給が落ちている",
+    num: `${yen(Math.round(p.recentGmv))}/時（全体 ${yen(Math.round(p.gmv))}/時）`,
+    body: "このままだと今夜の平均を下回る。値下げか、終わりどきの検討。",
+  });
+
+  return out.sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-/** 直近に出た「見せ場」。単価の2倍以上の相場のものを新しい順に探す */
-function lastHit(c){
-  const byId = new Map(c.o.prizes.map(p => [p.id, p]));
-  for(let i = c.o.events.length - 1; i >= 0; i--){
-    const p = byId.get(c.o.events[i].prizeId);
-    if(p && mktOf(p) >= c.price * 2) return { p, ago: c.o.events.length - 1 - i };
-  }
-  return null;
-}
+function renderActCards(c){
+  const box = $("actCards");
+  if(!box) return;
+  if(!S){ box.hidden = true; return; }
+  const cards = actionCards(c);
+  box.hidden = !cards.length;
+  if(!cards.length){ $("actList").innerHTML = ""; return; }
 
-/* 同じことを何度も言わないよう、言い回しを何通りか持って回す */
-let cueVariant = 0;
-const pick = (arr, v) => arr[((v % arr.length) + arr.length) % arr.length];
+  $("actsSub").textContent = "いまの数字から。押す順に並べてある";
+  $("actList").innerHTML = cards.map(k => `<div class="act ${k.tone || ""}">`
+    + `<span class="t">${k.title}</span>`
+    + `<span class="n">${k.num}</span>`
+    + `<span class="b">${k.body}</span>`
+    + (k.act === "price" && mode !== "watch" && !S.closedAt
+        ? `<button type="button" class="btn" data-actprice="1">この価格に変更</button>` : "")
+    + `</div>`).join("");
 
-/* 口調。読み上げる文の言い回しだけを変える。
-
-   **読み上げ行に出す数字は「残り口数」と「相場」だけ。**
-   単価・還元率・確率・1口あたりの期待値は出さない（運用者の指示）。
-   商売の内訳を配信で言う筋合いはないし、確率を口に出すと後で揉める。
-   熱さは「激熱！」「残り熱！」のような言葉に寄せてふわっと伝える。
-   数字そのものは画面のメーターと「自分用」の行で見る。 */
-let cueTone = "hot";
-try{ if(localStorage.getItem("oripa-stg-cue-tone") === "calm") cueTone = "calm"; }catch(_){}
-
-/* x は buildCue が作る材料。各関数は候補の配列を返し、pick() が回して選ぶ。 */
-const CUE_TONE = {
-  /* 落ち着いた口調 */
-  calm: {
-    open: x => x.T > 0
-      ? [`残り<b>${x.L}口</b>。${x.names}がまだ残ってます`,
-         `${x.names}、まだ出てません。残り<b>${x.L}口</b>です`,
-         `狙いは${x.topName}。残り<b>${x.L}口</b>の中にまだあります`]
-      : [`大物はもう出きりました。残り<b>${x.L}口</b>です`,
-         `上のほうは抜けきってます。残り<b>${x.L}口</b>`],
-    tease: x => [`${x.topName}、相場<b>${x.topMkt}</b>のやつです。まだ沈んでます`,
-                 `${x.topName}は相場<b>${x.topMkt}</b>。これがまだ残ってます`],
-    best: x => [`いま残ってるいちばんは${x.bestName}、相場<b>${x.bestMkt}</b>です`,
-                `頭は${x.bestName}。相場<b>${x.bestMkt}</b>です`],
-    heat: x => ({
-      hot:  [`いま濃いです。狙うならここ`, `残りが濃いので、引くならいまです`],
-      warm: [`まだ中身は残ってます`, `ここからもまだあります`],
-      flat: [`まだまだこれからです`, `ここからです`],
-      thin: [`正直、いまは渋いです。そのぶん安くします`, `渋いのは認めます。値段で返します`],
-      out:  [`上物は抜けました。ここからは値段で勝負します`, `大物は出きりました。安くしていきます`]
-    })[x.mood],
-    hit: x => [`さっき${x.hitName}が出ました。相場<b>${x.hitMkt}</b>です`,
-               `${x.hitName}、出ましたね。相場<b>${x.hitMkt}</b>です`],
-    cut: x => [`ここから値段を下げます`, `安くしていきます`],
-    last: x => [`残り<b>${x.L}口</b>。ここで終わりです`, `ラスト<b>${x.L}口</b>です`],
-    done: x => [`<b>${x.N}口</b>、完売しました。ありがとうございました`,
-                `これで全部です。<b>${x.N}口</b>ぜんぶ出ました`]
-  },
-
-  /* たたき売り。短く、区切って、たたみかける */
-  hot: {
-    open: x => x.T > 0
-      ? [`さあ次いくよ！残り<b>${x.L}口</b>！${x.topName}まだ沈んでる！`,
-         `はい次！残り<b>${x.L}口</b>！${x.names}、まだ誰も引いてないよ！`,
-         `いくよいくよ！${x.topName}がまだ入ってる！残り<b>${x.L}口</b>！`,
-         `お待たせ！${x.names}、これ狙いでしょ！残り<b>${x.L}口</b>！`]
-      : [`上物はもう抜けた！正直に言う！ここからは値段で勝負するよ！`,
-         `大物は出きった！隠さないよ！だから安くいく！残り<b>${x.L}口</b>！`,
-         `デカいのは出た！ここからは数で勝負！残り<b>${x.L}口</b>！`],
-    tease: x => [`${x.topName}！相場<b>${x.topMkt}</b>！これがまだ沈んでるよ！`,
-                 `狙いは${x.topName}！相場<b>${x.topMkt}</b>！まだ誰も当ててない！`,
-                 `${x.topName}、相場<b>${x.topMkt}</b>のやつ！これ持ってってよ！`],
-    best: x => [`いまの頭は${x.bestName}！相場<b>${x.bestMkt}</b>！`,
-                `残ってるいちばんは${x.bestName}！相場<b>${x.bestMkt}</b>だよ！`],
-    heat: x => ({
-      hot:  [`いま激熱！ここが一番おいしいとこ！`,
-             `のこ熱！残りが濃いよ、迷ってる場合じゃない！`,
-             `残り熱い！この状態で回せるの今だけ！`],
-      warm: [`まだ熱いよ！中身しっかり残ってる！`,
-             `のこ熱！まだまだ入ってるよ！`],
-      flat: [`まだまだこれから！ここからだよ！`,
-             `いくよいくよ、まだあるよ！`],
-      thin: [`正直ちょい渋い！だから安くいくよ！`,
-             `渋いのは認める！値段で返すよ！`,
-             `薄いのは隠さない！そのぶん下げる！`],
-      out:  [`上は抜けた！ここからは値段勝負！`,
-             `大物は出た！だから安くいくよ！`]
-    })[x.mood],
-    hit: x => [`出たー！${x.hitName}！相場<b>${x.hitMkt}</b>！`,
-               `${x.hitName}！これ相場<b>${x.hitMkt}</b>だよ、見た！？`,
-               `はい${x.hitName}持ってかれた！相場<b>${x.hitMkt}</b>！`],
-    cut: x => [`よし下げる！安くするよ！`,
-               `ここで下げた！いまが買いだよ！`,
-               `はい下げた！これで手ぇ上げて！`],
-    last: x => [`ラスト<b>${x.L}口</b>！終わっちゃうよ！`,
-                `残り<b>${x.L}口</b>！早い者勝ち！`,
-                `あと<b>${x.L}口</b>で締めるよ！`],
-    done: x => [`完売！<b>${x.N}口</b>ぜんぶ出た！ありがとう！`,
-                `はい終わり！<b>${x.N}口</b>完売！ありがとうございました！`]
-  }
-};
-
-function buildCue(c){
-  const v = cueVariant;
-  const t = CUE_TONE[cueTone] || CUE_TONE.hot;
-  const L = c.left, T = topsLeft(c);
-  const lines = [];
-
-  // --- いまの熱さ。読み上げ行では数字にせず言葉で伝える ---
-  let level, cls, mood;
-  if(L === 0){ level = "完売"; cls = ""; mood = "flat"; }
-  else if(c.heat >= 1.15){ level = "激熱"; cls = "is-hot"; mood = "hot"; }
-  else if(c.heat >= 1.05){ level = "熱い"; cls = "is-hot"; mood = "warm"; }
-  else if(c.heat >= 0.95){ level = "まだまだ"; cls = ""; mood = "flat"; }
-  else if(c.heat >= 0.80){ level = "ちょい渋い"; cls = "is-warm"; mood = "thin"; }
-  else { level = "出きった"; cls = "is-cold"; mood = "thin"; }
-  // 目玉の線を超える賞品が無くても、残りが濃いなら「安くいく」とは言わない
-  // （バッジが「激熱」なのに文が「大物は出た、安くする」だと食い違う）
-  if(T.count === 0 && L > 0 && c.heat < 1.05){ mood = "out"; }
-  // 添えの行は自分用。ここには数字を出してよい（読み上げるものではない）
-  const label = `残りの濃さ ${c.heat.toFixed(2)}× ／ 残り還元率 ${c.price > 0 ? pct(c.returnLeft, 0) : "—"}`;
-
-  const best = c.o.prizes
-    .map(p => ({ p, rest: Math.max(0, (p.count|0) - (c.drawnBy.get(p.id) || 0)), mkt: mktOf(p) }))
-    .filter(y => y.rest > 0).sort((a, b) => b.mkt - a.mkt)[0];
-  const hit = lastHit(c);
-
-  const x = {
-    L, N: c.N, T: T.count, mood,
-    names: T.list.slice(0, 2).map(y => `${y.p.name}${y.rest > 1 ? `が${y.rest}本` : ""}`).join("と"),
-    topName: T.list.length ? T.list[0].p.name : "",
-    topMkt:  T.list.length ? yen(T.list[0].mkt) : "",
-    bestName: best ? best.p.name : "", bestMkt: best ? yen(best.mkt) : "",
-    hitName: hit ? hit.p.name : "", hitMkt: hit ? yen(mktOf(hit.p)) : ""
-  };
-
-  if(L === 0){
-    return { cls: "is-hot", level: "完売", sub: `${c.N} 口すべて排出`,
-             lines: [pick(t.done(x), v)], act: "配信を終了して記録に残す。" };
-  }
-
-  // 残りが少ないときは、頭を「ラスト」に差し替える
-  lines.push(pick(L <= Math.max(5, Math.round(c.N * 0.08)) ? t.last(x) : t.open(x), v));
-  if(T.count > 0) lines.push(pick(t.tease(x), v));
-  else if(best) lines.push(pick(t.best(x), v));
-  lines.push(pick(t.heat(x), v));
-  if(hit && hit.ago <= 4) lines.push(pick(t.hit(x), v));
-  // 値下げの掛け声は、判断が「続ける」で 5% 以上下がるときだけ。
-  // 画面の判断と読み上げが食い違わないよう、同じ decideNow() を使う。
-  const dec = decideNow(c);
-  const goP = dec && dec.best ? dec.best.p : 0;
-  if(dec && dec.verdict !== "stop" && goP > 0 && c.price > 0 && (c.price - goP) / c.price >= 0.05){
-    lines.push(pick(t.cut(x), v));
-  }
-
-  // --- 裏で見るだけの一言（読み上げ用ではない。ここには数字を出す） ---
-  let act;
-  if(c.pendingSlots > 0){
-    act = `<b>開封待ちが ${c.pendingSlots} 口（${yen(c.pendingRev)}）。</b>`
-        + `出たカードを押すまで売上に入らない。`;
-  }else if(!dec || dec.verdict === "stop"){
-    act = dec && dec.dead
-      ? `<b>もう回らない。</b>解体条件に達しているので、下げても買い手は動かない。`
-      : `<b>ここで終了したほうが得。</b>`
-        + (dec ? `続けるより ${yen(Math.abs(Math.round(dec.gain)))} 上回る。` : "");
-    act += `残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
-  }else if(dec.verdict === "even"){
-    act = `<b>続けても終了しても差は ${yen(Math.abs(Math.round(dec.gain)))} 。</b>`
-        + `続けるなら ${yen(goP)}。残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
-  }else if(goP > 0 && goP < c.price){
-    act = `<b>${yen(goP)} まで下げて続ける（終了より ${yen(Math.round(dec.gain))} 得）。</b>`
-        + `残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
-  }else{
-    act = `<b>いまの価格のまま続けてよい。</b>残り還元率 ${pct(c.returnLeft, 0)}・目玉は残り ${T.count} 口。`;
-  }
-
-  return { cls, level, sub: label, lines: lines.slice(0, 5), act };
-}
-
-let cueOpen = true;
-try{ cueOpen = localStorage.getItem("oripa-stg-cue-fold") !== "1"; }catch(_){}
-
-function renderCue(c){
-  const el = $("cue");
-  if(!el) return;
-  const r = buildCue(c);
-  el.className = "cue" + (r.cls ? " " + r.cls : "");
-  $("cueLevel").textContent = r.level;
-  $("cueSub").textContent = r.sub;
-  $("cueLines").innerHTML = r.lines.map(t => `<li>${t}</li>`).join("");
-  $("cueAct").innerHTML = `<span class="tag">自分用</span>` + r.act;
-  $("cueBody").hidden = !cueOpen;
-  $("btnCueFold").textContent = cueOpen ? "たたむ" : "ひらく";
-  $("btnCueSwap").hidden = !cueOpen;
-  $("toneHot").setAttribute("aria-pressed", String(cueTone !== "calm"));
-  $("toneCalm").setAttribute("aria-pressed", String(cueTone === "calm"));
+  const btn = $("actList").querySelector("[data-actprice]");
+  if(btn) btn.addEventListener("click", applyDecidedPrice);
 }
 
 /* ============================================================
@@ -4127,7 +4037,11 @@ function decideNow(c){
      1 点だけ試す**。買い手が動かない読みなら期待値が伸びないので、エンジンが
      そのまま「解体」と言う。`hi` は文言で使うので書き換えず、探索の天井だけ広げる。 */
   const lo = Math.max(10, floor);
-  const top = Math.max(hi, lo);
+  /* 天井は**現行価格**まで広げる。`hi`（買い手が動く上限）で切ると、相場が薄い日は
+     「そのまま続ける」が候補にすら入らない。**比べるのは「そのまま続けた場合の
+     利益」と「値下げして売り切った場合の利益」で、高いほうを採る**
+     （運用者の指示 2026-08-19）。値上げはしないので現行価格が上限。 */
+  const top = Math.max(hi, lo, Math.round(Number(c.price) || 0));
 
   // 粗く振ってから、いちばん良かったところの周りを細かく見る
   const tried = [];
@@ -4139,6 +4053,7 @@ function decideNow(c){
   };
   const STEPS = 9;
   for(let i = 0; i < STEPS; i++) probe(lo + (top - lo) * i / (STEPS - 1));
+  probe(c.price);                       // 「そのまま続ける」は必ず候補に入れる
 
   let best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
   if(!best) return { verdict: "stop", stop, best: null, gain: 0, hi };
@@ -4171,7 +4086,13 @@ function decideNow(c){
   const dead = !best.r || best.r.moreMean < 0.5;
   if(dead) verdict = "stop";
 
-  return { verdict, stop, best, gain, hi, lo, dead };
+  /* 「そのまま続けた場合」も返す。画面と行動カードが**同じ数字**で話せるように。
+     値下げの判断はここを基準に「下げたほうが利益が高いか」で決める。 */
+  const stayR = simAtPrice(c, Math.max(10, Math.round(Number(c.price) || 0)), topMult, minReturn);
+  const stay = stayR ? { p: Math.round(Number(c.price) || 0), r: stayR, mid: stayR.cashMed } : null;
+  const cutGain = stay && best.r ? best.r.cashMed - stay.mid : 0;
+
+  return { verdict, stop, best, gain, hi, lo, dead, stay, cutGain };
 }
 
 /* ============================================================
@@ -4479,20 +4400,6 @@ function submitDraw(atListPrice){
   closeDraw({ price: d.price, rem: d.rem, qty: d.qty, buyer,
               kind: (d.price === c.price && d.rem === 0 && !buyer) ? "instant" : "auction" });
 }
-
-/* ---- カンペ ---- */
-$("btnCueSwap").addEventListener("click", () => { cueVariant++; renderCue(compute()); });
-["toneHot", "toneCalm"].forEach(id =>
-  $(id).addEventListener("click", () => {
-    cueTone = $(id).dataset.tone;
-    try{ localStorage.setItem("oripa-stg-cue-tone", cueTone); }catch(_){}
-    renderCue(compute());
-  }));
-$("btnCueFold").addEventListener("click", () => {
-  cueOpen = !cueOpen;
-  try{ localStorage.setItem("oripa-stg-cue-fold", cueOpen ? "0" : "1"); }catch(_){}
-  renderCue(compute());
-});
 
 $("drawForm").addEventListener("submit", e => { e.preventDefault(); submitDraw(false); });
 $("drawList").addEventListener("click", () => submitDraw(true));
@@ -5215,7 +5122,7 @@ function renderLive(c){
     ? "まだ排出なし"
     : `手数料 ${pct(c.feeRate, 1)}（${syen(-Math.round(c.feeNow))}）を引いたあと`;
 
-  renderCue(c);
+  renderActCards(c);
   renderInbox(c);
   renderLotBar(c);
   renderPrizes(c);
@@ -7334,12 +7241,14 @@ document.querySelectorAll("[data-price]").forEach(b => b.addEventListener("click
   render();
 }));
 
-$("btnApply").addEventListener("click", () => {
+/** 推奨価格を現在の販売単価に当てる。「この価格に変更」と行動カードで共用する */
+function applyDecidedPrice(){
   touchLive();
   if(decidedPrice > 0 && decidedPrice !== S.price){
     S.price = decidedPrice; render();
   }
-});
+}
+$("btnApply").addEventListener("click", applyDecidedPrice);
 
 $("fPrice").addEventListener("change", e => {
   S.price = Math.max(0, Math.round(Number(e.target.value) || 0));
