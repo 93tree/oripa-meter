@@ -832,6 +832,8 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
   padding:9px 13px; font-size:12px; font-weight:800; color:var(--good);
 }
 .inbox .head .sub{ font-size:11.5px; font-weight:400; color:var(--ink-3); }
+/* 見出しに付く「まとめて消す」。右端に寄せて、押す本線（これで登録）と離す */
+.inbox .head .btn{ margin-left:auto; }
 .inbox .row{
   display:flex; align-items:center; gap:10px; flex-wrap:wrap;
   padding:10px 13px; background:var(--surface); border-top:1px solid var(--line);
@@ -1168,7 +1170,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='618e59e (08/20 21:55)';</script>
+<script>window.__BUILD='826098d (08/20 23:46)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -5180,10 +5182,19 @@ function renderOrderNotice(){
   }
 
   if(ready.length || wait || older || orphans){
-    const lines = ready.map(x => {
+    /* 取り込んでいない落札があるオリパ。**入金済みが 0 でも、配信前に届いた
+       ぶんだけ溜まっていることがある。**そこを `ready`（入金済みがあるもの）
+       だけで絞っていたので、配信前のぶんしか無いときにボタンが 1 つも出ず、
+       消す口が無くなっていた（運用者の報告 2026-08-20）。 */
+    const has = per.filter(x => x.pending.length || x.earlier.length);
+    const lines = has.map(x => {
       const n = x.pending.length + x.earlier.length;
+      const name = esc(x.o.name || "無題のオリパ");
       return `<button type="button" class="btn" data-open="${esc(String(x.o.id))}">`
-        + `${esc(x.o.name || "無題のオリパ")} を配信画面でひらく（${x.pending.length} 件）</button>`
+        + (x.pending.length
+            ? `${name} を配信画面でひらく（${x.pending.length} 件）`
+            : `${name} の受信箱をひらく（${x.earlier.length} 件）`)
+        + `</button>`
         // 出すつもりの無い回のぶんは、取り込まずにここで片付けられるようにする
         + `<button type="button" class="btn" data-dropfor="${esc(String(x.o.id))}">`
         + `取り込まずに消す（${n} 件）</button>`;
@@ -5779,7 +5790,11 @@ function renderInbox(c){
     + (earlier.length
       ? `<div class="head is-wait">配信前に届いた注文 ${earlier.length} 件`
         + `<span class="sub">この配信より前のぶん。入金は確認できている。`
-        + `自動では立たないので、この配信で出すものだけ押す</span></div>`
+        + `自動では立たないので、この配信で出すものだけ押す</span>`
+        // 出すつもりが無いなら 1 件ずつ消さずに済むようにする
+        + (watch ? "" : `<button type="button" class="btn skip" data-dropearlier="1">`
+            + `${earlier.length} 件まとめて消す</button>`)
+        + `</div>`
         + earlier.map(x => line(x,
             (watch ? "" : `<button type="button" class="btn" data-take="${esc(x.id)}"`
               + `${busy ? " disabled" : ""}>これで登録</button>`)
@@ -5802,6 +5817,10 @@ function renderInbox(c){
   });
   box.querySelectorAll("[data-dropunlinked]").forEach(btn => {
     btn.addEventListener("click", dropUnlinkedOrders);
+  });
+  box.querySelectorAll("[data-dropearlier]").forEach(btn => {
+    btn.addEventListener("click", () => dropOrders(ordersFor(S).earlier,
+      `「${S.name || "無題のオリパ"}」に配信前から届いていた注文`));
   });
 }
 
