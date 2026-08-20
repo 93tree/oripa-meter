@@ -1119,7 +1119,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='6177bf2 (08/20 19:23)';</script>
+<script>window.__BUILD='5f34d63 (08/20 19:46)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -3365,13 +3365,25 @@ function compute(o){
 
 /* 配信で口に出す数字なので、半端な額は出さない。
    ¥4,863 のような値を出されても「じゃあ 4,863 円で」とは言えない。 */
+/** キリのいい額の刻み。配信で口に出す数字なので ¥2,088 では使えない */
+function priceStepOf(v){
+  return v >= 50000 ? 1000
+       : v >= 10000 ? 500
+       : v >= 1000  ? 100
+       : v >= 300   ? 50
+       : 10;
+}
+
+/** 下限に合わせるときは**切り上げ**る。切り下げると下限を割ってしまう */
+function roundPriceUp(v){
+  if(v <= 0) return 0;
+  const step = priceStepOf(v);
+  return Math.ceil(v / step) * step;
+}
+
 function roundPrice(v){
   if(v <= 0) return 0;
-  const step = v >= 50000 ? 1000
-             : v >= 10000 ? 500
-             : v >= 1000  ? 100
-             : v >= 300   ? 50
-             : 10;
+  const step = priceStepOf(v);
   // 切り下げではなく四捨五入。切り下げだと刻みが粗いところで
   // 期待値を無駄に落とす（¥4,863 → ¥4,500 で 4% 損した）
   return Math.round(v / step) * step;
@@ -4091,24 +4103,36 @@ function decideNow(c){
      上限を超えるとき（原価より安くしか売れない局面）は 1 点に潰す。**そこで
      打ち切らずにエンジンに判断させる**（競り上がる読みがあるので、原価ちょうどでも
      続けたほうが得なことがある）。 */
-  const floor = Math.max(10, Math.round(Math.max(Number(c.evCost) || 0, Number(c.pBE) || 0)));
-  const lo = Math.max(10, Math.min(hi, floor));
+  /* さらに**下げ幅そのものに上限**を置く（運用者の指示 2026-08-19）。
+     現行価格から `MAX_OFF` を超えて下げる提案はしない。原価や損益分岐から見て
+     まだ下げられる局面でも、配信の値付けとしては下げすぎになるため。 */
+  const capFloor = Math.round((c.price || 0) * (1 - MAX_OFF));
+  let floor = Math.max(10, Math.round(Math.max(
+    Number(c.evCost) || 0, Number(c.pBE) || 0, capFloor)));
+  // 現行価格は超えない。原価のほうが高い局面でも、配信中に値上げはしない
+  if(c.price > 0) floor = Math.min(floor, Math.round(c.price));
+
+  /* 買い手が動く上限（`hi`）より下限のほうが高いことがある。そのときは**下限で
+     1 点だけ試す**。買い手が動かない読みなら期待値が伸びないので、エンジンが
+     そのまま「解体」と言う。`hi` は文言で使うので書き換えず、探索の天井だけ広げる。 */
+  const lo = Math.max(10, floor);
+  const top = Math.max(hi, lo);
 
   // 粗く振ってから、いちばん良かったところの周りを細かく見る
   const tried = [];
   const probe = p => {
     const k = Math.max(10, Math.round(p));
-    if(k > hi || tried.some(t => t.p === k)) return;
+    if(k > top || tried.some(t => t.p === k)) return;
     const r = simAtPrice(c, k, topMult, minReturn);
     if(r) tried.push({ p: k, ev: r.cashMean, r });
   };
   const STEPS = 9;
-  for(let i = 0; i < STEPS; i++) probe(lo + (hi - lo) * i / (STEPS - 1));
+  for(let i = 0; i < STEPS; i++) probe(lo + (top - lo) * i / (STEPS - 1));
 
   let best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
   if(!best) return { verdict: "stop", stop, best: null, gain: 0, hi };
 
-  const step = (hi - lo) / (STEPS - 1);
+  const step = (top - lo) / (STEPS - 1);
   for(const d of [-0.5, -0.25, 0.25, 0.5]) probe(best.p + step * d);
   best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
 
@@ -4116,9 +4140,11 @@ function decideNow(c){
   // 丸めたぶん期待値は少し動くが、動いたあとの数字をそのまま表示するので画面の中では辻褄が合う。
   // 上限（買い手が動く額）は超えられないので、はみ出したら 1 段下げる
   let rounded = Math.max(10, roundPrice(best.p) || best.p);
-  if(rounded > hi) rounded = Math.max(10, roundPrice(hi) <= hi ? roundPrice(hi) : roundPrice(hi * 0.98));
-  // 丸めで下限（中身の原価）を割らない。キリのよさより、原価を割らないことが先
-  if(rounded < lo) rounded = lo;
+  if(rounded > top) rounded = Math.max(10, roundPrice(top) <= top ? roundPrice(top) : roundPrice(top * 0.98));
+  /* 丸めで下限を割らない。ただし**キリのいい額のまま**上へ合わせる
+     （そのまま `lo` にすると ¥4,250 のような口に出せない額になる）。
+     現行価格は超えない（配信中に値上げはしない）。 */
+  if(rounded < lo) rounded = Math.min(c.price || Infinity, roundPriceUp(lo)) || lo;
   const rr = simAtPrice(c, rounded, topMult, minReturn);
   if(rr) best = { p: rounded, ev: rr.cashMean, r: rr };
 
@@ -4148,6 +4174,11 @@ function decideNow(c){
    ペースが実態より遅く出るので、長い空白は「中断」として実働から外す。
    ============================================================ */
 const PACE_PAUSE_MS = 10 * 60 * 1000;   // これ以上空いたら中断とみなす（ペース計算用）
+
+/* 値下げの上限。**現行価格からこれ以上は下げない。**
+   原価や損益分岐から見ればまだ下げられる局面でも、配信の値付けとしては
+   下げすぎになる（運用者の指示 2026-08-19：「MAX で 15% オフまで」）。 */
+const MAX_OFF = 0.15;
 // 一覧の「配信中」バッジ用。ペースより緩くしてある。遅い配信（16口/時なら1口4分）で
 // たまたま10分空いただけで「途中のまま」に落ちるとかえって紛らわしいため。
 const LIVE_IDLE_MS = 20 * 60 * 1000;
@@ -5942,11 +5973,14 @@ function renderPrice(c){
     const diff = c.price - goPrice;
     const adj = priceAdj ? `／手動で ${priceAdj > 0 ? "+" : ""}${yen(priceAdj)}` : "";
     const held = floor > raw ? `／直近の落札に合わせて据え置き` : "";
+    // 下げ幅が上限に張り付いているときは、そう言う（「なぜここで止まるのか」を隠さない）
+    const capped = diff > 0 && diff >= Math.round(c.price * MAX_OFF) - 1
+      ? `／下げ幅は ${pct(MAX_OFF, 0)} まで` : "";
     $("recDelta").textContent = ((go || even)
       ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
          : diff < 0 ? `現行から ${yen(-diff)} 上げ`
          : "現行価格のまま（下げる理由なし）")
-      : `残りを在庫に戻す`) + held + adj;
+      : `残りを在庫に戻す`) + held + capped + adj;
 
     // **続けた場合の振れ幅を出す。**「いま解体」は現時点での利益と同じ額に
     // なるので別枠にしない（解体したカードは原価のまま在庫に戻るため）。
