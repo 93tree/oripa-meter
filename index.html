@@ -1163,7 +1163,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='826098d (08/20 23:47)';</script>
+<script>window.__BUILD='a8efee3 (08/21 00:22)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -3853,7 +3853,7 @@ function actionCards(c){
       key: "idle-hold", tone: "is-warn", score: Math.max(1, Math.round(idle / 60000)),
       title: `${fmtDur(idle)} 動いていない`, num: "値下げは効かない読み",
       body: "下げても今夜の利益額は増えない（速くなるぶんより 1 口の利益が減るぶんが大きい）。"
-          + "目玉の見せ方を変えるか、残り口数と還元率を言って押す。",
+          + "目玉の見せ方を変えるか、残り口数と目玉の残りを言って押す。",
     });
   }
 
@@ -3865,7 +3865,7 @@ function actionCards(c){
     body: dec.dead
       ? "解体条件に達している。下げても買い手は動かない。"
       : `続けるより ${yen(Math.abs(Math.round(dec.gain)))} 上回る。`
-        + `残り還元率 ${pct(c.returnLeft, 0)}。`,
+        + `残り ${c.left} 口は在庫に戻して組み直す。`,
   });
 
   // 4. 売り文句になる材料
@@ -3876,7 +3876,11 @@ function actionCards(c){
     score: Math.round(T.list.reduce((n, x) => n + (x.mkt || 0) * x.rest, 0) / 100),
     title: "目玉がまだ残っている",
     num: `${T.count} 口 ／ 残り ${c.left} 口`,
-    body: `残り還元率 ${pct(c.returnLeft, 0)}。この 2 つは配信で言える数字。`,
+    // 還元率は出さない（運用者の指示 2026-08-20）。代わりに**当たる確率**を出す。
+    // 配信で言うのはこちらのほうが直接効く（「次の 1 口で 4% 当たります」）
+    body: `次の 1 口でどれか当たる ${pct(pWithin(c.left, T.count, 1), 1)}`
+        + `／あと 10 口引けば ${pct(pWithin(c.left, T.count, Math.min(10, c.left)), 0)}。`
+        + `この 2 つは配信で言える数字。`,
   });
 
   // 5. ペースが落ちている（値下げの話とは別に、見せ方の問題として出す）
@@ -4192,7 +4196,14 @@ function decideNow(c){
      「そのまま続ける」が候補にすら入らない。**比べるのは「そのまま続けた場合の
      利益」と「値下げして売り切った場合の利益」で、高いほうを採る**
      （運用者の指示 2026-08-19）。値上げはしないので現行価格が上限。 */
-  const top = Math.max(hi, lo, Math.round(Number(c.price) || 0));
+  const top0 = Math.max(hi, lo, Math.round(Number(c.price) || 0));
+  /* **実際に売れている額より高い提案はしない**（運用者の指摘 2026-08-20）。
+     現行 ¥9,000・直近の落札 ¥8,000 のときに ¥8,900 を勧めても、その値では
+     誰も買っていない。天井を実績（直近 5 件の中央値）まで下ろす。
+     下限（`lo`＝下げ幅 15% の線）は割らない。実績が無いうちは今までどおり。
+     競り上がって実績が現行を超えている日は、天井は現行のままになる。 */
+  const seen = recentMid(c.o);
+  const top = seen > 0 ? Math.max(lo, Math.min(top0, Math.round(seen))) : top0;
 
   /* ---- GMV を数に入れる ----
      比べるのは**今夜さばける口数まで**の利益額（運用者の指示 2026-08-19：
@@ -4292,7 +4303,7 @@ function decideNow(c){
   const stay = planOf(nowPrice, simAtPrice(c, nowPrice, topMult, minReturn));
   const cutGain = stay && bestPlan ? bestPlan.mid - stay.mid : 0;
 
-  return { verdict, stop, best, gain, hi, lo, dead,
+  return { verdict, stop, best, gain, hi, lo, top, seen, dead,
            stay, cutGain, plan: bestPlan, hoursLeft,
            elast: pm ? pm.elast : 0, elastMeasured: !!(pm && pm.measured) };
 }
@@ -6352,6 +6363,17 @@ let decidedPrice = 0;
 let priceAdj = 0, priceAdjKey = "";
 
 /**
+ * **実際にいくらで売れているか。**直近 5 件（排出まで済んだぶん）の中央値。
+ * 提案の下限と上限は、どちらもこの実績から引く。0 なら実績が無い。
+ */
+function recentMid(o){
+  const done = lotDrawn(o);
+  const ps = (o.lots || []).filter(l => (done.get(l.id) || 0) > 0).slice(-5)
+    .map(l => Number(l.price) || 0).filter(v => v > 0).sort((a, b) => a - b);
+  return ps.length ? ps[Math.floor(ps.length / 2)] : 0;
+}
+
+/**
  * 直近の落札から見た下限。
  *
  * 計算だけで価格を出すと、目玉が出きった直後などに**いま買われている額より
@@ -6360,12 +6382,8 @@ let priceAdj = 0, priceAdjKey = "";
  * 直近の落札の中央値の 7 割を下限に置く。
  */
 function recentFloor(o){
-  const done = lotDrawn(o);
-  const ps = o.lots.filter(l => (done.get(l.id) || 0) > 0).slice(-5)
-    .map(l => Number(l.price) || 0).filter(v => v > 0).sort((a, b) => a - b);
-  if(!ps.length) return 0;
-  const mid = ps[Math.floor(ps.length / 2)];
-  return roundPrice(mid * 0.7);
+  const mid = recentMid(o);
+  return mid > 0 ? roundPrice(mid * 0.7) : 0;
 }
 
 /* 値下げ判断は「完売したら」ではなく「解体まで売ったら」で出す。
@@ -6478,11 +6496,14 @@ function renderPrice(c){
     // 下げ幅が上限に張り付いているときは、そう言う（「なぜここで止まるのか」を隠さない）
     const capped = diff > 0 && diff >= Math.round(c.price * MAX_OFF) - 1
       ? `／下げ幅は ${pct(MAX_OFF, 0)} まで` : "";
+    // 実績より上を出さないために天井を下ろしたときは、その理由を出す
+    const seenCap = dec.seen > 0 && dec.top < Math.round(c.price) && goPrice >= dec.top - 1
+      ? `／直近 5 件の落札（中央 ${yen(Math.round(dec.seen))}）より上は出さない` : "";
     $("recDelta").textContent = ((go || even)
       ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
          : diff < 0 ? `現行から ${yen(-diff)} 上げ`
          : "現行価格のまま（下げる理由なし）")
-      : `残りを在庫に戻す`) + held + capped + adj;
+      : `残りを在庫に戻す`) + held + capped + seenCap + adj;
 
     // **続けた場合の振れ幅を出す。**「いま解体」は現時点での利益と同じ額に
     // なるので別枠にしない（解体したカードは原価のまま在庫に戻るため）。
