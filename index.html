@@ -876,6 +876,26 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .src.by-hand, .lotbox .fromtt.by-hand{
   background:var(--surface-2); color:var(--ink-3); font-weight:600;
 }
+/* 手入力の入口。畳んでおいて、押すと下へスライドして開く。
+   本線ではないので、閉じているあいだは文字だけに見えるようにする */
+.lotentry{ margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
+.lotentry-toggle{
+  font-size:12.5px; color:var(--ink-3); padding:4px 0; border:none; background:none;
+}
+.lotentry-toggle:hover{ color:var(--ink-2); }
+.lotentry-toggle .chev{ margin-left:6px; display:inline-block; transition:transform .18s ease; }
+.lotentry.is-open .lotentry-toggle .chev{ transform:rotate(180deg); }
+/* grid の 0fr → 1fr で高さを測らずに滑らかに開く */
+.lotentry-body{ display:grid; grid-template-rows:0fr; transition:grid-template-rows .18s ease; }
+.lotentry.is-open .lotentry-body{ grid-template-rows:1fr; }
+.lotentry-body > .inner{
+  overflow:hidden; display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+}
+.lotentry.is-open .lotentry-body > .inner{ padding-top:10px; }
+@media (prefers-reduced-motion: reduce){
+  .lotentry-body, .lotentry-toggle .chev{ transition:none; }
+}
+
 /* 押せないことが見て分かるように、行ごと沈める */
 .inbox .row.is-wait{ background:var(--surface-2); }
 .inbox .row.is-wait .amt,
@@ -950,6 +970,7 @@ canvas#simChart{ width:100%; height:130px; display:block; margin-top:18px; }
 .is-watch #liveCrumb,
 .is-watch #closePanel,
 .is-watch #lotBar,
+.is-watch #lotEntry,
 .is-watch #btnUndo,
 .is-watch #btnResetDraws,
 .is-watch #btnApply,
@@ -1098,7 +1119,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='d3d2e91 (08/20 18:38)';</script>
+<script>window.__BUILD='6177bf2 (08/20 19:23)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -1367,7 +1388,8 @@ window.__SYNC_DEFAULTS = {
       <section class="panel">
         <header>
           <h2>落札と排出</h2>
-          <span class="hint">落札を登録 → 出たカードを押す（定価ならカードだけでよい）</span>
+          <span class="hint">出たカードを押す（届いた落札は自動で立つ）。
+            金額を先に入れるときは下の「落札を登録」</span>
         </header>
         <div class="body">
           <div class="inbox" id="inbox" hidden></div>
@@ -1377,6 +1399,23 @@ window.__SYNC_DEFAULTS = {
             <button type="button" class="btn" id="btnUndo">← 1 件取り消し</button>
             <button type="button" class="btn ghost" id="btnResetDraws">落札と排出をすべてクリア</button>
             <span class="hint" id="drawCount"></span>
+          </div>
+          <!-- 手入力の道。**いちばん下に畳んでおく。**自動で入ってきた入金は
+               上（受信箱）に出るので、普段はそちらとカードを押すだけで足りる。
+               上に置くとこちらが本線に見えて、手入力が増える。
+               開いた状態を保つため、中身は描き直さない静的なマークアップにする -->
+          <div class="lotentry" id="lotEntry" hidden>
+            <button type="button" class="btn ghost lotentry-toggle" id="btnLotEntry"
+                    aria-expanded="false" aria-controls="lotEntryBody">
+              手入力で登録<span class="chev" aria-hidden="true">▾</span>
+            </button>
+            <div class="lotentry-body" id="lotEntryBody">
+              <div class="inner">
+                <button type="button" class="btn" id="btnNewLot">落札を登録（金額を先に入れる）</button>
+                <span class="hint">先に金額が分かっているときだけ。
+                  ふだんは出たカードを押すだけでよい（<b>L</b> でも開く）。</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -5336,21 +5375,20 @@ function renderLotBar(c){
   if(key === lotBarKey) return;
   lotBarKey = key;
 
-  if(S.closedAt){ bar.innerHTML = ""; return; }
-
-  // 落札が決まってからカードが開くまでには間がある。金額を先に入れておけるよう
-  // 「落札を登録」を置く。カードを押してから聞く道も残してある（定価消化が速い）。
-  if(!lot){
-    bar.innerHTML = `
-      <div class="lotbox">
-        <div class="lotnow">
-          <button type="button" class="btn primary" id="btnNewLot">落札を登録（金額を先に入れる）</button>
-          <span class="hint">登録してから、出たカードを押す。定価で売れたときはカードを押すだけでよい。</span>
-        </div>
-      </div>`;
-    $("btnNewLot").addEventListener("click", registerLotOnly);
-    return;
+  /* 金額を先に入れる道は**普段使う道ではない**（自動で入ってきた入金は上の
+     受信箱に出るし、カードを押してから金額を聞く道のほうが速い）。画面の
+     いちばん下に畳んで置く（運用者の指示 2026-08-19）。
+     ここでは**出すか出さないかだけ**を決める。中身を描き直すと、開いた状態が
+     排出のたびに閉じてしまうため。 */
+  const entry = $("lotEntry");
+  const showEntry = !S.closedAt && !lot;
+  if(entry){
+    entry.hidden = !showEntry;
+    if(!showEntry) setLotEntryOpen(false);
   }
+
+  if(S.closedAt){ bar.innerHTML = ""; return; }
+  if(!lot){ bar.innerHTML = ""; return; }
 
   const rest = lot.qty - st.drawn;
   bar.innerHTML = `
@@ -5518,6 +5556,14 @@ async function editLot(id){
   for(const e of S.events) if(e.lotId === lot.id) e.price = lotSlotPrice(lot, i++);
   save();
   render();
+}
+
+/** 手入力の入口を開け閉めする。閉じているのが既定 */
+function setLotEntryOpen(open){
+  const el = $("lotEntry"), btn = $("btnLotEntry");
+  if(!el || !btn) return;
+  el.classList.toggle("is-open", !!open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 /** 落札だけ先に登録する。カードは後から押す */
@@ -7205,6 +7251,11 @@ $("btnRestore").addEventListener("click", async () => {
 
 $("btnDuplicate").addEventListener("click", () => duplicateCurrent("（複製）"));
 
+// 手入力の入口。押すと下へスライドして開く
+$("btnLotEntry").addEventListener("click", () =>
+  setLotEntryOpen(!$("lotEntry").classList.contains("is-open")));
+$("btnNewLot").addEventListener("click", registerLotOnly);
+
 async function deleteOripa(o){
   if(!o) return false;
   const c = compute(o);
@@ -7427,6 +7478,7 @@ document.addEventListener("keydown", e => {
     const p = livePrizeOrder(S.prizes)[Number(e.key) - 1];
     if(p){ draw(p.id); e.preventDefault(); }
   }else if(e.key.toLowerCase() === "l" || e.key.toLowerCase() === "n"){
+    setLotEntryOpen(true);                          // 近道で入ったときも入口を開けておく
     registerLotOnly(); e.preventDefault();          // 落札を先に登録
   }else if(e.key === "Backspace" || e.key.toLowerCase() === "u"){
     undo(); e.preventDefault();
