@@ -1163,7 +1163,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='fe2eeb0 (08/21 02:14)';</script>
+<script>window.__BUILD='e71fc82 (08/21 02:46)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -1320,7 +1320,7 @@ window.__SYNC_DEFAULTS = {
                 <th>配信日</th><th class="l">オリパ</th><th>消化</th>
                 <th>実働</th><th>時給 GMV</th>
                 <th>売上</th><th>排出原価</th><th>現金損益</th><th>利益率</th>
-                <th>在庫込み</th><th></th>
+                <th>時給利益</th><th></th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -1675,11 +1675,13 @@ window.__SYNC_DEFAULTS = {
           <tr><th>現在の利益率</th><td>売上 − 出た賞品の原価 ÷ 売上</td></tr>
           <tr><th>現在の売上</th><td>実際に入った額。開封待ちは含まない</td></tr>
           <tr><th>残り口数</th><td>まだ売れていない口</td></tr>
-          <tr><th>現時点での利益</th><td>いまの現金損益。下段が在庫込み</td></tr>
+          <tr><th>現時点での利益</th><td>いまの現金損益（売上 − 手数料 − 出た賞品の原価）</td></tr>
         </table>
         <p>
-          <b>現金損益</b>は売れ残りを 0 円と見た数字。<b>在庫込み損益</b>は売れ残りを
-          回収率で評価した数字（売上 − 総原価 ＋ 残りの原価 × 回収率）。
+          <b>現金損益</b>は<b>売上 − 手数料 − 出た賞品の原価</b>。
+          <b>売れ残りは数えない。</b>解体したカードはそのまま次のオリパに使えるので、
+          目減りとして引く理由が無い。回ごとの比較には<b>1 口あたり利益</b>と
+          <b>時給利益</b>（記録の一覧に出る）を使う。
         </p>
 
         <h4>時間とペース</h4>
@@ -1758,8 +1760,8 @@ window.__SYNC_DEFAULTS = {
           <ul>
             <li><b>手で入れた相場は書き換えない。</b>効くのは自動の行だけ
               （編集画面の相場欄が破線＋灰色なら自動）。</li>
-            <li>この 1 つの数字で<b>還元率・在庫の回収額・目玉の判定・ハズレ枠の線・
-              カンペが読み上げる相場</b>が動く。低すぎると判断が「もっと下げろ」に寄る。</li>
+            <li>この 1 つの数字で<b>還元率・目玉の判定・ハズレ枠の線・「いま効く手」が
+              言う相場</b>が動く。低すぎると判断が「もっと下げろ」に寄る。</li>
             <li><b>ハズレ枠は自動</b>（相場が販売単価の 20% 以下）。印を付ける操作はない。
               まとめ排出はこの印とは無関係で、残りが 5 口以上の行に出る。</li>
           </ul>
@@ -2120,7 +2122,7 @@ function blankOripa(name){
   const t = Date.now();
   return {
     id: newId(), name: name || "新しいオリパ",
-    price: 0, targetMargin: 0.30, targetReturn: 0.80, recovery: 0.70,
+    price: 0, targetMargin: 0.30, targetReturn: 0.80,
     prizes: [], events: [], lots: [], totalSlots: 0, createdAt: t, updatedAt: t
   };
 }
@@ -2145,7 +2147,6 @@ function normalizeOripa(o){
     price: Math.max(0, Number(o.price) || 0),
     targetMargin: clamp(Number(o.targetMargin ?? 0.30), 0, 0.95),
     targetReturn: Math.max(0.01, Number(o.targetReturn ?? 0.80)),
-    recovery: clamp(Number(o.recovery ?? 0.70), 0, 1),
     // 手数料。売上から引く。既定 5%
     feeRate: clamp(Number(o.feeRate != null ? o.feeRate : DEFAULT_FEE), 0, 0.5),
     // 解体の条件。編集画面のシミュレーションと配信中の値下げ判断が同じ前提を使う
@@ -3457,7 +3458,10 @@ function compute(o){
   const pBE     = left > 0 ? (costTotal - revenue) / left : 0;
   const pTarget = left > 0 ? (costTotal / (1 - tm) - revenue) / left : 0;
   const pBuyer  = (o.targetReturn > 0) ? evMkt / o.targetReturn : 0;
-  const pFloor  = evCost * (o.recovery || 0);   // 在庫として持つ価値（原価基準）
+  /* これ以上は下げない線＝**残り 1 口の中身の原価**。
+     以前は「原価 × 在庫回収率(70%)」にしていたが、**売れ残ったカードはそのまま
+     次のオリパに使える**ので目減りしない（運用者の指示 2026-08-20）。 */
+  const pFloor  = evCost;
 
   // 推奨：買い手が動く価格を狙いつつ、在庫キープ価値は下回らない。現行価格は超えない。
   let rec = Math.min(price, Math.max(pBuyer, pFloor));
@@ -3471,14 +3475,10 @@ function compute(o){
 
   // 現行価格のまま目標還元率に戻すために追加投入が必要な賞品の相場合計
   const addNeeded = Math.max(0, left * price * (o.targetReturn || 0) - mktLeft);
-  // **解体して戻るのは原価基準で見る。**相場は買い手に見せる還元率のための値で、
-  // その値段で捌けるわけではない（買取に出せば相場より下、自分で捌けば時間がかかる）。
-  // こちらの損益に相場を混ぜると、残り在庫を過大に評価して「まだ持っていれば得」に寄る。
-  const salvageLeft = costLeft * (o.recovery || 0);
 
   return {
     o, N, price, sold, left, pendingSlots, pendingRev,
-    addNeeded, salvageLeft, recovery: o.recovery || 0,
+    addNeeded,
     costTotal, mktTotal, costDrawn, mktDrawn, costLeft, mktLeft,
     revenue, feeRate, feeNow, profitNow, marginNow, evCost, evMkt, baseEvMkt, heat,
     returnLeft, returnAll, finalRev, finalProfit, finalMargin,
@@ -3510,18 +3510,6 @@ function roundPrice(v){
   // 切り下げではなく四捨五入。切り下げだと刻みが粗いところで
   // 期待値を無駄に落とす（¥4,863 → ¥4,500 で 4% 損した）
   return Math.round(v / step) * step;
-}
-
-/** 価格 p で残りの f 割が売れたときの着地 */
-function scenario(c, p, f){
-  const more    = Math.round(c.left * f);
-  const addRev  = more * p;
-  const unsold  = c.left - more;
-  const salvage = unsold * c.evCost * c.recovery;
-  const rev     = c.revenue + addRev;
-  const cash    = rev * (1 - c.feeRate) - c.costTotal;
-  return { more, addRev, unsold, salvage, rev, cash, withStock: cash + salvage,
-           margin: rev > 0 ? cash / rev : 0 };
 }
 
 /* ============================================================
@@ -3661,7 +3649,6 @@ const quantile = (sorted, q) => sorted.length
  */
 function simulateBreakup(o, topMult, minReturn){
   const price = Math.max(0, o.price || 0);
-  const recovery = clamp(o.recovery ?? 0.7, 0, 1);
   const feeRate = feeRateOf(o);
   const slots = [];
   let costTotal = 0, mktTotal = 0;
@@ -3681,7 +3668,7 @@ function simulateBreakup(o, topMult, minReturn){
   const trials = N > 400 ? 4000 : (N > 150 ? 10000 : 20000);
   const rand = rng(hashSeed(`${N}|${costTotal}|${mktTotal}|${price}|${topMult}|${minReturn}|${topCount}`));
 
-  const sold = [], cash = [], stock = [], mar = [], earlyMar = [];
+  const sold = [], cash = [], mar = [], earlyMar = [];
   let broke = 0, cashNeg = 0, early = 0;
 
   const arr = slots.slice();
@@ -3706,9 +3693,8 @@ function simulateBreakup(o, topMult, minReturn){
 
     const rev = k * price;
     const c = rev - costDrawn;                     // 現金損益：出た賞品の原価だけ
-    const w = rev * (1 - feeRate) - costTotal + (costTotal - costDrawn) * recovery;
     const m = rev > 0 ? c / rev : 0;
-    sold.push(k); cash.push(c); stock.push(w); mar.push(m);
+    sold.push(k); cash.push(c); mar.push(m);
     if(stopped) broke++;
     if(c < 0) cashNeg++;
     if(k <= N / 2){ early++; earlyMar.push(m); }
@@ -3716,7 +3702,7 @@ function simulateBreakup(o, topMult, minReturn){
 
   const marRaw = mar.slice();
   sold.sort((a, b) => a - b); cash.sort((a, b) => a - b);
-  stock.sort((a, b) => a - b); mar.sort((a, b) => a - b);
+  mar.sort((a, b) => a - b);
   const mean = a => a.reduce((n, v) => n + v, 0) / a.length;
 
   // 利益率の分布（グラフ用）。ごく稀な大外れに潰されないよう上下2%で切る
@@ -3735,7 +3721,6 @@ function simulateBreakup(o, topMult, minReturn){
     cashNegRate: cashNeg / trials,
     soldMed: quantile(sold, 0.5), soldP10: quantile(sold, 0.1), soldP90: quantile(sold, 0.9),
     cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashMean: mean(cash),
-    stockMed: quantile(stock, 0.5), stockP10: quantile(stock, 0.1), stockMean: mean(stock),
     marMed: quantile(mar, 0.5), marP10: quantile(mar, 0.1), marP90: quantile(mar, 0.9), marMean: mean(mar),
     earlyRate: early / trials,
     earlyMarMed: earlyMar.length ? quantile(earlyMar.sort((a, b) => a - b), 0.5) : 0,
@@ -4001,7 +3986,6 @@ function simFromHere(c, p, topMult, minReturn, trials){
   if(price <= 0 || c.left <= 0) return null;
 
   const targetReturn = clamp(c.o.targetReturn ?? 0.8, 0.05, 5);
-  const recovery = clamp(c.recovery, 0, 1);
   const feeRate = c.feeRate;
   const topLine = price * (topMult > 0 ? topMult : 0);
 
@@ -4034,7 +4018,7 @@ function simFromHere(c, p, topMult, minReturn, trials){
   const T = Math.max(200, trials | 0);
   const rand = rng(hashSeed(`${R}|${mktLeft}|${topMult}|${minReturn}|${topLeft}|${c.revenue}`));
 
-  const more = [], cash = [], stock = [], mar = [], bids = [];
+  const more = [], cash = [], mar = [], bids = [];
   let neg = 0;
   const arr = rest.slice();
 
@@ -4061,28 +4045,25 @@ function simFromHere(c, p, topMult, minReturn, trials){
     }
     const rev  = c.revenue + revMore;
     if(k > 0) bids.push(revMore / k);
-    // 現金損益：出た賞品の原価だけ引く。手数料は売上にかかる
+    // 現金損益：出た賞品の原価だけ引く。手数料は売上にかかる。
+    // **売れ残りは数えない。**そのまま次のオリパに使えるので目減りしない
     const cash_ = rev * (1 - feeRate) - c.costDrawn - costMore;
-    // 在庫込みは**オリパ全体の原価**を引く。売れ残りの仕入代を引かずに
-    // 売れ残りの回収額だけ足すと、持っているほうが不当に得に見える。
-    const stk  = rev * (1 - feeRate) - c.costTotal + (costLeft - costMore) * recovery;
-    more.push(k); cash.push(cash_); stock.push(stk);
+    more.push(k); cash.push(cash_);
     mar.push(rev > 0 ? cash_ / rev : 0);
     if(cash_ < 0) neg++;
   }
 
   const mean = a => a.length ? a.reduce((n, v) => n + v, 0) / a.length : 0;
-  const cashMean = mean(cash), stockMean = mean(stock), moreMean = mean(more);
+  const cashMean = mean(cash), moreMean = mean(more);
   const bidMean = mean(bids);
   more.sort((a, b) => a - b); cash.sort((a, b) => a - b);
-  stock.sort((a, b) => a - b); mar.sort((a, b) => a - b);
+  mar.sort((a, b) => a - b);
 
   return {
     price, trials: T, R, topLeft, topTotal, thinNow, overNow,
-    cashMean, stockMean, moreMean, bidMean,
+    cashMean, moreMean, bidMean,
     moreMed: quantile(more, 0.5), moreP10: quantile(more, 0.1), moreP90: quantile(more, 0.9),
     cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashP90: quantile(cash, 0.9),
-    stockMed: quantile(stock, 0.5), stockP10: quantile(stock, 0.1), stockP90: quantile(stock, 0.9),
     marMed: quantile(mar, 0.5), marP10: quantile(mar, 0.1), marP90: quantile(mar, 0.9),
     cashNegRate: neg / T
   };
@@ -4149,24 +4130,18 @@ function breakupAnchors(c, topMult, minReturn){
 /* ============================================================
    続けるか、解体するか
 
-   いま止めれば、残りの在庫が「原価 × 回収率」で戻ってくる。
-   相場では戻らない。相場は買い手に見せる還元率のための値で、換金額ではない。
-   売り続ければ、解体までのぶんが現金になり、残りは在庫として戻る。
-   **同じ物差し（在庫込み損益）で比べれば、どちらが得か決まる。**
+   **売れ残ったカードはそのまま次のオリパに使える**ので、解体しても目減りしない
+   （運用者の指示 2026-08-20）。だから「いま止めた場合の手元」は
+   **現時点での利益（現金損益）そのもの**。在庫を別枠で評価しない。
 
    止める＝ simFromHere で1口も売れなかった場合とちょうど同じ式になるので、
-   比較は厳密に噛み合う（`stockAtStop()` と k=0 の stock が一致する）。
+   比較は厳密に噛み合う。
 
    価格は運用者に決めさせず、こちらで探す。探す範囲は
      下限：これ以上下げても在庫で持つほうが得になる線より少し下まで
      上限：**買い手が動く価格**（残り期待値 ÷ 目標還元率）と現行価格の低いほう
    上限を切らないと「¥50,000 にすれば儲かる」という、誰も買わない答えが出る。
    ============================================================ */
-
-/** いま止めたときの在庫込み損益。simFromHere の k=0 とちょうど同じ式になる */
-function stockAtStop(c){
-  return c.revenue * (1 - c.feeRate) - c.costTotal + c.salvageLeft;
-}
 
 /**
  * 価格を振って、いちばん儲かる売り方を探し、**いま終わった場合**と比べる。
@@ -4664,9 +4639,6 @@ function buildRecord(o, endedAt, memo){
     profit: c.profitNow,
     margin: c.marginNow,
     mktLeft: c.mktLeft,
-    salvage: c.salvageLeft,
-    withStock: c.revenue * (1 - c.feeRate) - c.costTotal + c.salvageLeft,
-    recovery: c.recovery,
     auction: (() => {
       const a = auctionSummary(o);
       return { lots: a.lots, auctions: a.auctions, avg: a.avg, max: a.max, min: a.min };
@@ -4681,6 +4653,19 @@ function buildRecord(o, endedAt, memo){
       count: p.count, drawn: c.drawnBy.get(p.id) || 0
     }))
   };
+}
+
+/**
+ * 記録 1 回ぶんの **時給利益**（現金損益 ÷ 実働）。実働が取れていない古い記録は null。
+ *
+ * 在庫込み損益と差し替えた項目（運用者の指示 2026-08-20：
+ * 「売れ残ったカードはそのまま再利用できるからこれはいらない項目だな」）。
+ * 売れ残りは目減りしないので在庫を評価する意味が無く、代わりに
+ * **その回が 1 時間あたりいくら残したか**を出す。回の大小に関係なく比べられる。
+ */
+function recPerHour(r){
+  const ms = Number(r && r.activeMs) || 0;
+  return ms > 0 ? (Number(r.profit) || 0) * 3600000 / ms : null;
 }
 
 function fmtDate(ms){
@@ -4705,7 +4690,7 @@ function recordsToCsv(){
                 "総口数","販売口数","消化率","最終単価","落札件数",
                 "平均落札単価","最高落札","最低落札","売上",
                 "排出原価","現金損益","利益率","未消化口数","未消化の相場",
-                "在庫回収見込み","在庫込み損益","メモ"];
+                "時給利益","1口あたり利益","メモ"];
   const q = v => {
     const t = String(v == null ? "" : v);
     return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
@@ -4728,7 +4713,9 @@ function recordsToCsv(){
       r.auction ? r.auction.max : "", r.auction ? r.auction.min : "",
       r.revenue, r.costDrawn, r.profit,
       r.revenue > 0 ? (r.margin * 100).toFixed(1) + "%" : "",
-      r.left, Math.round(r.mktLeft), Math.round(r.salvage), Math.round(r.withStock),
+      r.left, Math.round(r.mktLeft),
+      (() => { const v = recPerHour(r); return v == null ? "" : Math.round(v); })(),
+      r.sold > 0 ? Math.round((Number(r.profit) || 0) / r.sold) : "",
       r.memo
     ].map(q).join(","));
   }
@@ -5456,9 +5443,13 @@ function renderRecords(){
   tb.innerHTML = "";
   const rs = DB.records.slice().sort((a, b) => b.endedAt - a.endedAt);
 
-  const totalProfit = rs.reduce((n, r) => n + r.withStock, 0);
+  const totalProfit = rs.reduce((n, r) => n + (Number(r.profit) || 0), 0);
+  const totalMs = rs.reduce((n, r) => n + (Number(r.activeMs) || 0), 0);
   $("recSummary").textContent = rs.length
-    ? `${rs.length} 回 ／ 在庫込みの累計 ${syen(totalProfit)}`
+    ? `${rs.length} 回 ／ 現金損益の累計 ${syen(totalProfit)}`
+      + (totalMs > 0
+          ? `（実働 ${fmtDur(totalMs)}・時給 ${yen(Math.round(totalProfit * 3600000 / totalMs))}）`
+          : "")
     : "";
   $("btnRecCsv").disabled = !rs.length;
 
@@ -5496,7 +5487,11 @@ function renderRecords(){
       `<td class="n">${yen(r.costDrawn)}</td>` +
       `<td class="n ${r.profit >= 0 ? "pos" : "neg"}">${syen(r.profit)}</td>` +
       `<td class="n ${r.margin >= 0 ? "pos" : "neg"}">${r.revenue > 0 ? spct(r.margin) : "—"}</td>` +
-      `<td class="n ${r.withStock >= 0 ? "pos" : "neg"}">${syen(r.withStock)}</td>` +
+      `<td class="n ${(() => { const v = recPerHour(r);
+          return v == null ? "" : v >= 0 ? "pos" : "neg"; })()}">${(() => {
+          const v = recPerHour(r);
+          return v == null ? "—" : syen(Math.round(v));
+        })()}</td>` +
       `<td><button type="button" class="rowdel" aria-label="この記録を削除">×</button></td>`;
     tr.querySelector(".rowdel").addEventListener("click", async e => {
       e.stopPropagation();
@@ -5656,8 +5651,10 @@ function renderReplay(){
   // ずれるのは記録したあとにオリパを触った場合で、そのときは記録のほうが正しい
   const note = [];
   if(r){
+    const ph = recPerHour(r);
     note.push(`記録した時点：売上 ${yen(r.revenue)}／現金損益 ${syen(r.profit)}`
-      + `／在庫込み ${syen(r.withStock)}。`);
+      + `${r.sold > 0 ? `／1口あたり ${syen(Math.round(r.profit / r.sold))}` : ""}`
+      + `${ph == null ? "" : `／時給利益 ${syen(Math.round(ph))}`}。`);
     if(Math.round(r.revenue) !== Math.round(c.revenue))
       note.push(`⚠ いま映しているオリパの売上は ${yen(c.revenue)} で、記録と食い違う。`
         + `記録したあとに中身を触っている。数字は記録のほうが正しい。`);
@@ -5728,8 +5725,8 @@ function renderLive(c){
 
   // 予想の着地ではなく、いま手元にある損益（売上 − 出た賞品の原価）
   const kF = $("kpiFinal");
-  const withStock = stockAtStop(c);   // 全体の原価を引いた、いまの正味の position
-  kF.className = "kpi " + (c.profitNow >= 0 ? "is-good" : withStock >= 0 ? "is-warn" : "is-bad");
+  // 売れ残りは原価のまま在庫に戻る（次のオリパに使える）ので、見る数字は現金損益だけ
+  kF.className = "kpi " + (c.profitNow >= 0 ? "is-good" : "is-bad");
   $("mFinal").textContent = syen(c.profitNow);
   $("mFinal").className = "v " + (c.profitNow >= 0 ? "pos" : "neg");
   // 手数料は引いたあとの数字なので、いくら引いたかを添える。
@@ -6452,7 +6449,7 @@ function liveSimSync(c){
   const { topMult, minReturn } = simParams();
   const key = JSON.stringify([
     c.o.id, c.o.prizes.map(p => [costOf(p), mktOf(p), p.count | 0]),
-    c.sold, c.revenue, c.costDrawn, c.price, c.recovery, topMult, minReturn
+    c.sold, c.revenue, c.costDrawn, c.price, topMult, minReturn
   ]);
   if(key !== liveSimCache.key){
     liveSimCache = { key, bk: breakupAnchors(c, topMult, minReturn), at: new Map() };
@@ -6493,10 +6490,10 @@ function renderPrice(c){
         <span class="v">${yen(c.revenue)}</span></div>
       <div class="mid"><span class="k">現金損益<span class="sub">売れ残りは 0 円</span></span>
         <span class="v">${syen(Math.round(c.profitNow))}</span></div>
-      <div class="hi"><span class="k">在庫込み<span class="sub">残りは原価×回収率</span></span>
-        <span class="v">${syen(Math.round(stockAtStop(c)))}</span></div>
+      <div class="hi"><span class="k">1 口あたり利益<span class="sub">現金損益 ÷ 販売口数</span></span>
+        <span class="v">${c.sold > 0 ? syen(Math.round(c.profitNow / c.sold)) : "—"}</span></div>
       <div class="foot">利益率 ${c.revenue > 0 ? spct(c.marginNow) : "—"}`
-      + `${c.left > 0 ? `／未消化 ${c.left} 口（原価 ${yen(c.costLeft)}）は在庫に戻した` : "／完売"}</div>`;
+      + `${c.left > 0 ? `／未消化 ${c.left} 口（原価 ${yen(c.costLeft)}）はそのまま在庫に戻した` : "／完売"}</div>`;
     $("recMsg").innerHTML = `この回は記録済み。<b>数字は締めた時点のまま</b>で、`
       + `ここからは動かない。下の「配信の履歴」で、いつ何が売れたかを追える。`;
     renderTops(c);
@@ -6699,7 +6696,7 @@ function renderPulse(c, dec){
       + `<b class="${vcls || ""}">${value}</b><span class="sub">${sub || ""}</span></div>`);
 
   // 次の1口の期待採算。いまの価格で1口売ると、平均していくら残るか。
-  // マイナスなら売るほど現金が減る（在庫は減るので在庫込みでは別の話になる）
+  // マイナスなら売るほど現金が減る（カードは在庫に戻るので、減るのは現金だけ）
   const avgCostLeft = c.left > 0 ? c.costLeft / c.left : 0;
   const edge = c.price - avgCostLeft;
   cell("次の1口", syen(Math.round(edge)),
@@ -7204,7 +7201,7 @@ function renderSim(){
 
   const key = JSON.stringify([
     S.prizes.map(p => [costOf(p), mktOf(p), p.count | 0]),
-    S.price, S.recovery, topMult, minReturn
+    S.price, topMult, minReturn
   ]);
   if(key !== simCache.key){
     simCache = { key, res: simulateBreakup(S, topMult, minReturn) };
@@ -7255,9 +7252,10 @@ function renderSim(){
         <span class="sub">悪いほう1割で ${syen(r.cashP10)}</span>
       </div>
       <div>
-        <span class="label">解体時の在庫込み損益</span>
-        <b class="${r.stockMed >= 0 ? "pos" : "neg"}">${syen(r.stockMed)}</b>
-        <span class="sub">悪いほう1割で ${syen(r.stockP10)}</span>
+        <span class="label">解体時の 1 口あたり利益</span>
+        <b class="${r.cashMed >= 0 ? "pos" : "neg"}">${
+          r.soldMed > 0 ? syen(Math.round(r.cashMed / r.soldMed)) : "—"}</b>
+        <span class="sub">${r.soldMed > 0 ? `${r.soldMed} 口で割った額` : "1 口も出ない読み"}</span>
       </div>
       <div>
         <span class="label">現金がマイナスになる確率</span>
@@ -7274,8 +7272,8 @@ function renderSim(){
     <canvas id="simChart" role="img" aria-label="解体時の利益率の分布"></canvas>
     <p class="hint" style="margin:10px 0 0">
       全口を販売単価 ${yen(r.price)} で売った前提。実際の落札は上下するので目安として見る。
-      利益率は<b>（売上 − 出た賞品の原価）÷ 売上</b>で、売れ残りは含めない。
-      売れ残りを回収率 ${pct(clamp(S.recovery ?? 0.7, 0, 1), 0)} で評価したのが<b>在庫込み損益</b>。
+      利益率は<b>（売上 − 出た賞品の原価）÷ 売上</b>。
+      <b>売れ残りは数えない。</b>そのまま次のオリパに使えるので目減りしないため。
     </p>`;
 
   drawSimChart(r);
@@ -7348,7 +7346,9 @@ function renderFormulas(c){
     ["目標利益率の下限", "解体まで売って利益率が目標に届く価格（同上）"],
     ["解体までの販売口数", "目玉が出尽くす／残り還元率が下限を割る、どちらか早いほうまでの口数"],
     ["還元率ベース価格", "残り1口の相場期待値 ÷ 目標還元率"],
-    ["これ以上下げない", "残り1口の原価 × 在庫回収率"],
+    ["これ以上下げない", "残り1口の原価（売れ残りは目減りしないので、ここが底）"],
+    ["1口あたり利益",   "現金損益 ÷ 販売口数"],
+    ["時給利益",        "現金損益 ÷ 実働"],
     ["今夜さばける口数", "min( 解体までの口数 , その値段でのペース × 今夜の残り時間 )"],
     ["今夜の利益額",     "いま解体した額 ＋ 1口あたりの上積み × 今夜さばける口数"],
     ["値下げの判断",     "そのままと下げた場合の「今夜の利益額」を比べて高いほう（下げ幅は 15% まで）"],
@@ -7608,14 +7608,14 @@ function openClosePanel(){
 
 function renderCloseSummary(){
   const c = compute();
-  const withStock = stockAtStop(c);   // 全体の原価を引いた、いまの正味の position
+  const perSlot = c.sold > 0 ? c.profitNow / c.sold : 0;
   $("closeSummary").innerHTML = [
     ["消化",        `${c.sold}/${c.N}`, ""],
     ["売上",        yen(c.revenue), ""],
     ["排出原価",    yen(c.costDrawn), ""],
     ["現金損益",    syen(c.profitNow), c.profitNow >= 0 ? "pos" : "neg"],
     ["利益率",      c.revenue > 0 ? spct(c.marginNow) : "—", c.marginNow >= 0 ? "pos" : "neg"],
-    ["在庫込み損益", syen(withStock), withStock >= 0 ? "pos" : "neg"]
+    ["1口あたり利益", c.sold > 0 ? syen(Math.round(perSlot)) : "—", perSlot >= 0 ? "pos" : "neg"]
   ].map(([k, v, cls]) => `<div><span class="label">${k}</span><b class="${cls}">${v}</b></div>`).join("");
 
   const a = auctionSummary(S);
@@ -7628,7 +7628,11 @@ function renderCloseSummary(){
   if(p){
     $("closeSummary").insertAdjacentHTML("beforeend",
       `<div><span class="label">実働</span><b>${fmtDur(p.activeMs)}</b></div>`
-      + `<div><span class="label">時給 GMV</span><b>${yen(Math.round(p.gmv))}</b></div>`);
+      + `<div><span class="label">時給 GMV</span><b>${yen(Math.round(p.gmv))}</b></div>`
+      + (p.activeMs > 0
+          ? `<div><span class="label">時給利益</span><b>`
+            + `${syen(Math.round(c.profitNow * 3600000 / p.activeMs))}</b></div>`
+          : ""));
   }
   $("closeNote").textContent =
     (c.pendingSlots > 0
@@ -7636,8 +7640,9 @@ function renderCloseSummary(){
         + `このまま記録すると、この売上は入らない。先に出たカードを押すこと。 `
       : "")
     + (c.left > 0
-        ? `未消化 ${c.left} 口（原価 ${yen(c.costLeft)}）は在庫として残る。回収率 ${pct(c.recovery,0)} で ${yen(c.salvageLeft)} と見積もった数字が「在庫込み損益」。`
-        : "完売。在庫の持ち越しはなし。");
+        ? `未消化 ${c.left} 口（原価 ${yen(c.costLeft)}）のカードは**そのまま在庫に戻る**。`
+          + `次のオリパに使えるので損益には数えていない。`
+        : "完売。持ち越しはなし。");
 }
 
 function applyClose(){
@@ -7650,7 +7655,9 @@ function applyClose(){
   S.updatedAt = Date.now();
   $("closePanel").hidden = true;
   go("list");
-  say(`記録した。\n現金損益 ${syen(rec.profit)}／在庫込み ${syen(rec.withStock)}。\n一覧の「配信の記録」から見られる。`);
+  say(`記録した。\n現金損益 ${syen(rec.profit)}`
+    + `${rec.sold > 0 ? `／1口あたり ${syen(Math.round(rec.profit / rec.sold))}` : ""}。`
+    + `\n一覧の「配信の記録」から見られる。`);
 }
 
 async function reopenStream(){
