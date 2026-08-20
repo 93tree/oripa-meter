@@ -1163,7 +1163,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='a8efee3 (08/21 00:22)';</script>
+<script>window.__BUILD='fe2eeb0 (08/21 02:14)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -3790,6 +3790,23 @@ function pWithin(L, T, N){
 }
 
 /**
+ * 「もう回らない」ときに添える、**どこまで下げれば動くか**の 1 行。
+ * 勧める額ではないので必ず「参考」と書く（運用者の指示 2026-08-20）。
+ */
+function reviveLine(dec){
+  const r = dec && dec.revive;
+  if(!r) return "いくらまで下げても買い手は動かない。残りが出尽くしている。";
+  const d = Math.round(r.mid - dec.stop);
+  const vs = d >= 0 ? `いま解体より ${yen(d)} 上` : `いま解体より ${yen(-d)} 下`;
+  // 床の内側でも動くなら、止まっている理由は「動かない」ではなく「売るほど損」
+  if(r.inRange)
+    return `${yen(r.p)} なら動くが、そこまで売っても ${vs}。売るほど減る。`;
+  return `参考：${yen(r.p)}（${pct(r.off, 0)} オフ）まで下げれば動く。`
+       + `今夜 ${r.sold} 口・利益 ${syen(Math.round(r.mid))}＝${vs}`
+       + `${r.breaks.length ? `（${r.breaks.join("・")}を割る）` : ""}。`;
+}
+
+/**
  * いま効く手を組み立てる。返すのは {key, tone, title, num, body, act} の配列。
  * `score` は円。押すと増える／取りこぼしている額で並べる。
  */
@@ -3862,8 +3879,9 @@ function actionCards(c){
     key: "stop", tone: "is-bad", score: Math.abs(Math.round(dec.gain)),
     title: dec.dead ? "もう回らない" : "ここで終了したほうが得",
     num: "解体して組み直す",
+    // 「もう回らない」で終わりにせず、**どこまで下げれば動くか**を参考に添える
     body: dec.dead
-      ? "解体条件に達している。下げても買い手は動かない。"
+      ? "解体条件に達している。" + reviveLine(dec)
       : `続けるより ${yen(Math.abs(Math.round(dec.gain)))} 上回る。`
         + `残り ${c.left} 口は在庫に戻して組み直す。`,
   });
@@ -4303,7 +4321,47 @@ function decideNow(c){
   const stay = planOf(nowPrice, simAtPrice(c, nowPrice, topMult, minReturn));
   const cutGain = stay && bestPlan ? bestPlan.mid - stay.mid : 0;
 
-  return { verdict, stop, best, gain, hi, lo, top, seen, dead,
+  /* ---- もう回らないときの参考線 ----
+     「もう回らない」で終わりにすると、**どこまで下げれば動くのか**が分からない
+     （運用者の指示 2026-08-20）。提案の床（下げ幅 15%・原価・損益分岐）を外して、
+     **まだ動く上限**を探す。勧める額ではないので参考として出す。
+     価格を下げると解体条件（薄い／目玉切れ）はどちらも緩むだけなので、
+     「動く／動かない」は価格について単調。二分探索でよい。 */
+  let revive = null;
+  if(dead){
+    const aliveAt = q => {
+      const r = simAtPrice(c, q, topMult, minReturn);
+      return r && r.moreMean >= 1 ? r : null;
+    };
+    let a = 10;                     // 動く側（下）
+    let b = Math.max(10, top);      // 動かない側（上）
+    if(aliveAt(a)){
+      if(aliveAt(b)) a = b;         // 天井でも動く＝止まる理由は採算のほう
+      else for(let i = 0; i < 14 && b - a > 1; i++){
+        const mid = Math.round((a + b) / 2);
+        if(aliveAt(mid)) a = mid; else b = mid;
+      }
+      /* 口に出せる額にする。**切り下げ**る（切り上げると動かない側へ戻る）。
+         それでも動かなければ探した値をそのまま使う。 */
+      let q = Math.max(10, Math.floor(a / priceStepOf(a)) * priceStepOf(a));
+      if(!aliveAt(q)) q = a;
+      const plan = planOf(q, simAtPrice(c, q, topMult, minReturn));
+      if(plan) revive = {
+        ...plan,
+        off: c.price > 0 ? 1 - q / c.price : 0,
+        // 提案の床の内側かどうか。内側なら「動かない」のではなく「動くが損」
+        inRange: q >= lo,
+        // その額が割ってしまう線。配信で口に出す前に知っておくもの
+        breaks: [
+          q < Math.round((c.price || 0) * (1 - MAX_OFF)) ? `下げ幅 ${pct(MAX_OFF, 0)}` : "",
+          q < Math.round(Number(c.evCost) || 0) ? "残り1口の原価" : "",
+          isFinite(c.pBE) && c.pBE > 0 && q < Math.round(c.pBE) ? "損益分岐" : "",
+        ].filter(Boolean),
+      };
+    }
+  }
+
+  return { verdict, stop, best, gain, hi, lo, top, seen, dead, revive,
            stay, cutGain, plan: bestPlan, hoursLeft,
            elast: pm ? pm.elast : 0, elastMeasured: !!(pm && pm.measured) };
 }
@@ -6462,7 +6520,8 @@ function renderPrice(c){
   const goPrice = base > 0 ? Math.max(100, base + priceAdj) : 0;
   decidedPrice = goPrice;                    // 「この価格に変更」が押す価格
   const stepBox = $("priceStep");
-  if(stepBox) stepBox.hidden = !(goPrice > 0) || mode === "watch";
+  // もう回らないときは押せる価格が無いので、刻みごと消す（参考線は文章で出す）
+  if(stepBox) stepBox.hidden = !(goPrice > 0) || mode === "watch" || !!(dec && dec.dead);
 
   let cls = "", msg = "";
   if(sold_out){
@@ -6552,8 +6611,31 @@ function renderPrice(c){
       msg = `どちらを選んでも中央では差が <b>${yen(d)}</b> しかない。売り切って現金にしたいなら ${yen(goPrice)}、`
           + `カードを在庫に戻したいなら終了。好みで決めてよい。`;
     }else if(dec.dead){
-      msg = `<b>もう回らない。</b>解体条件（目玉が出尽くす／残りが薄すぎる）に達しているので、`
-          + `いくらに下げても買い手は動かない。終了して残りを在庫に戻す。`;
+      // どちらの条件で止まったのかを名指しする。参考線がどこから来たのか分かるように
+      const why = dec.stay && dec.stay.r
+        ? [dec.stay.r.thinNow ? "残りが薄すぎる" : "",
+           dec.stay.r.overNow ? "目玉が出尽くした" : ""].filter(Boolean).join("・")
+        : "";
+      const rv = dec.revive;
+      const rd = rv ? Math.round(rv.mid - dec.stop) : 0;
+      msg = `<b>もう回らない。</b>${why ? `解体条件（${why}）に達している。` : "解体条件に達している。"}`;
+      if(rv && !rv.inRange){
+        msg += `<b>${yen(rv.p)}</b>（${pct(rv.off, 0)} オフ）まで下げれば動く読みで、`
+             + `そこまで売ると 今夜 <b>${rv.sold} 口</b>・利益 <b>${syen(Math.round(rv.mid))}</b>。`
+             + `いま解体（${syen(Math.round(dec.stop))}）より `
+             + `<b>${yen(Math.abs(rd))} ${rd >= 0 ? "上" : "下"}</b>。`
+             + (rv.breaks.length
+                 ? `ただし${rv.breaks.join("・")}を割る額なので、こちらからは勧めない。`
+                 : "")
+             + (rd >= 0
+                 ? `出すなら自分の判断で。出さないなら終了して残りを在庫に戻す。`
+                 : `終了して残りを在庫に戻すほうが手元は多い。`);
+      }else if(rv){
+        msg += `${yen(rv.p)} なら動くが、そこまで売っても 利益 <b>${syen(Math.round(rv.mid))}</b> で、`
+             + `いま解体した <b>${syen(Math.round(dec.stop))}</b> を下回る。売るほど減る。`;
+      }else{
+        msg += `いくらまで下げても買い手は動かない。終了して残りを在庫に戻す。`;
+      }
 
     }else{
       msg = `いま終わるほうが中央で <b>${yen(d)}</b> 得。買い手が動く ${yen(dec.hi)} 以下まで下げても、`
@@ -6565,7 +6647,9 @@ function renderPrice(c){
   }
   box.className = "verdict-box" + (cls ? " " + cls : "");
   $("recMsg").innerHTML = msg;
-  $("btnApply").disabled = sold_out || goPrice <= 0 || goPrice === c.price;
+  // もう回らないと言っているのに、押せる価格が残っていると紛らわしい
+  $("btnApply").disabled = sold_out || goPrice <= 0 || goPrice === c.price
+    || !!(dec && dec.dead);
 
   renderTops(c);
   renderPulse(c, dec);
