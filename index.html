@@ -1163,7 +1163,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='e71fc82 (08/21 02:46)';</script>
+<script>window.__BUILD='07fc7eb (08/21 14:40)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -2190,7 +2190,12 @@ function normalizeOripa(o){
         kind: l.kind === "auction" ? "auction" : "instant",
         at: Number(l.at) || Date.now(),
         // 取り込み元の注文。これが残っている限り受信箱には出さない
-        orderId: l.orderId ? String(l.orderId) : ""
+        orderId: l.orderId ? String(l.orderId) : "",
+        /* 買い手が実際に払った合計。**TikTok 負担のクーポンぶんだけ落札より安い。**
+           LIVE マネージャーが出すのはこちら側の数字なので、これを残しておかないと
+           あとから「売上が食い違う」を説明できない（運用者の指示 2026-08-20）。
+           null は「内訳を持っていない」＝値引き無しとして扱う。 */
+        buyerYen: l.buyerYen == null ? null : Math.max(0, Math.round(Number(l.buyerYen) || 0))
       };
     }),
     totalSlots: 0,
@@ -3581,6 +3586,26 @@ function lotSlotPrice(lot, idx){
   return lot.price + (idx < (lot.rem || 0) ? 1 : 0);
 }
 
+/**
+ * TikTok 負担の値引きの合計。**アプリの売上と LIVE マネージャーの差**そのもの。
+ *
+ * 落札に残した「買い手が払った額」（`buyerYen`）と落札の合計の差を積む。
+ * 内訳を持っていない落札（手入力・古いデータ）は差 0 として飛ばす。
+ * 排出まで済んだぶんだけ数える＝売上に入っている口だけ。
+ */
+function platTotal(o){
+  let plat = 0, lots = 0;
+  for(const l of (o && o.lots) || []){
+    if(l.buyerYen == null) continue;
+    const st = lotStats(o, l);
+    if(!st.drawn) continue;
+    const share = st.drawn / Math.max(1, Number(l.qty) || 1);
+    const d = lotTotal(l) - (Number(l.buyerYen) || 0);
+    if(d > 0){ plat += d * share; lots++; }
+  }
+  return { plat: Math.round(plat), lots };
+}
+
 function addLot(price, qty, buyer, kind, rem){
   const q = Math.max(1, Math.round(qty) || 1);
   const lot = {
@@ -3590,7 +3615,9 @@ function addLot(price, qty, buyer, kind, rem){
     rem: Math.max(0, Math.min(q - 1, Math.round(Number(rem) || 0))),
     buyer: String(buyer || ""),
     kind: kind || "auction",
-    at: Date.now()
+    at: Date.now(),
+    // 買い手が払った額。TikTok から取り込んだときだけ入る（takeOrder が写す）
+    buyerYen: null
   };
   S.lots.push(lot);
   return lot;
@@ -4634,6 +4661,11 @@ function buildRecord(o, endedAt, memo){
       .sort((a, b) => b[0] - a[0])
       .map(([price, count]) => ({ price, count })),
     revenue: c.revenue,
+    /* 買い手が実際に払った額と、TikTok 負担のクーポンの合計。
+       LIVE マネージャーが出すのは `buyerRev` のほう。注文を掃き出しても
+       あとから内訳を言えるように、記録に焼き込む（運用者の指示 2026-08-20）。 */
+    platYen: platTotal(o).plat,
+    buyerRev: c.revenue - platTotal(o).plat,
     costDrawn: c.costDrawn,
     costTotal: c.costTotal,
     profit: c.profitNow,
@@ -4690,7 +4722,7 @@ function recordsToCsv(){
                 "総口数","販売口数","消化率","最終単価","落札件数",
                 "平均落札単価","最高落札","最低落札","売上",
                 "排出原価","現金損益","利益率","未消化口数","未消化の相場",
-                "時給利益","1口あたり利益","メモ"];
+                "時給利益","1口あたり利益","買い手の支払い","TikTok負担","メモ"];
   const q = v => {
     const t = String(v == null ? "" : v);
     return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
@@ -4716,6 +4748,9 @@ function recordsToCsv(){
       r.left, Math.round(r.mktLeft),
       (() => { const v = recPerHour(r); return v == null ? "" : Math.round(v); })(),
       r.sold > 0 ? Math.round((Number(r.profit) || 0) / r.sold) : "",
+      // 買い手の支払い（LIVE マネージャーに出る額）と、その差の TikTok 負担
+      r.buyerRev == null ? "" : Math.round(r.buyerRev),
+      Number(r.platYen) > 0 ? Math.round(r.platYen) : "",
       r.memo
     ].map(q).join(","));
   }
@@ -5655,6 +5690,11 @@ function renderReplay(){
     note.push(`記録した時点：売上 ${yen(r.revenue)}／現金損益 ${syen(r.profit)}`
       + `${r.sold > 0 ? `／1口あたり ${syen(Math.round(r.profit / r.sold))}` : ""}`
       + `${ph == null ? "" : `／時給利益 ${syen(Math.round(ph))}`}。`);
+    // LIVE マネージャーと突き合わせるための内訳
+    if(Number(r.platYen) > 0)
+      note.push(`買い手の支払いは ${yen(Math.round(r.buyerRev))}`
+        + `（TikTok 負担のクーポン ${yen(Math.round(r.platYen))}）。`
+        + `LIVE マネージャーに出るのはこちらの額。`);
     if(Math.round(r.revenue) !== Math.round(c.revenue))
       note.push(`⚠ いま映しているオリパの売上は ${yen(c.revenue)} で、記録と食い違う。`
         + `記録したあとに中身を触っている。数字は記録のほうが正しい。`);
@@ -5708,11 +5748,19 @@ function renderLive(c){
   // 売上は実額。開封待ちはまだ入っていないので、あるときだけ添える
   const avgSold = c.sold > 0 ? c.revenue / c.sold : 0;
   $("mRev").textContent = yen(c.revenue);
+  /* TikTok 負担のクーポンが乗っていると、**LIVE マネージャーの数字はこれより安い**。
+     現場で「合わない」と言われる元なので、その場で内訳を出しておく
+     （運用者の指示 2026-08-20）。 */
+  const pt = platTotal(S);
   $("mRevSub").textContent = c.sold === 0
     ? (c.pendingSlots > 0 ? `落札 ${yen(c.pendingRev)} は開封待ち` : "まだ売上なし")
     : `${c.sold} 口・平均 ${yen(avgSold)}`
       + (c.price > 0 ? `（定価比 ${pct(avgSold / c.price, 0)}）` : "")
-      + (c.pendingSlots > 0 ? `／開封待ち ${yen(c.pendingRev)}` : "");
+      + (c.pendingSlots > 0 ? `／開封待ち ${yen(c.pendingRev)}` : "")
+      + (pt.plat > 0
+          ? `／買い手の支払い ${yen(Math.round(c.revenue - pt.plat))}`
+            + `（TikTok 負担 ${yen(pt.plat)}）`
+          : "");
 
   // 残り口数はいちばん見たい数字なので、ここを主役にする（販売済は下に回す）
   $("kpiLeft").className = "kpi " + (c.left === 0 ? "is-good" : c.left <= 10 ? "is-warn" : "");
@@ -5894,6 +5942,10 @@ function takeOrder(orderId){
   const { price, rem } = lotUnitAndRem(total, qty);
   const lot = addLot(price, qty, x.buyer, "auction", rem);
   lot.orderId = String(x.id);          // これで受信箱から消える（二重取り込みの防止）
+  /* 買い手が払った額を落札に写す。**注文は掃き出すと消える**ので、ここで写して
+     おかないと過去の回の内訳がたどれなくなる（運用者の指示 2026-08-20）。
+     口数を減らして取り込んだときは、その口数ぶんだけ持つ。 */
+  if(x.buyerPaid != null) lot.buyerYen = Math.max(0, Math.round(Number(x.buyerPaid) * qty));
   // 迷子の注文を引き受けたなら、そのときに商品 ID を覚える。以降は
   // 「配信中だから引き受けた」ではなく、正しく結びついた注文として届く
   if(!String(S.shopProductId || "").trim() && x.productId){
@@ -7609,6 +7661,8 @@ function openClosePanel(){
 function renderCloseSummary(){
   const c = compute();
   const perSlot = c.sold > 0 ? c.profitNow / c.sold : 0;
+  // TikTok 負担のクーポンが乗った回は、LIVE マネージャーとの差をここで見せる
+  const closePlat = platTotal(S);
   $("closeSummary").innerHTML = [
     ["消化",        `${c.sold}/${c.N}`, ""],
     ["売上",        yen(c.revenue), ""],
@@ -7616,7 +7670,10 @@ function renderCloseSummary(){
     ["現金損益",    syen(c.profitNow), c.profitNow >= 0 ? "pos" : "neg"],
     ["利益率",      c.revenue > 0 ? spct(c.marginNow) : "—", c.marginNow >= 0 ? "pos" : "neg"],
     ["1口あたり利益", c.sold > 0 ? syen(Math.round(perSlot)) : "—", perSlot >= 0 ? "pos" : "neg"]
-  ].map(([k, v, cls]) => `<div><span class="label">${k}</span><b class="${cls}">${v}</b></div>`).join("");
+  ].concat(closePlat.plat > 0
+    ? [["買い手の支払い", yen(Math.round(c.revenue - closePlat.plat)), ""],
+       ["TikTok 負担", "−" + yen(closePlat.plat), ""]]
+    : []).map(([k, v, cls]) => `<div><span class="label">${k}</span><b class="${cls}">${v}</b></div>`).join("");
 
   const a = auctionSummary(S);
   if(a.lots){
