@@ -1170,7 +1170,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='07fc7eb (08/21 20:41)';</script>
+<script>window.__BUILD='dd5a782 (08/21 21:15)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -3711,14 +3711,11 @@ function simulateBreakup(o, topMult, minReturn){
 
   const arr = slots.slice();
   for(let t = 0; t < trials; t++){
-    // 引き順をシャッフル（Fisher-Yates）
-    for(let i = N - 1; i > 0; i--){
-      const j = (rand() * (i + 1)) | 0;
-      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    }
-
     let costDrawn = 0, mktDrawn = 0, topDrawn = 0, k = N, stopped = false;
     for(let i = 0; i < N; i++){
+      // 引く直前に交換する（前から進める Fisher-Yates）。simFromHere と同じ理由
+      const j = i + ((rand() * (N - i)) | 0);
+      if(j !== i){ const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp; }
       const s = arr[i];
       costDrawn += s.c; mktDrawn += s.m; if(s.top) topDrawn++;
       const left = N - (i + 1);
@@ -3992,6 +3989,13 @@ function renderActCards(c){
    という食い違いが出るため。種に価格を混ぜていないので、回数さえ同じなら
    価格を変えても同じ引き順の束で比べられる。 */
 const LIVE_TRIALS = 1000;
+/* 1 価格あたりに引く口数の上限。**大きいオリパだけ効く。**
+   400 口のオリパは残り 280 口 × 1000 回 × 13 価格 ＝ 300 万回まわしていて、
+   カードを押すたび 0.2 秒かかっていた（2026-08-21 に実測）。
+   残りが 120 口までは 1000 回のまま＝これまでの数字は動かない。 */
+const TRIAL_BUDGET = 120000;
+const trialsFor = left =>
+  Math.max(250, Math.min(LIVE_TRIALS, Math.round(TRIAL_BUDGET / Math.max(1, left))));
 
 /**
  * いまの残りから、価格 p で売った場合の解体時の着地。
@@ -4063,12 +4067,15 @@ function simFromHere(c, p, topMult, minReturn, trials){
   for(let t = 0; t < T; t++){
     let k = 0, costMore = 0, mktMore = 0, revMore = 0;
     if(!thinNow && !overNow){
-      for(let i = R - 1; i > 0; i--){
-        const j = (rand() * (i + 1)) | 0;
-        const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-      }
       let topOut = topGoneAlready;
       for(let i = 0; i < R; i++){
+        /* **引く直前に 1 回だけ交換する**（前から進める Fisher-Yates）。
+           先に全部混ぜてしまうと、途中で解体になる回でも残り全部を混ぜることになる。
+           400 口のオリパは残り 268 口でも平均 48 口で解体に達するので、
+           混ぜる手間の 8 割が捨てられていた（2026-08-21 に実測）。
+           引いた先頭 k 個が一様な非復元抽出になる性質は変わらない。 */
+        const j = i + ((rand() * (R - i)) | 0);
+        if(j !== i){ const t2 = arr[i]; arr[i] = arr[j]; arr[j] = t2; }
         // **競り。**残りが熱いほど買い手は競り上げる。
         // 1 口引く前の残り期待値で値が決まる（買い手が見ているのはその時点の中身）。
         revMore += bidAt((mktLeft - mktMore) / (R - i), price, targetReturn, rand);
@@ -4107,15 +4114,46 @@ function simFromHere(c, p, topMult, minReturn, trials){
   };
 }
 
-/* 同じ価格を何度も回さないための入れ物。状態が変わったら liveSimSync() が捨てる */
-let priceSims = new Map();
+/* ------------------------------------------------------------
+   試算のキャッシュ
 
-/** 価格 p での試算。同じ価格なら使い回す */
+   同じ価格を何度も回さないための入れ物。**状態が変われば丸ごと捨てる。**
+
+   ⚠ 以前は捨てる仕掛けが別の入れ物（`liveSimCache`）側にあり、価格ごとの
+   キャッシュはどこからも捨てられていなかった。配信中に排出しても判断が
+   古いままになり、**解体条件に達したあとも「まだ 65 口さばける」と言い続けた**
+   （2026-08-21 に実測して発覚）。検査が 22 本とも手でキャッシュを初期化して
+   いたので、テストでも捕まらなかった。同じ轍を踏まないよう、
+   **捨てるのはここ 1 か所だけ**にしてある。
+   ------------------------------------------------------------ */
+let priceCache = { key: "", at: new Map(), bk: null };
+
+/**
+ * 状態の指紋。**JSON にしない**（1 回の描画で 25 回以上通るので重い）。
+ * 賞品の中身は c.N / costTotal / mktTotal に、引いた中身は costDrawn / mktDrawn に
+ * 数字として畳まれているので、これだけで試算の前提は決まる。
+ */
+function simKeyOf(c, topMult, minReturn){
+  return `${c.o.id}|${c.N}|${c.costTotal}|${c.mktTotal}`
+       + `|${c.sold}|${c.revenue}|${c.costDrawn}|${c.mktDrawn}`
+       + `|${c.price}|${c.feeRate}|${c.o.targetReturn}|${topMult}|${minReturn}`;
+}
+
+/** 状態が変わっていればキャッシュを捨てる。試算に入る口はすべてここを通る */
+function simSync(c, topMult, minReturn){
+  const key = simKeyOf(c, topMult, minReturn);
+  if(key !== priceCache.key) priceCache = { key, at: new Map(), bk: null };
+  return priceCache;
+}
+
+/** 価格 p での試算。同じ価格・同じ状態なら使い回す */
 function simAtPrice(c, p, topMult, minReturn){
   const k = Math.max(0, Math.round(p));
   if(k <= 0) return null;
-  if(!priceSims.has(k)) priceSims.set(k, simFromHere(c, k, topMult, minReturn, LIVE_TRIALS));
-  return priceSims.get(k);
+  const cache = simSync(c, topMult, minReturn);
+  if(!cache.at.has(k))
+    cache.at.set(k, simFromHere(c, k, topMult, minReturn, trialsFor(c.left)));
+  return cache.at.get(k);
 }
 
 /**
@@ -5726,6 +5764,29 @@ function renderReplayBar(){
   renderReplay();
 }
 
+/* ------------------------------------------------------------
+   押した瞬間の反応を優先する
+
+   判断エンジン（`decideNow`）は 400 口のオリパで 0.2 秒近くかかる。
+   カードを押した直後にそれを走らせると、その間ずっと画面が固まる。
+   **軽い欄（KPI・カード・落札の表）だけ先に描いて、判断の欄は次の番に回す。**
+   数字は何も変えない。順番を変えるだけ。
+
+   `render()` をそのまま呼んだときは今までどおり全部その場で描く
+   （検査や同期の受信はそちらを通る）。軽い描画に切り替えるのは
+   **人が押した操作のときだけ**（`renderNow()`）。
+   ------------------------------------------------------------ */
+let liteRender = false;      // true のあいだ、判断エンジンを使う欄を飛ばす
+let heavyTimer = null;
+
+/** 人が押した直後の描画。軽い欄を先に出し、判断の欄は次の番で追いつかせる */
+function renderNow(){
+  liteRender = true;
+  try { render(); } finally { liteRender = false; }
+  clearTimeout(heavyTimer);
+  heavyTimer = setTimeout(() => { heavyTimer = null; render(); }, 0);
+}
+
 function renderLive(c){
   $("liveName").textContent = S.name || "無題のオリパ";
   const closed = !!S.closedAt;
@@ -5794,15 +5855,18 @@ function renderLive(c){
     ? "まだ排出なし"
     : `手数料 ${pct(c.feeRate, 1)}（${syen(-Math.round(c.feeNow))}）を引いたあと`;
 
-  renderActCards(c);
   renderInbox(c);
   renderLotBar(c);
   renderPrizes(c);
   renderLotTable();
-  renderPrice(c);
-  renderPace(c);
   renderLiveSeat();
-  drawSpark(c);
+  // ここから下は判断エンジンを通る。押した直後は飛ばして、次の番で描く
+  if(!liteRender){
+    renderActCards(c);
+    renderPrice(c);
+    renderPace(c);
+    drawSpark(c);
+  }
 
   const reopen = $("btnReopen");
   if(reopen) reopen.addEventListener("click", reopenStream);
@@ -5963,7 +6027,7 @@ function takeOrder(orderId){
     S.shopProductId = String(x.productId);
   }
   lotBarKey = "";
-  render();
+  renderNow();          // 押した手応えを先に返す
   return lot;
 }
 
@@ -6504,26 +6568,13 @@ function recentFloor(o){
   return mid > 0 ? roundPrice(mid * 0.7) : 0;
 }
 
-/* 値下げ判断は「完売したら」ではなく「解体まで売ったら」で出す。
-   価格ごとに引き直すので、状態が変わらないうちは使い回す。 */
-let liveSimCache = { key: "", bk: null, at: new Map() };
-
-function liveSimSync(c){
-  const { topMult, minReturn } = simParams();
-  const key = JSON.stringify([
-    c.o.id, c.o.prizes.map(p => [costOf(p), mktOf(p), p.count | 0]),
-    c.sold, c.revenue, c.costDrawn, c.price, topMult, minReturn
-  ]);
-  if(key !== liveSimCache.key){
-    liveSimCache = { key, bk: breakupAnchors(c, topMult, minReturn), at: new Map() };
-  }
-  return { topMult, minReturn };
-}
-
-/** 解体前提の損益分岐・目標利益率ライン。届かないときは Infinity */
+/** 解体前提の損益分岐・目標利益率ライン。届かないときは Infinity。
+    **要るときだけ引く**（落札ダイアログの下限表示にしか使っていない）。 */
 function liveBreakup(c){
-  liveSimSync(c);
-  return liveSimCache.bk;
+  const { topMult, minReturn } = simParams();
+  const cache = simSync(c, topMult, minReturn);
+  if(cache.bk === null) cache.bk = breakupAnchors(c, topMult, minReturn) || false;
+  return cache.bk || null;
 }
 
 
@@ -6564,9 +6615,9 @@ function renderPrice(c){
     return;
   }
 
-  const bk = c.left > 0 ? liveBreakup(c) : null;
-  const bBE  = bk ? bk.pBE : Infinity;      // 解体前提の損益分岐
-  const bTgt = bk ? bk.pTarget : Infinity;  // 解体前提で目標利益率に届く価格
+  /* ⚠ ここで `liveBreakup(c)` を引いていたが、取った値をどこでも使っていなかった。
+     1 回の描画で試算が 16 回ぶん無駄に回っていた（2026-08-21 に実測して削除）。
+     解体前提の損益分岐が要るのは落札ダイアログだけ。 */
 
   // ここが判断の本体。続けるのと止めるのを同じ物差しで比べる
   const dec = c.left > 0 ? decideNow(c) : null;
@@ -7814,7 +7865,7 @@ async function draw(prizeId, n = 1){
   for(let i = 0; i < k; i++){
     S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id, at: now });
   }
-  render();
+  renderNow();          // 押した手応えを先に返す。判断の欄はすぐ後から追いつく
   // 出し切ったなら、待っている落札をその場で立てる。次に取りに行くまで
   // 待たせると、届いているのに手が止まって見える
   autoTakeOrders();
@@ -7838,7 +7889,7 @@ function undo(){
       lot.rem = clamp(lot.rem || 0, 0, rest - 1);
     }
   }
-  render();
+  renderNow();          // 押した手応えを先に返す
 }
 
 document.querySelectorAll(".modes button").forEach(b => {
