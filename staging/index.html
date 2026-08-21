@@ -257,6 +257,53 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 .actcards-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
 .actcards-head h3{ margin:0; font-size:13.5px; letter-spacing:.02em; }
 .actlist{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+
+/* 提案とキャストを 1:2 で並べる（運用者の指示 2026-08-21）。
+   提案は 1 枚だけになったので、残りをキャストに使う。
+   狭い画面では縦に積む。配信中はタブレットで見ることがある */
+.castrow{ display:grid; grid-template-columns:1fr 2fr; gap:10px; align-items:start; }
+@media (max-width:900px){ .castrow{ grid-template-columns:1fr; } }
+/* 片方しか出ていないときは、残ったほうが全幅を使う */
+.castrow > section[hidden]{ display:none; }
+.castrow:has(> .actcards[hidden]){ grid-template-columns:1fr; }
+.castrow:has(> .castbar[hidden]){ grid-template-columns:1fr; }
+
+.castbar{
+  border:1px solid var(--line); border-radius:11px;
+  background:var(--surface); padding:11px 13px 12px;
+}
+.castbar-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.castbar-head h3{ margin:0; font-size:13.5px; letter-spacing:.02em; }
+.castlist{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
+.castone{
+  border:1px solid var(--line); border-left:3px solid var(--good); border-radius:9px;
+  background:var(--surface-2); padding:9px 12px; min-width:0;
+}
+/* 誰も出ていない＝この時間の損益は誰にも付かない。目立たせる */
+.castone.is-none{ border-left-color:var(--gold); }
+.castone .t{ font-weight:700; font-size:14px; display:block; }
+.castone .n{
+  display:block; margin-top:4px; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:17px; font-weight:600; letter-spacing:-.02em;
+}
+.castone .n.pos{ color:var(--good); }
+.castone .n.neg{ color:var(--bad); }
+.castone .s{ display:block; margin-top:2px; font-size:11.5px; color:var(--ink-3); }
+.castbtns{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px; }
+
+/* キャストの画面 */
+.monthbar{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:13px; }
+.monthbar b{ font-size:15px; min-width:8.5em; text-align:center; }
+.castrowsel{ display:grid; gap:8px; }
+/* モーダルの選択肢。押した瞬間に決まるので、押しやすい大きさにする */
+.modalpick{ display:grid; gap:8px; margin:14px 0 4px; }
+.modalpick .pickbtn{ width:100%; justify-content:center; padding:11px 14px; font-size:14.5px; }
+/* 休止したキャストは薄く出す。**消えてはいない** */
+tr.is-off td{ opacity:.55; }
+.offtag{
+  display:inline-block; margin-left:7px; padding:1px 7px; border-radius:99px;
+  border:1px solid var(--line); font-size:10.5px; color:var(--ink-3); vertical-align:1px;
+}
 .act{
   border:1px solid var(--line); border-left:3px solid var(--line-2); border-radius:9px;
   background:var(--surface-2); padding:10px 12px; min-width:0;
@@ -1193,7 +1240,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='b82319e (08/22 03:41)';</script>
+<script>window.__BUILD='5dbbfde (08/22 04:18)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1214,6 +1261,7 @@ window.__SYNC_DEFAULTS = {
       <button type="button" data-mode="list" aria-pressed="true">オリパ一覧</button>
       <button type="button" data-mode="live" aria-pressed="false" id="tabLive">配信中</button>
       <button type="button" data-mode="watch" aria-pressed="false" id="tabWatch">ブリッジ</button>
+      <button type="button" data-mode="cast" aria-pressed="false" id="tabCast">キャスト</button>
     </nav>
     <button type="button" class="helplink" id="btnHelp">使い方</button>
   </div>
@@ -1442,13 +1490,27 @@ window.__SYNC_DEFAULTS = {
       <div class="todolist" id="todoList"></div>
     </section>
 
-    <section class="actcards" id="actCards" hidden>
-      <div class="actcards-head">
-        <h3>AIの提案</h3>
-        <span class="hint" id="actsSub"></span>
-      </div>
-      <div class="actlist" id="actList"></div>
-    </section>
+    <!-- 提案とキャストを 1:2 で並べる。提案は**いちばん金額の大きい 1 枚だけ**。
+         残りの 2/3 が出演中のキャストとその回のボーナス（運用者の指示 2026-08-21）。
+         取りこぼしは上の「先に片付ける」に分けてあるので押し出されない -->
+    <div class="castrow" id="castRow" hidden>
+      <section class="actcards" id="actCards" hidden>
+        <div class="actcards-head">
+          <h3>AIの提案</h3>
+          <span class="hint" id="actsSub"></span>
+        </div>
+        <div class="actlist" id="actList"></div>
+      </section>
+
+      <section class="castbar" id="castBar" hidden>
+        <div class="castbar-head">
+          <h3>出演中</h3>
+          <span class="hint" id="castSub"></span>
+        </div>
+        <div class="castlist" id="castList"></div>
+        <div class="castbtns" id="castBtns"></div>
+      </section>
+    </div>
 
     <div class="kpis">
       <div class="kpi is-key" id="kpiMargin">
@@ -1622,8 +1684,78 @@ window.__SYNC_DEFAULTS = {
         <p class="hint" id="replayNote" style="margin:12px 0 0"></p>
       </div>
     </section>
+
+    <!-- 出演を直す。⚠ **記録の画面で唯一書き込める場所。**
+         直せるのは出演者だけで、時刻も金額も動かない -->
+    <section class="panel" id="replayCastPanel" hidden>
+      <header>
+        <h2>出演を直す</h2>
+        <span class="hint">直せるのは出演者だけ。時刻と金額は動かない</span>
+      </header>
+      <div class="body">
+        <div class="scroll-x">
+          <table class="tbl" id="replayCastTable">
+            <thead>
+              <tr><th>時間</th><th class="l">出演</th><th>落札</th>
+                  <th>現金損益</th><th>ボーナス</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="hint" id="replayCastNote" style="margin:12px 0 0"></p>
+      </div>
+    </section>
   </section>
 
+
+  <!-- ========== キャスト ========== -->
+  <section id="view-cast" class="stack" hidden>
+    <section class="panel">
+      <header>
+        <h2>キャスト</h2>
+        <span class="hint" id="castMonthSub"></span>
+      </header>
+      <div class="body">
+        <div class="monthbar">
+          <button type="button" class="btn ghost" id="btnCastPrev" aria-label="前の月">◀</button>
+          <b id="castMonthLabel">—</b>
+          <button type="button" class="btn ghost" id="btnCastNext" aria-label="次の月">▶</button>
+          <button type="button" class="btn" id="btnCastAll">全期間</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn primary" id="btnCastAdd">キャストを登録</button>
+        </div>
+        <div class="scroll-x">
+          <table class="tbl" id="castTable">
+            <thead>
+              <tr><th class="l">名前</th><th>回数</th><th>出演時間</th>
+                  <th>売上</th><th>現金損益</th><th>ボーナス</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="hint" id="castNote" style="margin:13px 0 0"></p>
+      </div>
+    </section>
+
+    <!-- 選んだキャストの配信 1 回ずつ -->
+    <section class="panel" id="castDetail" hidden>
+      <header>
+        <h2 id="castDetailName">—</h2>
+        <span class="hint" id="castDetailSub"></span>
+      </header>
+      <div class="body">
+        <div class="scroll-x">
+          <table class="tbl" id="castDetailTable">
+            <thead>
+              <tr><th>配信日</th><th class="l">オリパ</th><th>出演時間</th>
+                  <th>落札</th><th>現金損益</th><th>ボーナス</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </section>
 
   <!-- ========== 使い方 ========== -->
   <section id="view-help" class="stack" hidden>
@@ -2035,6 +2167,8 @@ window.__SYNC_DEFAULTS = {
   <div class="modal" id="modal" hidden>
     <form class="modalbox" id="modalForm" role="dialog" aria-modal="true" aria-labelledby="modalMsg">
       <p id="modalMsg"></p>
+      <!-- 選択肢。配信中に**ひと押しで**選べるようにする（キャストの選択など） -->
+      <div class="modalpick" id="modalPick" hidden></div>
       <input type="text" id="modalInput" hidden>
       <div class="modalacts">
         <button type="button" class="btn ghost" id="modalCancel">キャンセル</button>
@@ -2271,6 +2405,10 @@ function normalizeOripa(o){
     pauses: (Array.isArray(o.pauses) ? o.pauses : [])
       .map(x => ({ from: Number(x && x.from) || 0, to: Number(x && x.to) || 0 }))
       .filter(x => x.from > 0),
+    /* 出演区間。**切り替わった瞬間だけ**を持つ（次の区間の at まで続く）。
+       終了時刻を持たないので、区間の重なりも隙間も原理的に起きない。
+       castIds が空 = 無人区間で、その時間の損益は誰にも付かない。 */
+    stints: normalizeStints(o.stints),
     // 配信の席。{by, name, at}。at が古くなれば自動的に空く
     live: o.live && o.live.by
       ? { by: String(o.live.by), name: String(o.live.name || ""), at: Number(o.live.at) || 0,
@@ -2357,7 +2495,13 @@ function normalizeDB(d){
     .filter(x => x && x.id != null)
     .map(normalizeOrder)
     .sort((a, b) => b.at - a.at);
-  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId, graves: gr, orders };
+  /* 配信キャスト。**消せない**ので墓標は要らない（休止だけ）。
+     知らない版のアプリが読んでも、normalizeOripa と同じく捨てずに持ち越される。 */
+  const cs = (Array.isArray(d.casts) ? d.casts : [])
+    .filter(c => c && typeof c === "object")
+    .map(normalizeCast)
+    .sort((a, b) => a.createdAt - b.createdAt);
+  return { ...d, version: APP_DATA_VERSION, oripas, records, currentId, graves: gr, orders, casts: cs };
 }
 
 /* ============================================================
@@ -3095,7 +3239,8 @@ function revBeats(inRev, inAt, myRev, myAt){
 
 /** 消される側の版。墓標をその 1 つ先に置くために使う */
 function revOfLive(kind, id){
-  const list = kind === "oripa" ? DB.oripas : kind === "record" ? DB.records : null;
+  const list = kind === "oripa" ? DB.oripas : kind === "record" ? DB.records
+             : kind === "cast" ? casts() : null;
   if(!list) return 0;
   const x = list.find(v => String(v.id) === String(id));
   return Number(x && x.rev) || 0;
@@ -3121,6 +3266,14 @@ function syncOutbox(){
       r.rev = (Number(r.rev) || 0) + 1;
       out.push({ kind: "record", id: String(r.id), updatedAt: at, rev: r.rev, json: JSON.stringify(r) });
     }
+  }
+  /* キャスト。**消せない**ので墓標は出ない（休止も普通の更新）。
+     オリパ・記録と同じ版番号方式で、直した端末のものが勝つ。 */
+  for(const c of casts()){
+    const at = Number(c.updatedAt) || 0;
+    if(at <= since) continue;
+    c.rev = (Number(c.rev) || 0) + 1;
+    out.push({ kind: "cast", id: String(c.id), updatedAt: at, rev: c.rev, json: JSON.stringify(c) });
   }
   for(const g of graves()){
     // 墓標は bury() のときに「消される側より 1 つ先」を持たせてある
@@ -3185,6 +3338,21 @@ function syncApply(items){
         if(i >= 0) DB.records[i] = r; else DB.records.push(r);
         changed++;
       }
+    }else if(it.kind === "cast"){
+      /* キャストは消せないので、墓標も削除の枝も無い。届いた版が新しければ
+         差し替えるだけ。古い版のアプリは casts を知らないが、
+         normalizeDB が知らない項目を捨てずに持ち越すので消えない。 */
+      const list = casts();
+      const i = list.findIndex(c => String(c.id) === String(id));
+      const cur = i >= 0 ? list[i] : null;
+      const mine = cur ? Number(cur.updatedAt) || 0 : -1;
+      if(cur && !revBeats(it.rev, it.updatedAt, cur.rev, mine)) continue;
+      if(it.deleted) continue;
+      let c;
+      try{ c = normalizeCast(JSON.parse(it.json)); }catch(_){ continue; }
+      c.id = String(c.id) === String(id) ? c.id : id;
+      if(i >= 0) list[i] = c; else list.push(c);
+      changed++;
     }else if(it.kind === "order"){
       // 届いた落札。こちらからは送らないので、上書きの取り合いは起きない
       if(!Array.isArray(DB.orders)) DB.orders = [];
@@ -3820,6 +3988,411 @@ function auctionSummary(o){
 }
 
 /* ============================================================
+   配信キャストとボーナス
+
+   配信オリパの利益の一部をキャストに渡す。運用者と決めた規則
+   （`docs/handoff/2026-08-21-oripa-cast-bonus-design.md`）：
+
+     ・利益の 5% を積み、損の 5% を引く（相殺する）
+     ・元になるのは**現金損益**（売上 − 手数料 − 排出原価）
+     ・2 名出演の区間は **2.5% ずつ**（人数で割ってから率をかける）
+     ・区間は**落札の時刻**で切る。開封の時刻ではない
+     ・0 止めは**月の合計**でかける。翌月に持ち越さない
+     ・月は**配信開始日**で決める
+     ・キャストの居ない時間は**誰にも付けない**
+
+   ⚠ **キャストは消せない。**休止だけ。過去の記録から名前が消えると
+   支払った額の裏が取れなくなる（運用者の指示 2026-08-21）。
+   ============================================================ */
+
+/** ボーナス率。2 名なら人数で割るので実質 2.5% ずつになる */
+const CAST_RATE = 0.05;
+/** 1 つの区間に立てられる人数の上限（運用者の指示）*/
+const CAST_MAX = 2;
+
+/* ------------------------------------------------------------
+   キャストそのもの
+   ------------------------------------------------------------ */
+
+function normalizeCast(c){
+  const t = Date.now();
+  return {
+    ...c,
+    id: c.id || newId(),
+    name: String(c.name || "").trim() || "名前なし",
+    note: String(c.note || ""),
+    // 休止すると新しい配信で選べなくなる。過去の実績と名前はそのまま残る
+    active: c.active === undefined ? true : !!c.active,
+    createdAt: Number(c.createdAt) || t,
+    updatedAt: Number(c.updatedAt) || t,
+    rev: Math.max(0, Math.round(Number(c.rev) || 0))
+  };
+}
+
+const casts       = () => (DB && Array.isArray(DB.casts)) ? DB.casts : (DB.casts = []);
+const castById    = id => casts().find(c => String(c.id) === String(id)) || null;
+const castName    = id => (castById(id) || {}).name || "不明なキャスト";
+const activeCasts = () => casts().filter(c => c.active);
+
+function addCast(name, note){
+  const c = normalizeCast({ name, note });
+  casts().push(c);
+  touchCast(c);
+  return c;
+}
+
+/** 版番号を 1 つ進める。**送るときだけ**呼ぶ（受け取った版はそのまま引き継ぐ）*/
+function touchCast(c){
+  if(!c) return;
+  c.updatedAt = Date.now();
+  c.rev = Math.max(0, Math.round(Number(c.rev) || 0)) + 1;
+}
+
+/* ------------------------------------------------------------
+   出演区間
+
+   持つのは「**切り替わった瞬間**」だけ。ある区間は次の区間の `at` まで
+   （最後は締めた時刻まで）続く。終了時刻を持たないので、
+   **区間の重なりも隙間も原理的に起きない。**
+
+     o.stints = [ {at, castIds:[]}, {at, castIds:[A]}, {at, castIds:[A,B]} ]
+
+   castIds が空 ＝ 無人区間。配信開始から最初の区間までも無人。
+   押し忘れがそのまま「誰にも付かない時間」として残るので、あとで気づける。
+   ------------------------------------------------------------ */
+
+function normalizeStints(list){
+  return (Array.isArray(list) ? list : [])
+    .map(s => ({
+      at: Number(s && s.at) || 0,
+      castIds: (Array.isArray(s && s.castIds) ? s.castIds : [])
+        .map(String).filter(Boolean).slice(0, CAST_MAX)
+    }))
+    .filter(s => s.at > 0)
+    .sort((a, b) => a.at - b.at);
+}
+
+const stintsOf  = o => (o && Array.isArray(o.stints)) ? o.stints : [];
+/** いま出ているキャスト。降ろしていれば空 */
+const castsNow  = o => { const s = stintsOf(o); return s.length ? s[s.length - 1].castIds : []; };
+
+/**
+ * 出演者を差し替える。**押した瞬間から**新しい区間になる。
+ * 出演・山分け・交代・全員降ろす、どれも同じこの一手で済む。
+ */
+function setCastsNow(o, ids, at){
+  if(!o) return null;
+  const list = (ids || []).map(String).filter(Boolean).slice(0, CAST_MAX);
+  if(!Array.isArray(o.stints)) o.stints = [];
+  const t = Number(at) || Date.now();
+  const last = o.stints[o.stints.length - 1];
+  // 同じ顔ぶれなら何もしない。押すたびに区間が増えると記録が読めなくなる
+  if(last && sameIds(last.castIds, list)) return last;
+  /* 同じ瞬間に押し直したときは**上書きする**。区間を積むと、
+     幅 0 の区間が挟まって「誰にも付かない一瞬」ができる */
+  if(last && last.at === t){ last.castIds = list; return last; }
+  const s = { at: t, castIds: list };
+  o.stints.push(s);
+  return s;
+}
+
+const sameIds = (a, b) =>
+  (a || []).length === (b || []).length
+  && (a || []).every((x, i) => String(x) === String((b || [])[i]));
+
+/**
+ * 区間を「始まり・終わり」の形に開く。**計算はここを通す。**
+ *
+ * ⚠ **窓は必ず全部の落札と全部の区間を覆う。**`from`／`to` は目安でしかない。
+ *
+ * 記録の現金損益（`rec.profit`）は `compute()` の値＝**そのオリパの全部の排出**
+ * なので、窓を狭めると `Σ区間 + 未登録 = 現金損益` が成り立たなくなる。
+ * それだけでなく、席を取り直すと `liveStartedAt` が「いま」に戻る仕様のせいで
+ * **押した出演区間が丸ごと記録から消える**（2026-08-21 に検査で見つけた。
+ * 出演時間が 0 分になる形で出ていた）。窓は広げる側に倒す。
+ *
+ * 落札より前・区間より前は覆わないので、覆いきれないぶんは出ない。
+ * 別の夜の落札は先頭の**無人区間**に入る＝誰にも付かない。妥当で、
+ * しかも記録の画面から割り当て直せる。
+ */
+function stintSpans(o, from, to){
+  const ss = normalizeStints(stintsOf(o));
+  const firsts = [Number(from) || 0, ss.length ? ss[0].at : 0,
+                  (o && o.liveStartedAt) || 0].filter(x => x > 0);
+  const lots = lotLedger(o);
+  if(lots.length && lots[0].at > 0) firsts.push(lots[0].at);
+  if(!firsts.length) return [];
+  const start = Math.min(...firsts);
+
+  // 終わりも同じく広げる。締めた時刻より後ろの区間・落札を切り落とさない
+  const lasts = [Number(to) || 0, (o && o.closedAt) || 0,
+                 ss.length ? ss[ss.length - 1].at + 1 : 0,
+                 lots.length ? lots[lots.length - 1].at + 1 : 0].filter(x => x > 0);
+  const end = Math.max(...lasts, start + 1);
+
+  const use = ss.filter(s => s.at < end);
+  const out = [];
+  /* ⚠ **最初の出演までを、無人区間として必ず出す。**
+     ここを出さないと、その時間の損益がどの区間にも入らず、
+     **記録の画面から序盤の押し忘れを直せない**（それがこの機能の主目的）。 */
+  if(!use.length || use[0].at > start)
+    out.push({ at: start, to: use.length ? Math.min(use[0].at, end) : end, castIds: [] });
+  for(let i = 0; i < use.length; i++){
+    const a = Math.max(use[i].at, start);
+    const b = i + 1 < use.length ? Math.min(use[i + 1].at, end) : end;
+    if(b > a) out.push({ at: a, to: b, castIds: use[i].castIds.slice() });
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------
+   落札 1 件ごとの損益
+
+   その落札の損益 ＝ 開封済みの口の落札額 − 手数料 − 出た賞品の原価
+
+   **開封済みの口だけ**数える。`compute()` の現金損益と同じ勘定なので、
+   全部を足すと配信の現金損益にぴったり一致する（検査で見る）。
+   開封待ちの口はまだ誰の実績でもない。
+   ------------------------------------------------------------ */
+
+/**
+ * 落札ごとに {at, revenue, cost, profit} を出す。
+ * 落札に紐づかない排出（手入力）は、その排出自身の時刻で 1 件として扱う。
+ */
+function lotLedger(o){
+  const feeRate = clamp(Number(o.feeRate != null ? o.feeRate : DEFAULT_FEE), 0, 0.5);
+  const byId = new Map(o.prizes.map(p => [p.id, p]));
+  const lots = new Map();
+  const get = (key, at) => {
+    let e = lots.get(key);
+    if(!e){ e = { at, revenue: 0, cost: 0 }; lots.set(key, e); }
+    // 時刻は落札のものを優先する。無ければ最初の排出の時刻
+    if(!e.at && at) e.at = at;
+    return e;
+  };
+  const lotAt = new Map((o.lots || []).map(l => [String(l.id), Number(l.at) || 0]));
+  for(const ev of o.events || []){
+    const key = ev.lotId ? "L" + String(ev.lotId) : "E" + (Number(ev.at) || 0) + "-" + ev.prizeId;
+    const at = ev.lotId ? (lotAt.get(String(ev.lotId)) || Number(ev.at) || 0) : (Number(ev.at) || 0);
+    const e = get(key, at);
+    e.revenue += Number(ev.price) || 0;
+    const p = byId.get(ev.prizeId);
+    e.cost += p ? costOf(p) : 0;
+  }
+  const out = [];
+  for(const e of lots.values())
+    out.push({ at: e.at, revenue: e.revenue, cost: e.cost,
+               profit: e.revenue - e.revenue * feeRate - e.cost });
+  out.sort((a, b) => a.at - b.at);
+  return out;
+}
+
+/**
+ * 出演区間ごとの損益。**落札の時刻**で区間に振り分ける。
+ *
+ * 返すもの:
+ *   spans   区間 [{at, to, castIds, revenue, profit, lots, ms}]
+ *   loose   どの区間にも入らなかったぶん（配信の外＝別の夜の落札）
+ *   nobody  無人区間の損益（誰にも付かない）
+ */
+function castSpans(o, from, to){
+  const start = Number(from) || Number(o && o.liveStartedAt) || 0;
+  const end   = Number(to) || (o && o.closedAt) || Date.now();
+  const spans = stintSpans(o, start, end).map(s => ({
+    ...s, revenue: 0, profit: 0, lots: 0,
+    // 出演時間からは人が押した一時停止を引く（paceOf と同じ勘定）
+    ms: Math.max(0, (s.to - s.at) - pausedBetween(o, s.at, s.to))
+  }));
+  let loose = 0, looseLots = 0;
+  for(const e of lotLedger(o)){
+    const s = spans.find(x => e.at >= x.at && e.at < x.to);
+    if(s){ s.revenue += e.revenue; s.profit += e.profit; s.lots++; }
+    else { loose += e.profit; looseLots++; }
+  }
+  const nobody = spans.filter(s => !s.castIds.length).reduce((n, s) => n + s.profit, 0);
+  return { spans, loose, looseLots, nobody,
+           unassigned: loose + nobody };   // 「キャスト未登録ぶん」として出す額
+}
+
+/* ------------------------------------------------------------
+   ボーナス
+
+   区間のひとりぶん ＝ 区間の損益 ÷ その区間の人数
+   その回のボーナス ＝ trunc( Σ(ひとりぶん) × 5% )
+
+   ⚠ **切り捨ては 0 の方向**（`Math.trunc`）。利益も損も額が小さくなる側に
+   倒れるので、損を引きすぎない（運用者の指示 2026-08-21）。
+   ⚠ **回ごとに切り捨ててから月で足す。**先に足して最後に丸めると、
+   月の合計と各回に出ている数字の合計が数円ずれる。必ず問い合わせが来る。
+   ------------------------------------------------------------ */
+
+/** 区間の並びから、キャストごとの取り分（切り捨て前）を出す */
+function bonusFromSpans(spans){
+  const by = new Map();
+  for(const s of spans || []){
+    const n = (s.castIds || []).length;
+    if(!n) continue;
+    const share = s.profit / n;
+    for(const id of s.castIds){
+      const e = by.get(String(id)) || { castId: String(id), profit: 0, ms: 0, lots: 0, revenue: 0 };
+      e.profit  += share;
+      e.revenue += s.revenue / n;
+      e.ms      += s.ms;
+      e.lots    += s.lots;
+      by.set(String(id), e);
+    }
+  }
+  return [...by.values()].map(e => ({ ...e, yen: Math.trunc(e.profit * CAST_RATE) }));
+}
+
+/** 配信 1 回ぶん（進行中でも締めたあとでも同じ形で返す）*/
+function castPayOf(o, from, to){
+  const cs = castSpans(o, from, to);
+  return { ...cs, pay: bonusFromSpans(cs.spans) };
+}
+
+/** 記録に焼き込む形。**金額まで固める**ので、あとから出演者だけ直せる */
+function stintsForRecord(o, from, to){
+  return castSpans(o, from, to).spans.map(s => ({
+    at: s.at, to: s.to, castIds: s.castIds.slice(),
+    revenue: Math.round(s.revenue), profit: Math.round(s.profit),
+    lots: s.lots, ms: s.ms
+  }));
+}
+
+/**
+ * 記録からボーナスを出す。**焼き込んだ区間だけを見る。**
+ * オリパを消していても、別の夜に使い回していても、記録の金額は動かない。
+ */
+function recordPay(r){
+  const spans = (r && Array.isArray(r.stints)) ? r.stints : [];
+  const pay = bonusFromSpans(spans);
+  const named = spans.filter(s => (s.castIds || []).length)
+                     .reduce((n, s) => n + (Number(s.profit) || 0), 0);
+  return { pay, spans,
+           // 記録の現金損益のうち、誰にも付いていないぶん
+           unassigned: Math.round((Number(r && r.profit) || 0) - named) };
+}
+
+/* ------------------------------------------------------------
+   月ごとの集計
+   ------------------------------------------------------------ */
+
+/** その配信が属する月。**配信開始日**で決める（深夜をまたいでも始めた月）*/
+function recordMonth(r){
+  const at = Number(r && r.startedAt) || Number(r && r.firstLotAt)
+          || Number(r && r.endedAt) || 0;
+  if(!at) return "";
+  const d = new Date(at);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+
+const monthLabel = key => {
+  const [y, m] = String(key || "").split("-");
+  return y ? `${y}年${Number(m)}月` : "全期間";
+};
+
+/** 記録に月が付いているものを新しい順に。`key` を省くと全期間 */
+function recordsInMonth(key){
+  return DB.records
+    .filter(r => !key || recordMonth(r) === key)
+    .sort((a, b) => b.endedAt - a.endedAt);
+}
+
+/** 記録が 1 件でもある月を新しい順に */
+function castMonths(){
+  const set = new Set();
+  for(const r of DB.records){ const k = recordMonth(r); if(k) set.add(k); }
+  return [...set].sort().reverse();
+}
+
+/**
+ * 月ぶんのまとめ。**0 止めは月の合計でかける**（相殺が効く）。
+ * 月がマイナスなら 0 円で、翌月には持ち越さない。
+ */
+function castTotals(key){
+  const rs = recordsInMonth(key);
+  const by = new Map();
+  let unassigned = 0, profit = 0;
+  for(const r of rs){
+    const { pay, unassigned: u } = recordPay(r);
+    unassigned += u;
+    profit += Number(r.profit) || 0;
+    for(const p of pay){
+      const e = by.get(p.castId)
+        || { castId: p.castId, raw: 0, yen: 0, profit: 0, revenue: 0, ms: 0, lots: 0, times: 0 };
+      // ⚠ 回ごとの切り捨て済みの額を足す。月の合計＝各回の表示の合計にする
+      e.yen     += p.yen;
+      e.raw     += p.profit * CAST_RATE;
+      e.profit  += p.profit;
+      e.revenue += p.revenue;
+      e.ms      += p.ms;
+      e.lots    += p.lots;
+      e.times++;
+      by.set(p.castId, e);
+    }
+  }
+  const rows = [...by.values()].map(e => ({
+    ...e,
+    name: castName(e.castId),
+    // 月がマイナスなら 0 円。翌月には持ち越さない（運用者の指示）
+    payable: Math.max(0, e.yen),
+    negative: e.yen < 0 ? e.yen : 0
+  })).sort((a, b) => b.payable - a.payable || b.profit - a.profit);
+  return { key, rows, records: rs, unassigned: Math.round(unassigned), profit: Math.round(profit),
+           payable: rows.reduce((n, r) => n + r.payable, 0) };
+}
+
+/* ------------------------------------------------------------
+   記録の後編集
+
+   ⚠ **直せるのは出演者だけ。**時刻も金額も動かさない。記録の画面は本来
+   「見るだけ」なので、ここに開ける口は最小にする（運用者の指示 2026-08-21）。
+   ------------------------------------------------------------ */
+
+/** 記録を直したら版を進める。そうしないと他の端末に届かない */
+function touchRecord(r){
+  if(!r) return;
+  r.updatedAt = Date.now();
+  r.rev = Math.max(0, Math.round(Number(r.rev) || 0)) + 1;
+}
+
+/**
+ * 区間を持たない記録に、**配信全体を 1 区間として**足す。
+ * 導入前の回はここから始まる。金額は記録の現金損益をそのまま使う。
+ */
+function ensureRecordStints(r){
+  if(!r) return [];
+  if(Array.isArray(r.stints) && r.stints.length) return r.stints;
+  const at = Number(r.startedAt) || Number(r.firstLotAt) || Number(r.endedAt) || 0;
+  const to = Number(r.endedAt) || at;
+  r.stints = [{ at, to, castIds: [],
+                revenue: Math.round(Number(r.revenue) || 0),
+                profit:  Math.round(Number(r.profit) || 0),
+                lots: Number(r.auction && r.auction.lots) || 0,
+                ms: Math.max(0, Number(r.activeMs) || (to - at)) }];
+  return r.stints;
+}
+
+/** 記録の 1 区間の出演者を差し替える */
+function setRecordStintCasts(r, index, ids){
+  const ss = ensureRecordStints(r);
+  const s = ss[index];
+  if(!s) return null;
+  s.castIds = (ids || []).map(String).filter(Boolean).slice(0, CAST_MAX);
+  touchRecord(r);
+  return s;
+}
+
+/** 配信まるごとを 1〜2 名の実績にする。区間の無い過去の記録用 */
+function assignWholeRecord(r, ids){
+  ensureRecordStints(r);
+  const list = (ids || []).map(String).filter(Boolean).slice(0, CAST_MAX);
+  for(const s of r.stints) s.castIds = list.slice();
+  touchRecord(r);
+  return r.stints[0];
+}
+/* ============================================================
    解体シミュレーション
 
    オリパは「目玉が出尽くす」か「残りが薄くなりすぎる」と解体になる。
@@ -3937,7 +4510,8 @@ function simulateBreakup(o, topMult, minReturn){
 /* ============================================================
    AIの提案（行動カード）／先に片付ける（取りこぼし）
 
-   「次に何をすれば売上が伸びるか」を、いまの状態から組み立てて**上位 3 枚**出す。
+   「次に何をすれば売上が伸びるか」を、いまの状態から組み立てて**いちばん効く
+   1 枚**を出す（8/21 に 3 枚から減らし、空いた場所をキャストの枠にした）。
    読み上げ用のカンペは現場で使われていなかったので外した（運用者の判断 2026-08-19）。
 
    決まりごと：
@@ -3949,6 +4523,9 @@ function simulateBreakup(o, topMult, minReturn){
      決めない。押すだけで売上が増えるものがいちばん上に来る
    ============================================================ */
 
+
+/** 画面に出す提案の枚数。残りの 2/3 はキャストの枠が使う */
+const ACT_CARD_MAX = 1;
 
 /** 残っている目玉。目玉の線は解体シミュレーションと同じ（単価 × 倍率）*/
 function topsLeft(c){
@@ -4134,7 +4711,11 @@ function actionCards(c){
     body: "このままだと今夜の平均を下回る。値下げか、終わりどきの検討。",
   });
 
-  return out.sort((a, b) => b.score - a.score).slice(0, 3);
+  /* ⚠ **出すのは 1 枚だけ。**8/21 に右の 2/3 をキャストの枠に譲った
+     （運用者の指示）。取りこぼしは上の「先に片付ける」に分けてあるので、
+     ここから押し出されて見えなくなるものは無い。
+     並べ替えは今までどおり**金額**で、いちばん効く 1 枚が残る。 */
+  return out.sort((a, b) => b.score - a.score).slice(0, ACT_CARD_MAX);
 }
 
 function renderTodo(c){
@@ -4919,6 +5500,12 @@ function buildRecord(o, endedAt, memo){
     buyerRev: c.revenue - promoNow.plat,
     bidYen: bidTotal(o),
     oddLots: promoNow.odd,
+    /* 出演区間。**金額まで固めて焼き込む。**あとから出せるようにするには
+       落札 1 件ずつが要るが、それは 8/21 に外したばかり（記録の 82% を占めて
+       いて、画面も CSV も道具も一度も読んでいなかった）。区間ごとの金額なら
+       1 回あたり 200〜300 バイトで済み、**後編集が出演者の差し替えだけ**になる。
+       オリパを消しても、別の夜に使い回しても、記録の金額は動かない。 */
+    stints: stintsForRecord(o, p ? p.startedAt : 0, endedAt),
     costDrawn: c.costDrawn,
     costTotal: c.costTotal,
     profit: c.profitNow,
@@ -5029,17 +5616,32 @@ let modalDone = null;
 
 function openModal(msg, opts){
   const o = opts || {};
-  const wrap = $("modal"), input = $("modalInput");
+  const wrap = $("modal"), input = $("modalInput"), pick = $("modalPick");
   $("modalMsg").textContent = msg;
   $("modalOk").textContent = o.okLabel || "OK";
   $("modalCancel").hidden = !!o.noCancel;
   wrap.className = "modal" + (o.danger ? " is-danger" : "");
   input.hidden = !o.prompt;
   input.value = o.prompt ? (o.value == null ? "" : String(o.value)) : "";
+  /* 選択肢。**押した瞬間に決まる**（OK を押させない）。配信中の一手を減らす。
+     選択肢があるときは OK を出さない。押しても何も選んでいないため。 */
+  const cs = Array.isArray(o.choices) ? o.choices : null;
+  pick.hidden = !cs;
+  pick.innerHTML = "";
+  $("modalOk").hidden = !!cs;
+  if(cs) for(const it of cs){
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn pickbtn";
+    b.textContent = it.label;
+    b.addEventListener("click", () => closeModal(it.value));
+    pick.appendChild(b);
+  }
   wrap.hidden = false;
   return new Promise(resolve => {
     modalDone = resolve;
-    setTimeout(() => (o.prompt ? input : $("modalOk")).focus(), 0);
+    setTimeout(() => (o.prompt ? input : cs ? (pick.firstChild || $("modalCancel"))
+                                            : $("modalOk")).focus(), 0);
   });
 }
 
@@ -5056,6 +5658,8 @@ function ask(msg, opts){ return openModal(msg, opts).then(v => v !== null); }
 function say(msg){ return openModal(msg, { noCancel: true }).then(() => undefined); }
 /** 入力を求める。キャンセルなら null */
 function askText(msg, value){ return openModal(msg, { prompt: true, value }); }
+/** 一覧からひとつ選ばせる。押した瞬間に決まる。キャンセルなら null */
+function pickOne(msg, items){ return openModal(msg, { choices: items || [] }); }
 
 $("modalForm").addEventListener("submit", e => {
   e.preventDefault();
@@ -5180,14 +5784,32 @@ function renderBody(){
   // 開いているオリパが消えていたら一覧へ戻す
   if(S && !DB.oripas.some(o => o.id === S.id)) S = null;
   if(!S) S = DB.oripas.find(o => o.id === DB.currentId) || null;
-  if(!S && mode !== "list" && mode !== "help") mode = "list";
+  if(!S && mode !== "list" && mode !== "help" && mode !== "cast") mode = "list";
 
+  /* キャストはオリパが無くても開ける（登録が先になることがある）。
+     使い方と同じ扱いで、S を要求する下の流れに入る前に片付ける。 */
+  $("view-cast").hidden = mode !== "cast";
+  if(mode === "cast"){
+    document.querySelectorAll(".modes button").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.mode === "cast")));
+    $("view-list").hidden = $("view-live").hidden = $("view-edit").hidden = true;
+    $("view-help").hidden = true;
+    $("verdictPill").hidden = true;
+    $("btnHelp").setAttribute("aria-pressed", "false");
+    $("titleText").textContent = "キャスト";
+    $("subText").textContent = "配信の実績とボーナス";
+    document.title = "キャスト — 配信オリパAI支援";
+    renderCastScreen();
+    save();
+    return;
+  }
   // 使い方はオリパが無くても開ける。ここで先に片付ける
   $("view-help").hidden = mode !== "help";
   $("btnHelp").setAttribute("aria-pressed", String(mode === "help"));
   if(mode === "help"){
     document.querySelectorAll(".modes button").forEach(b => b.setAttribute("aria-pressed", "false"));
     $("view-list").hidden = $("view-live").hidden = $("view-edit").hidden = true;
+    $("view-cast").hidden = true;
     $("verdictPill").hidden = true;
     $("titleText").textContent = "使い方";
     $("subText").textContent = "配信オリパAI支援の手引き";
@@ -5217,6 +5839,10 @@ function renderBody(){
   $("liveCrumb").hidden  = mode !== "live";
   $("watchCrumb").hidden = mode !== "watch";
   $("replayCrumb").hidden = mode !== "replay";
+  /* ⚠ 「出演を直す」は #view-live の中にあるので、**ここで必ず隠す。**
+     renderReplayCasts() は記録を映しているときしか走らないため、
+     これが無いと配信中も古い記録の表が出たまま残る（2026-08-21 に見つけた）。 */
+  $("replayCastPanel").hidden = mode !== "replay";
 
   const inList = mode === "list";
   $("titleText").textContent = inList ? "配信オリパAI支援" : (S.name || "配信オリパAI支援");
@@ -5253,6 +5879,7 @@ function go(m){
   if(m !== "live"){ const cp = document.getElementById("closePanel"); if(cp) cp.hidden = true; }
   // 記録から離れたら、どの記録を開いていたかは忘れる
   if(m !== "replay") replayRec = null;
+  if(m !== "cast") castOpen = "";           // 開いていた明細は畳む
   if(mode === "live" && m !== "live"){ stopLiveBeat(); releaseLive(S); }
   if(mode === "edit" && m !== "edit"){ stopEditBeat(); releaseEdit(S); }
   mode = m;
@@ -5798,6 +6425,179 @@ function renderRecords(){
 }
 
 /* ============================================================
+   キャストの画面（上のタブ）
+
+   月ごと、または全期間の実績とボーナスを出す。
+   **締める操作は無い**（運用者の指示 2026-08-21）。記録を直せば金額も追う。
+
+   ⚠ **「キャスト未登録ぶん」を必ず出す。**押し忘れた時間の損益はここに
+   溜まる。出しておかないと、誰も押し忘れに気づかないまま月末になる。
+   ============================================================ */
+
+/** 見ている月。"" = 全期間 */
+let castMonth = null;      // null = まだ決めていない（最新の月に合わせる）
+let castOpen = "";         // 開いているキャスト（明細）
+
+function currentCastMonth(){
+  if(castMonth !== null) return castMonth;
+  const ms = castMonths();
+  castMonth = ms.length ? ms[0] : "";
+  return castMonth;
+}
+
+function renderCastScreen(){
+  const key = currentCastMonth();
+  const t = castTotals(key);
+  const ms = castMonths();
+  const i = ms.indexOf(key);
+
+  $("castMonthLabel").textContent = monthLabel(key);
+  // 「前の月」は古いほう。ms は新しい順なので添字は +1
+  $("btnCastPrev").disabled = key === "" || i < 0 || i + 1 >= ms.length;
+  $("btnCastNext").disabled = key === "" || i <= 0;
+  $("btnCastAll").setAttribute("aria-pressed", String(key === ""));
+
+  $("castMonthSub").textContent = t.records.length
+    ? `${t.records.length} 回・現金損益 ${syen(t.profit)}`
+    : "この月の記録は無い";
+
+  const tb = $("castTable").querySelector("tbody");
+  tb.innerHTML = "";
+
+  // 実績のある人 ＋ まだ実績の無い登録済みの人。登録したのに出ないと不安になる
+  const seen = new Set(t.rows.map(r => String(r.castId)));
+  const rows = t.rows.concat(
+    casts().filter(c => !seen.has(String(c.id)))
+      .map(c => ({ castId: String(c.id), name: c.name, times: 0, ms: 0, lots: 0,
+                   revenue: 0, profit: 0, yen: 0, payable: 0, negative: 0 })));
+
+  if(!rows.length){
+    tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--ink-3)">`
+      + `まだキャストが居ない。「キャストを登録」から足す。</td></tr>`;
+  }
+  for(const r of rows){
+    const c = castById(r.castId);
+    const off = c && !c.active;
+    const tr = document.createElement("tr");
+    tr.className = off ? "is-off" : "";
+    if(r.times){
+      tr.tabIndex = 0;
+      tr.setAttribute("role", "button");
+      tr.title = "押すと、この人の配信が 1 回ずつ出る";
+      const open = e => {
+        if(e.target.closest("button")) return;
+        e.preventDefault();
+        castOpen = castOpen === String(r.castId) ? "" : String(r.castId);
+        render();
+      };
+      tr.addEventListener("click", open);
+      tr.addEventListener("keydown", e => { if(e.key === "Enter" || e.key === " ") open(e); });
+    }
+    /* ⚠ 相殺してマイナスになった月は **0 円**だが、素の額も添える。
+       「なぜ 0 なのか」が読めないと必ず問い合わせが来る */
+    const bonus = r.negative
+      ? `¥0 <span class="offtag">${syen(r.negative)} 相殺後</span>`
+      : syen(r.payable);
+    tr.innerHTML =
+        `<td class="l">${esc(r.name)}${off ? `<span class="offtag">休止</span>` : ""}</td>`
+      + `<td class="n">${r.times || "—"}</td>`
+      + `<td class="n">${r.ms ? fmtDur(r.ms) : "—"}</td>`
+      + `<td class="n">${r.revenue ? yen(Math.round(r.revenue)) : "—"}</td>`
+      + `<td class="n ${r.profit >= 0 ? "pos" : "neg"}">${r.times ? syen(Math.round(r.profit)) : "—"}</td>`
+      + `<td class="n"><b>${r.times ? bonus : "—"}</b></td>`
+      + `<td class="n"><button type="button" class="btn ghost" data-castoff="${esc(r.castId)}">`
+      + `${off ? "復帰" : "休止"}</button></td>`;
+    tb.appendChild(tr);
+  }
+
+  // 合計とキャスト未登録ぶん
+  const note = [];
+  if(t.rows.length) note.push(`ボーナスの合計 ${yen(t.payable)}`);
+  if(t.unassigned)
+    note.push(`⚠ キャスト未登録ぶん ${syen(t.unassigned)}`
+      + `（出演を立てていない時間の損益。記録を開いて「出演を直す」で割り当てられる）`);
+  note.push(`ボーナスは現金損益の 5%。2 名で出た区間は 2.5% ずつ。`
+    + `月の合計がマイナスなら 0 円で、翌月には持ち越さない。`);
+  $("castNote").textContent = note.join("　");
+
+  $("castTable").querySelectorAll("[data-castoff]").forEach(b =>
+    b.addEventListener("click", () => toggleCastActive(b.dataset.castoff)));
+
+  renderCastDetail(key);
+}
+
+/** 選んだキャストの配信 1 回ずつ */
+function renderCastDetail(key){
+  const box = $("castDetail");
+  const c = castOpen ? castById(castOpen) : null;
+  if(!c){ box.hidden = true; return; }
+  box.hidden = false;
+  $("castDetailName").textContent = c.name;
+
+  const rows = [];
+  for(const r of recordsInMonth(key)){
+    const p = recordPay(r).pay.find(x => String(x.castId) === String(c.id));
+    if(p) rows.push({ r, p });
+  }
+  $("castDetailSub").textContent = `${monthLabel(key)}・${rows.length} 回`;
+
+  const tb = $("castDetailTable").querySelector("tbody");
+  tb.innerHTML = rows.length ? "" :
+    `<tr><td colspan="6" style="text-align:center;color:var(--ink-3)">この月の出演は無い。</td></tr>`;
+  for(const { r, p } of rows){
+    const tr = document.createElement("tr");
+    tr.tabIndex = 0;
+    tr.setAttribute("role", "button");
+    tr.title = "押すと、その配信の記録を開く";
+    const open = e => { e.preventDefault(); openRecord(r); };
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", e => { if(e.key === "Enter" || e.key === " ") open(e); });
+    tr.innerHTML =
+        `<td class="n">${fmtDate(Number(r.startedAt) || r.endedAt)}</td>`
+      + `<td class="l">${esc(r.name || "無題のオリパ")}</td>`
+      + `<td class="n">${fmtDur(p.ms)}</td>`
+      + `<td class="n">${p.lots}</td>`
+      + `<td class="n ${p.profit >= 0 ? "pos" : "neg"}">${syen(Math.round(p.profit))}</td>`
+      + `<td class="n"><b>${syen(p.yen)}</b></td>`;
+    tb.appendChild(tr);
+  }
+}
+
+async function addCastPrompt(){
+  const name = await askText("キャストの名前");
+  if(name == null) return;
+  if(!String(name).trim()){ await say("名前が空。"); return; }
+  addCast(name);
+  save();
+  render();
+}
+
+/**
+ * 休止／復帰。**削除は作らない。**過去の記録から名前が消えると、
+ * 支払った額の裏が取れなくなる（運用者の指示 2026-08-21）。
+ */
+async function toggleCastActive(id){
+  const c = castById(id);
+  if(!c) return;
+  if(c.active && !await ask(`${c.name} を休止にする。\n`
+    + `新しい配信で選べなくなるだけで、過去の実績と名前はそのまま残る。`)) return;
+  c.active = !c.active;
+  touchCast(c);
+  save();
+  render();
+}
+
+function castMonthStep(dir){
+  const ms = castMonths();
+  const i = ms.indexOf(currentCastMonth());
+  // ms は新しい順。「前の月」＝古いほう＝添字 +1
+  const next = i < 0 ? 0 : i + (dir < 0 ? 1 : -1);
+  if(next < 0 || next >= ms.length) return;
+  castMonth = ms[next];
+  castOpen = "";
+  render();
+}
+/* ============================================================
    配信の記録を開く（終わった配信の再現）
 
    記録の行を押すと、その配信を**終わった時点のまま**映す。使うのは配信画面と
@@ -5959,6 +6759,7 @@ function renderReplay(){
   }
   note.push("この画面からは記録できない。押せるのは「記録を取り消して再開」だけ。");
   $("replayNote").textContent = note.join(" ");
+  renderReplayCasts();       // 出演を直す表も一緒に描き直す
 }
 
 /** 記録のパンくず。どの回を映しているかを出す */
@@ -5972,6 +6773,86 @@ function renderReplayBar(){
   renderReplay();
 }
 
+
+/* ------------------------------------------------------------
+   出演を直す
+
+   ⚠ **記録の画面で唯一書き込める場所。**直せるのは出演者だけで、
+   時刻も金額も動かない（運用者の指示 2026-08-21）。
+   区間を持たない過去の記録は、配信全体の 1 行として出る。
+   ------------------------------------------------------------ */
+
+function renderReplayCasts(){
+  const box = $("replayCastPanel");
+  if(!box) return;
+  const r = replayRec;
+  if(mode !== "replay" || !r){ box.hidden = true; return; }
+  box.hidden = false;
+
+  const spans = ensureRecordStints(r);
+  const pay = recordPay(r);
+  const tb = $("replayCastTable").querySelector("tbody");
+  tb.innerHTML = "";
+
+  spans.forEach((s, i) => {
+    const n = (s.castIds || []).length;
+    const who = n ? s.castIds.map(castName).join("・") : "（未登録）";
+    const one = n ? Math.trunc((Number(s.profit) || 0) / n * CAST_RATE) : 0;
+    const tr = document.createElement("tr");
+    if(!n) tr.className = "is-off";
+    tr.innerHTML =
+        `<td class="n">${fmtClock(s.at)} 〜 ${fmtClock(s.to)}</td>`
+      + `<td class="l">${esc(who)}</td>`
+      + `<td class="n">${s.lots || 0}</td>`
+      + `<td class="n ${(s.profit || 0) >= 0 ? "pos" : "neg"}">${syen(s.profit || 0)}</td>`
+      + `<td class="n">${n ? `${syen(one)}${n > 1 ? " ずつ" : ""}` : "—"}</td>`
+      + `<td class="n"><button type="button" class="btn" data-stint="${i}">選ぶ</button></td>`;
+    tb.appendChild(tr);
+  });
+
+  const note = [];
+  if(pay.unassigned)
+    note.push(`⚠ ${syen(pay.unassigned)} が誰にも付いていない。上の行から出演者を入れれば実績になる。`);
+  if(pay.pay.length)
+    note.push("この回のボーナス：" + pay.pay.map(p => `${castName(p.castId)} ${syen(p.yen)}`).join("　"));
+  note.push("直せるのは出演者だけ。時刻と金額は動かない。");
+  $("replayCastNote").textContent = note.join(" ");
+
+  $("replayCastTable").querySelectorAll("[data-stint]").forEach(b =>
+    b.addEventListener("click", () => editStint(Number(b.dataset.stint))));
+}
+
+/** 1 区間の出演者を選び直す。1 人目 →（要れば）2 人目 の順に聞く */
+async function editStint(i){
+  const r = replayRec;
+  if(!r) return;
+  const spans = ensureRecordStints(r);
+  const s = spans[i];
+  if(!s) return;
+
+  const all = casts();
+  if(!all.length){ await say("キャストが 1 人も登録されていない。\n上の「キャスト」から登録すること。"); return; }
+  /* 休止した人も**選べるようにする**。過去の回を直すのが仕事なので、
+     いま休止していることは関係ない（休止は「新しい配信で選ばせない」だけ）。 */
+  const opts = extra => all.filter(c => !extra.includes(String(c.id)))
+    .map(c => ({ value: String(c.id), label: c.name + (c.active ? "" : "（休止）") }));
+
+  const first = await pickOne(`${fmtClock(s.at)} 〜 ${fmtClock(s.to)} に出ていたのは？`,
+    [{ value: "", label: "（未登録に戻す）" }].concat(opts([])));
+  if(first == null) return;
+  if(first === ""){ setRecordStintCasts(r, i, []); afterStintEdit(); return; }
+
+  const second = await pickOne("もう 1 人いたか？（2 名なら 2.5% ずつ）",
+    [{ value: "", label: "1 人だけ" }].concat(opts([String(first)])));
+  if(second == null) return;
+  setRecordStintCasts(r, i, second ? [first, second] : [first]);
+  afterStintEdit();
+}
+
+function afterStintEdit(){
+  save();
+  render();
+}
 /* ------------------------------------------------------------
    押した瞬間の反応を優先する
 
@@ -6066,6 +6947,7 @@ function renderLive(c){
     : `手数料 ${pct(c.feeRate, 1)}（${syen(-Math.round(c.feeNow))}）を引いたあと`;
 
   renderTodo(c);        // 取りこぼしは軽い。押した瞬間に減るので遅らせない
+  renderCastBar(c);     // キャストも軽い。押した手応えは先に返す
   renderInbox(c);
   renderLotBar(c);
   renderPrizes(c);
@@ -6090,6 +6972,166 @@ function renderLive(c){
 let lotDraft = { price: "", buyer: "", mode: "unit" };
 let lotBarKey = "";
 
+/* ============================================================
+   配信画面のキャスト枠
+
+   AIの提案の右、2/3 の場所に出す（運用者の指示 2026-08-21）。
+   出すのは**その回のボーナスだけ**。月の累計はキャストのタブで見る。
+
+   ボタンは 3 つ。どれも「押した瞬間から新しい区間」という同じ一手になる：
+     出演  … 誰も居ないときに 1 人目を立てる
+     山分け … 2 人目を足す（以降そこは 2.5% ずつ）
+     交代  … いま出ている人を降ろして選び直す
+   ============================================================ */
+
+/** ブリッジ・記録では押せない。見えるものは同じにする */
+const castEditable = () => mode === "live" && S && !S.closedAt;
+
+function renderCastBar(c){
+  const row = $("castRow"), box = $("castBar");
+  if(!row || !box) return;
+  // 一覧・編集では出さない。配信／ブリッジ／記録の 3 つで出す
+  const on = mode === "live" || mode === "watch" || mode === "replay";
+  if(!on || !S){ row.hidden = true; box.hidden = true; return; }
+  row.hidden = false;
+  box.hidden = false;
+
+  /* 記録を映しているときは、**焼き込んだ区間**から出す。
+     オリパを触っていても記録の金額は動かない（そこが焼き込む意味）。 */
+  const fromRec = mode === "replay" && replayRec;
+  const pay = fromRec ? recordPay(replayRec).pay
+                      : castPayOf(S, 0, S.closedAt || 0).pay;
+  const now = fromRec ? lastRecordCasts(replayRec) : castsNow(S);
+  const un  = fromRec ? recordPay(replayRec).unassigned
+                      : Math.round(castPayOf(S, 0, S.closedAt || 0).unassigned);
+
+  $("castSub").textContent = fromRec ? "この回の実績"
+    : now.length === CAST_MAX ? "山分け中（2.5% ずつ）"
+    : now.length ? "この回のボーナス"
+    : "未登録";
+
+  if(!now.length && !pay.length){
+    /* 誰も立てていない。**この時間の損益は誰にも付かない。**
+       黙って 0 にすると押し忘れに一生気づけないので、その場で言う */
+    $("castList").innerHTML = `<div class="castone is-none">`
+      + `<span class="t">キャスト未登録</span>`
+      + `<span class="n">${un ? syen(un) : "—"}</span>`
+      + `<span class="s">この時間の損益は誰にも付かない</span></div>`;
+  }else{
+    const byId = new Map(pay.map(p => [String(p.castId), p]));
+    // いま出ている人を先に。降りた人も、この回の実績があるなら残して出す
+    const ids = [...now.map(String), ...pay.map(p => String(p.castId))]
+      .filter((x, i, a) => a.indexOf(x) === i);
+    $("castList").innerHTML = ids.map(id => {
+      const p = byId.get(id);
+      const yen = p ? p.yen : 0;
+      const live = now.map(String).includes(id);
+      return `<div class="castone${live ? "" : " is-none"}">`
+        + `<span class="t">${esc(castName(id))}${live ? "" : "（降板）"}</span>`
+        + `<span class="n ${yen > 0 ? "pos" : yen < 0 ? "neg" : ""}">${syen(yen)}</span>`
+        + `<span class="s">${p ? `${fmtDur(p.ms)}・${p.lots} 件・損益 ${syen(Math.round(p.profit))}`
+                              : "まだ実績なし"}</span>`
+        + `</div>`;
+    }).join("")
+    // 押し忘れぶんがあるなら必ず添える。合計が合わない理由がここにある
+    + (un ? `<div class="castone is-none"><span class="t">キャスト未登録ぶん</span>`
+          + `<span class="n">${syen(un)}</span>`
+          + `<span class="s">誰にも付いていない</span></div>` : "");
+  }
+
+  // ボタン。ブリッジと記録では出さない（見るだけ）
+  if(!castEditable()){ $("castBtns").innerHTML = ""; return; }
+  const btns = [];
+  if(!now.length) btns.push(`<button type="button" class="btn primary" data-cast="on">出演</button>`);
+  else{
+    if(now.length < CAST_MAX)
+      btns.push(`<button type="button" class="btn" data-cast="split">山分け</button>`);
+    btns.push(`<button type="button" class="btn" data-cast="swap">交代</button>`);
+    btns.push(`<button type="button" class="btn ghost" data-cast="off">全員降ろす</button>`);
+  }
+  $("castBtns").innerHTML = btns.join("");
+  $("castBtns").querySelectorAll("[data-cast]").forEach(b =>
+    b.addEventListener("click", () => castButton(b.dataset.cast)));
+}
+
+/** 記録に焼き込んだ区間のうち、最後に出ていた顔ぶれ */
+function lastRecordCasts(r){
+  const ss = (r && Array.isArray(r.stints)) ? r.stints : [];
+  for(let i = ss.length - 1; i >= 0; i--)
+    if((ss[i].castIds || []).length) return ss[i].castIds.slice();
+  return [];
+}
+
+async function castButton(kind){
+  if(!castEditable()) return;
+  const now = castsNow(S).map(String);
+
+  if(kind === "off"){
+    if(!await ask("出ているキャストを全員降ろす。\nここから先の損益は誰にも付かなくなる。")) return;
+    setCastsNow(S, []);
+    afterCastChange();
+    return;
+  }
+
+  const pick = await pickCast(kind === "split" ? now : []);
+  if(pick == null) return;
+
+  if(kind === "on"){
+    setCastsNow(S, [pick]);
+    /* まだ誰も出ていないのに落札が入っている＝**押し忘れ**。
+       その場で拾えるようにする（あとで記録の画面から直すこともできる）。 */
+    await offerBackfill(pick);
+  }else if(kind === "split"){
+    setCastsNow(S, [...now, pick]);
+  }else{                                    // 交代
+    setCastsNow(S, [pick]);
+  }
+  afterCastChange();
+}
+
+/**
+ * 出演を押したとき、すでに落札が入っていれば
+ * 「配信の最初から出ていたことにするか」を聞く。押し忘れの取りこぼし対策。
+ */
+async function offerBackfill(castId){
+  const from = Number(S.liveStartedAt) || 0;
+  if(!from) return;
+  const ss = stintsOf(S);
+  // 出演を押す前に区間があった＝押し忘れではない
+  if(ss.length > 1) return;
+  const lead = lotLedger(S).filter(e => e.at >= from && e.at < ss[0].at);
+  if(!lead.length) return;
+  const yen = Math.round(lead.reduce((n, e) => n + e.profit, 0));
+  const okBack = await ask(`出演を押すまでに ${lead.length} 件の落札がある`
+    + `（損益 ${syen(yen)}）。\nこのままだと**誰にも付かない**。\n`
+    + `${castName(castId)} が配信の最初から出ていたことにするか？`);
+  if(!okBack) return;
+  // 最初の区間を配信の開始まで巻き戻す。区間はひとつのまま
+  ss[0].at = from;
+}
+
+function afterCastChange(){
+  touchLive();
+  save();
+  renderNow();
+}
+
+/**
+ * キャストを選ばせる。`exclude` に入っている人は出さない（山分けの重複防止）。
+ * 休止中の人は選べない。1 人も居なければキャストのタブへ送る。
+ */
+async function pickCast(exclude){
+  const skip = (exclude || []).map(String);
+  const list = activeCasts().filter(c => !skip.includes(String(c.id)));
+  if(!list.length){
+    const none = !activeCasts().length;
+    await say(none ? "キャストが 1 人も登録されていない。\n上の「キャスト」から登録すること。"
+                   : "選べるキャストがもう居ない。");
+    if(none) go("cast");
+    return null;
+  }
+  return await pickOne("誰が出るか", list.map(c => ({ value: String(c.id), label: c.name })));
+}
 function resetLotDraft(){
   lotDraft = { price: "", buyer: "", mode: lotDraft.mode };
 }
@@ -8161,6 +9203,12 @@ document.querySelectorAll(".modes button").forEach(b => {
 });
 
 $("btnHelp").addEventListener("click", () => go(mode === "help" ? "list" : "help"));
+
+/* キャストの画面。月の行き来と登録。**締める操作は無い**（集計を見せるだけ）*/
+$("btnCastAdd").addEventListener("click", addCastPrompt);
+$("btnCastPrev").addEventListener("click", () => castMonthStep(-1));
+$("btnCastNext").addEventListener("click", () => castMonthStep(1));
+$("btnCastAll").addEventListener("click", () => { castMonth = ""; castOpen = ""; render(); });
 $("btnPause").addEventListener("click", togglePause);
 $("btnResume").addEventListener("click", togglePause);
 
