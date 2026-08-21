@@ -1193,7 +1193,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='2da5941 (08/22 00:32)';</script>
+<script>window.__BUILD='0bbe6f8 (08/22 01:58)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -3953,12 +3953,22 @@ function todoItems(c){
     title: "開封待ち", num: `${c.pendingSlots} 口 ／ ${yen(c.pendingRev)}`,
     body: "出たカードを押すまで売上に入らない",
   });
-  const inbox = ordersFor(S).pending;
-  if(inbox.length) out.push({
+  const f = ordersFor(S);
+  const sum = list => list.reduce((n, x) => n + x.price * x.qty, 0);
+  if(f.pending.length) out.push({
     key: "inbox",
     title: "取り込んでいない入金",
-    num: `${inbox.length} 件 ／ ${yen(inbox.reduce((n, x) => n + x.price * x.qty, 0))}`,
+    num: `${f.pending.length} 件 ／ ${yen(sum(f.pending))}`,
     body: "受信箱の「これで登録」で落札になる",
+  });
+  /* **配信前に届いたぶんは自動では立たない。**受信箱の下のほうに出るだけなので、
+     気づかないまま配信が終わると「落札と実売が合わない」になる。ここに出す
+     （運用者からの相談 2026-08-21）。 */
+  if(f.earlier.length) out.push({
+    key: "earlier",
+    title: "配信前に届いた入金",
+    num: `${f.earlier.length} 件 ／ ${yen(sum(f.earlier))}`,
+    body: "自動では立たない。この配信で出すぶんだけ受信箱から押す",
   });
   return out;
 }
@@ -6146,14 +6156,22 @@ function takeOrder(orderId){
   if(c.left <= 0){ say("残りの口数がない。"); return; }
   touchLive();
   const qty = Math.max(1, Math.min(x.qty, c.left));
-  const total = x.price * x.qty;
-  const { price, rem } = lotUnitAndRem(total, qty);
+  /* ⚠ **残りが足りない注文の合計を、少ない口数に詰め込まない。**
+     以前は `x.price * x.qty`（切り詰める前の口数）で合計を出していたので、
+     3 口 ¥24,000 の注文を残り 1 口で取り込むと **1 口 ¥24,000 の落札**が立ち、
+     平均落札も「直近 5 件の中央値」（値下げの天井）も壊れていた
+     （2026-08-21 に見つけた）。渡せる口数ぶんだけを落札にする。 */
+  const short = qty < x.qty;
+  const { price, rem } = lotUnitAndRem(x.price * qty, qty);
   const lot = addLot(price, qty, x.buyer, "auction", rem);
   lot.orderId = String(x.id);          // これで受信箱から消える（二重取り込みの防止）
   /* 買い手が払った額を落札に写す。**注文は掃き出すと消える**ので、ここで写して
      おかないと過去の回の内訳がたどれなくなる（運用者の指示 2026-08-20）。
      口数を減らして取り込んだときは、その口数ぶんだけ持つ。 */
   if(x.buyerPaid != null) lot.buyerYen = Math.max(0, Math.round(Number(x.buyerPaid) * qty));
+  // 渡せない口が出た。売上にも入らないので、黙って飲み込まずに知らせる
+  if(short) say(`この落札は ${x.qty} 口だが、残りは ${qty} 口しかない。\n`
+    + `${qty} 口ぶんだけ落札にした。${x.qty - qty} 口ぶんは返金が要るか確かめること。`);
   // 迷子の注文を引き受けたなら、そのときに商品 ID を覚える。以降は
   // 「配信中だから引き受けた」ではなく、正しく結びついた注文として届く
   if(!String(S.shopProductId || "").trim() && x.productId){
@@ -6191,6 +6209,10 @@ function autoTakeOrders(){
   if(compute().left <= 0) return false;
   const next = pendingOrders(S)[0];         // 古いものから
   if(!next) return false;
+  /* 残りより口数が多い注文は自動で立てない。渡せない口が出るので、
+     返金するのか一部だけ渡すのかは人が決める。**次の注文へ飛ばさない**
+     （順番が入れ替わると、どれを処理したのか分からなくなる）。 */
+  if(next.qty > compute().left) return false;
   return !!takeOrder(next.id);
 }
 
@@ -7988,7 +8010,14 @@ async function draw(prizeId, n = 1){
     const want = Math.max(1, Math.min(r.qty, c2.left));
     k = Math.min(want, (p.count|0) - drawn2, c2.left);
     if(k <= 0) return;
-    lot = addLot(r.price, want, r.buyer, r.kind, r.rem);
+    /* 残りが足りなくて口数を切り詰めたとき、**端数（合計を割った 1 円）を
+       そのまま持ち越さない。**持ち越すと、切り詰めた口数に元の合計の端数が
+       乗って落札の額が合わなくなる。渡せる口数ぶんだけを落札にして、
+       足りないことは人に知らせる（2026-08-21）。 */
+    const short = want < r.qty;
+    lot = addLot(r.price, want, r.buyer, r.kind, short ? 0 : r.rem);
+    if(short) say(`残りが ${c2.left} 口しかないので、${r.qty} 口 → ${want} 口で立てた。\n`
+      + `${r.qty - want} 口ぶんは落札に入っていない。返金が要るか確かめること。`);
   }
   if(k <= 0) return;
 
