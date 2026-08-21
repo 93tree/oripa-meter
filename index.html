@@ -1233,7 +1233,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='6c66e0c (08/22 04:31)';</script>
+<script>window.__BUILD='dec15ef (08/22 04:39)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -4067,7 +4067,7 @@ const castsNow  = o => { const s = stintsOf(o); return s.length ? s[s.length - 1
 
 /**
  * 出演者を差し替える。**押した瞬間から**新しい区間になる。
- * 出演・山分け・交代・全員降ろす、どれも同じこの一手で済む。
+ * 出演・山分け・交代・全員退席、どれも同じこの一手で済む。
  */
 function setCastsNow(o, ids, at){
   if(!o) return null;
@@ -6970,7 +6970,7 @@ let lotBarKey = "";
    ボタンは 3 つ。どれも「押した瞬間から新しい区間」という同じ一手になる：
      出演  … 誰も居ないときに 1 人目を立てる
      山分け … 2 人目を足す（以降そこは 2.5% ずつ）
-     交代  … いま出ている人を降ろして選び直す
+     交代  … いま出ている人を退席にして選び直す
    ============================================================ */
 
 /** ブリッジ・記録では押せない。見えるものは同じにする */
@@ -7008,7 +7008,7 @@ function renderCastBar(c){
       + `<span class="s">この時間の損益は誰にも付かない</span></div>`;
   }else{
     const byId = new Map(pay.map(p => [String(p.castId), p]));
-    // いま出ている人を先に。降りた人も、この回の実績があるなら残して出す
+    // いま出ている人を先に。退席した人も、この回の実績があるなら残して出す
     const ids = [...now.map(String), ...pay.map(p => String(p.castId))]
       .filter((x, i, a) => a.indexOf(x) === i);
     $("castList").innerHTML = ids.map(id => {
@@ -7016,7 +7016,7 @@ function renderCastBar(c){
       const yen = p ? p.yen : 0;
       const live = now.map(String).includes(id);
       return `<div class="castone${live ? "" : " is-none"}">`
-        + `<span class="t">${esc(castName(id))}${live ? "" : "（降板）"}</span>`
+        + `<span class="t">${esc(castName(id))}${live ? "" : "（退席）"}</span>`
         + `<span class="n ${yen > 0 ? "pos" : yen < 0 ? "neg" : ""}">${syen(yen)}</span>`
         + `<span class="s">${p ? `${fmtDur(p.ms)}・${p.lots} 件・損益 ${syen(Math.round(p.profit))}`
                               : "まだ実績なし"}</span>`
@@ -7036,7 +7036,7 @@ function renderCastBar(c){
     if(now.length < CAST_MAX)
       btns.push(`<button type="button" class="btn" data-cast="split">山分け</button>`);
     btns.push(`<button type="button" class="btn" data-cast="swap">交代</button>`);
-    btns.push(`<button type="button" class="btn ghost" data-cast="off">全員降ろす</button>`);
+    btns.push(`<button type="button" class="btn ghost" data-cast="off">全員退席</button>`);
   }
   $("castBtns").innerHTML = btns.join("");
   $("castBtns").querySelectorAll("[data-cast]").forEach(b =>
@@ -7056,7 +7056,7 @@ async function castButton(kind){
   const now = castsNow(S).map(String);
 
   if(kind === "off"){
-    if(!await ask("出ているキャストを全員降ろす。\nここから先の損益は誰にも付かなくなる。")) return;
+    if(!await ask("出ているキャストを全員退席にする。\nここから先の損益は誰にも付かなくなる。")) return;
     setCastsNow(S, []);
     afterCastChange();
     return;
