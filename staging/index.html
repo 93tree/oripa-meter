@@ -1170,7 +1170,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='dd5a782 (08/21 21:15)';</script>
+<script>window.__BUILD='3480fcc (08/21 23:55)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2395,6 +2395,82 @@ function ordersFor(o){
 /** いま取り込める落札（入金済み・未処理） */
 function pendingOrders(o){ return ordersFor(o).pending; }
 
+/* ------------------------------------------------------------
+   溜まった注文を自動で落とす
+
+   注文は Worker から降ってくる一方で、消す口は人が押す「取り込まずに消す」と
+   台帳ツールの `sweep` しか無かった。1 件 268 バイトで、配信のたびに増える。
+
+   落としてよいのは、**もう受信箱にも判断にも出てこないもの**だけ：
+
+     ・落札として取り込み済み（`orderId` が落札に乗っている）で、取り消しでない
+     ・未入金のまま古くなった（入金が付けば墓標の規則でちゃんと戻ってくる）
+     ・取り消し済みで、落札にも乗っていない（もう知らせることが無い）
+
+   ⚠ **入金済み・取り消しでない・未取り込みは絶対に落とさない。**
+   それは「入っているのに記録していない売上」で、見えなくなるのがいちばん困る。
+
+   ⚠ **墓標を立てずに消してはいけない。**Worker は発送・配達・完了のたびに
+   注文を書き直すので、墓標が無いと次の状態変化で戻ってくる
+   （8/18 に 122 件が一斉に戻ったのがこれ）。墓標には消したときの姿が入り、
+   戻るのは「入金が付いたとき」だけになる。
+   ------------------------------------------------------------ */
+
+/* 取り込み済みの注文を持っておく時間。落札を取り消して受信箱へ戻す操作は
+   その場でやるものなので、3 日あれば足りる。 */
+const ORDER_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
+/* それでも溜まったときの上限。超えたぶんは古い順に、同じ規則で落とす。 */
+const ORDER_MAX = 400;
+
+/** その注文を落としてよいか。理由が無ければ null */
+function droppableOrder(x, used, old){
+  if(!x) return null;
+  const taken = used.has(String(x.id));
+  if(taken && !x.cancelled) return old ? "取り込み済み" : null;
+  if(taken) return null;                       // 取り消し＋取り込み済み＝知らせる必要がある
+  if(x.cancelled) return old ? "取り消し済み" : null;
+  if(!x.paid) return old ? "未入金のまま古い" : null;
+  return null;                                 // 入金済みで未取り込み＝絶対に残す
+}
+
+/**
+ * 溜まった注文を落とす。落とした件数を返す。
+ * 読み込んだ直後と、同期で受け取った直後に走らせる。
+ */
+function pruneOrders(){
+  if(dataState === "broken") return 0;
+  const list = DB.orders || [];
+  if(!list.length) return 0;
+  const used = new Set(
+    DB.oripas.flatMap(o => (o.lots || []).map(l => String(l.orderId || ""))).filter(Boolean));
+  const line = Date.now() - ORDER_KEEP_MS;
+
+  const drop = [];
+  for(const x of list){
+    const why = droppableOrder(x, used, (Number(x.at) || 0) < line);
+    if(why) drop.push(x);
+  }
+  /* 上限を超えているぶんは、古い順にもう一段落とす（時間の線を無視する）。
+     ここでも「入金済みで未取り込み」は外さない。 */
+  if(list.length - drop.length > ORDER_MAX){
+    const dropped = new Set(drop.map(x => String(x.id)));
+    const rest = list.filter(x => !dropped.has(String(x.id)))
+      .slice().sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+    for(const x of rest){
+      if(list.length - drop.length <= ORDER_MAX) break;
+      if(droppableOrder(x, used, true)) drop.push(x);
+    }
+  }
+  if(!drop.length) return 0;
+
+  const ids = new Set(drop.map(x => String(x.id)));
+  const marks = new Map(drop.map(x => [String(x.id), orderMark(x)]));
+  // **墓標が先。**中身を消したあとだと版が拾えず 1 になり、生き返る
+  for(const id of ids) bury("order", id, marks.get(id));
+  DB.orders = list.filter(x => !ids.has(String(x.id)));
+  return ids.size;
+}
+
 /** その注文の商品 ID を持つオリパが 1 つも無いか */
 function isOrphanOrder(x){
   const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
@@ -3159,6 +3235,8 @@ async function syncNow(manual){
     if(!data.ok) throw new Error(data.error || "サーバが受け付けなかった");
 
     const changed = syncApply(data.items);
+    // 受け取ったぶんを含めて掃除する。溜まるのは受け取る側なので、ここで抑える
+    if(changed) pruneOrders();
     // 届いた落札はここでしか入ってこない。拾った直後に自動で立てる。
     // 立てると takeOrder が描き直すので、下の render は要らなくなる
     const took = autoTakeOrders();
@@ -4724,11 +4802,11 @@ function buildRecord(o, endedAt, memo){
       const a = auctionSummary(o);
       return { lots: a.lots, auctions: a.auctions, avg: a.avg, max: a.max, min: a.min };
     })(),
-    lots: o.lots.map(l => {
-      const st = lotStats(o, l);
-      return { price: l.price, qty: l.qty, drawn: st.drawn, buyer: l.buyer,
-               kind: l.kind, revenue: st.revenue, cost: st.cost, profit: st.profit };
-    }),
+    /* ⚠ **落札 1 件ずつの写しは残さない。**1 回ぶんで 6.3 KB あり、記録の
+       82% を占めていたのに、**画面もCSVも道具も一度も読んでいなかった**
+       （2026-08-21 に測って外した）。件数と平均・最高・最低は上の `auction` に、
+       1 件ずつの中身はオリパ側の落札に残っていて、記録を押せばそれが出る。
+       記録は同期でも毎回まるごと運ぶので、細いほうが効く。 */
     prizes: o.prizes.map(p => ({
       name: p.name, cost: costOf(p), market: mktOf(p), items: (p.items || []).map(it => ({ ...it })),
       count: p.count, drawn: c.drawnBy.get(p.id) || 0
@@ -8307,6 +8385,7 @@ const mq = window.matchMedia("(prefers-color-scheme: dark)");
 mq.addEventListener("change", () => { if(mode === "live") drawSpark(compute()); });
 
 DB = loadDB();
+pruneOrders();          // 溜まった注文をここで落とす（残すものは残す）
 S = DB.oripas.find(o => o.id === DB.currentId) || null;
 mode = "list";
 loadSyncConf();
