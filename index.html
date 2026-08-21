@@ -221,10 +221,33 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 .kpi .v.neg{ color:var(--bad); }
 
 /* ============================================================
-   いま効く手（行動カード）
+   先に片付ける（取りこぼし）
+
+   開封待ち・取り込んでいない入金。**提案ではなく、やり忘れ。**
+   以前は提案の札に混ぜていたが、「押せば増える額」で並べていたので
+   いちばん上に居座り、提案が押し出されていた（運用者の指摘 2026-08-21）。
+   ============================================================ */
+.todobar{
+  border:1px solid color-mix(in srgb, var(--gold) 38%, var(--line));
+  background:var(--gold-bg); border-radius:11px; padding:12px 14px; margin-bottom:12px;
+}
+.todobar-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+.todobar-head h3{ margin:0; font-size:13.5px; letter-spacing:.02em; color:var(--gold-ink); }
+.todolist{ display:flex; flex-wrap:wrap; gap:8px 20px; }
+.todo{ display:flex; align-items:baseline; gap:8px; min-width:0; font-size:13px; }
+.todo .n{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:16px; font-weight:700; letter-spacing:-.02em; color:var(--gold-ink);
+}
+.todo .b{ font-size:12px; color:var(--ink-2); }
+
+/* ============================================================
+   AIの提案（行動カード）
 
    配信しながら「次に何をすれば売上が伸びるか」を 3 枚だけ出す。
    読み上げ用のカンペは現場で使われていなかったので外した（2026-08-19）。
+   取りこぼし（開封待ち・未取り込みの入金）はここに混ぜない。**あれは提案では
+   なくやり忘れ**なので、上の「先に片付ける」へ出す（2026-08-21）。
    **数字は compute() / decideNow() のものをそのまま使う。**盛らない。
    ============================================================ */
 .actcards{
@@ -1163,7 +1186,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='07fc7eb (08/21 14:40)';</script>
+<script>window.__BUILD='b56ba1a (08/22 03:14)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -1397,9 +1420,20 @@ window.__SYNC_DEFAULTS = {
     <!-- いま何をすると売上が伸びるか。**上位 3 枚だけ**出す。
          以前はここに読み上げ用のカンペを置いていたが、現場で使われていなかった
          （運用者の判断 2026-08-19）。読む文ではなく、押す行動を出す -->
+    <!-- まだ売上に入っていないもの。**提案ではなく、やり忘れ。**
+         提案の札に混ぜると「押せば増える額」で並んでしまい、
+         いちばん強い＝いちばん上に居座って提案が見えなくなる -->
+    <section class="todobar" id="todoBar" hidden>
+      <div class="todobar-head">
+        <h3>先に片付ける</h3>
+        <span class="hint">まだ売上に入っていない</span>
+      </div>
+      <div class="todolist" id="todoList"></div>
+    </section>
+
     <section class="actcards" id="actCards" hidden>
       <div class="actcards-head">
-        <h3>いま効く手</h3>
+        <h3>AIの提案</h3>
         <span class="hint" id="actsSub"></span>
       </div>
       <div class="actlist" id="actList"></div>
@@ -1609,7 +1643,7 @@ window.__SYNC_DEFAULTS = {
           <div class="g-step">
             <span class="g-num">2</span>
             <div>
-              <h4>上の「いま効く手」を見る</h4>
+              <h4>上の「AIの提案」を見る</h4>
               <p class="g-big">
                 いまの数字から、<b>次にやると売上が伸びること</b>を 3 つまで出す。
                 上ほど効く（押すだけで売上に入るものが先に来る）。
@@ -1760,7 +1794,7 @@ window.__SYNC_DEFAULTS = {
           <ul>
             <li><b>手で入れた相場は書き換えない。</b>効くのは自動の行だけ
               （編集画面の相場欄が破線＋灰色なら自動）。</li>
-            <li>この 1 つの数字で<b>還元率・目玉の判定・ハズレ枠の線・「いま効く手」が
+            <li>この 1 つの数字で<b>還元率・目玉の判定・ハズレ枠の線・「AIの提案」が
               言う相場</b>が動く。低すぎると判断が「もっと下げろ」に寄る。</li>
             <li><b>ハズレ枠は自動</b>（相場が販売単価の 20% 以下）。印を付ける操作はない。
               まとめ排出はこの印とは無関係で、残りが 5 口以上の行に出る。</li>
@@ -2191,11 +2225,25 @@ function normalizeOripa(o){
         at: Number(l.at) || Date.now(),
         // 取り込み元の注文。これが残っている限り受信箱には出さない
         orderId: l.orderId ? String(l.orderId) : "",
-        /* 買い手が実際に払った合計。**TikTok 負担のクーポンぶんだけ落札より安い。**
-           LIVE マネージャーが出すのはこちら側の数字なので、これを残しておかないと
-           あとから「売上が食い違う」を説明できない（運用者の指示 2026-08-20）。
-           null は「内訳を持っていない」＝値引き無しとして扱う。 */
-        buyerYen: l.buyerYen == null ? null : Math.max(0, Math.round(Number(l.buyerYen) || 0))
+        /* ---- 金額の内訳（TikTok から取り込んだ落札だけ持つ。null は内訳なし）----
+
+           TikTok のファイナンス画面と同じ並びをそのまま持つ（運用者の指示 2026-08-21）。
+
+             落札額（bidYen）
+               − TikTok 負担（platYen）  … 買い手だけ安くなる。こちらの入金は減らない
+               − 自社値引（sellYen）     … こちらの持ち出し。入金が減る
+               ───────────────
+               買い手の支払い（buyerYen）
+
+           そして `price × qty + rem`（＝この落札の額）が **落札額 − 自社値引** に
+           なっているのが正しい。合わない落札は `lotOdd()` が拾う。
+
+           ⚠ **足りない数字を計算で作らない。**以前は「買い手の支払い」しか持たず、
+           残りを引き算で作っていたので、実際には無い額が静かに記録された。 */
+        bidYen:   l.bidYen   == null ? null : Math.max(0, Math.round(Number(l.bidYen)   || 0)),
+        buyerYen: l.buyerYen == null ? null : Math.max(0, Math.round(Number(l.buyerYen) || 0)),
+        platYen:  l.platYen  == null ? null : Math.max(0, Math.round(Number(l.platYen)  || 0)),
+        sellYen:  l.sellYen  == null ? null : Math.max(0, Math.round(Number(l.sellYen)  || 0))
       };
     }),
     totalSlots: 0,
@@ -2383,6 +2431,82 @@ function ordersFor(o){
 
 /** いま取り込める落札（入金済み・未処理） */
 function pendingOrders(o){ return ordersFor(o).pending; }
+
+/* ------------------------------------------------------------
+   溜まった注文を自動で落とす
+
+   注文は Worker から降ってくる一方で、消す口は人が押す「取り込まずに消す」と
+   台帳ツールの `sweep` しか無かった。1 件 268 バイトで、配信のたびに増える。
+
+   落としてよいのは、**もう受信箱にも判断にも出てこないもの**だけ：
+
+     ・落札として取り込み済み（`orderId` が落札に乗っている）で、取り消しでない
+     ・未入金のまま古くなった（入金が付けば墓標の規則でちゃんと戻ってくる）
+     ・取り消し済みで、落札にも乗っていない（もう知らせることが無い）
+
+   ⚠ **入金済み・取り消しでない・未取り込みは絶対に落とさない。**
+   それは「入っているのに記録していない売上」で、見えなくなるのがいちばん困る。
+
+   ⚠ **墓標を立てずに消してはいけない。**Worker は発送・配達・完了のたびに
+   注文を書き直すので、墓標が無いと次の状態変化で戻ってくる
+   （8/18 に 122 件が一斉に戻ったのがこれ）。墓標には消したときの姿が入り、
+   戻るのは「入金が付いたとき」だけになる。
+   ------------------------------------------------------------ */
+
+/* 取り込み済みの注文を持っておく時間。落札を取り消して受信箱へ戻す操作は
+   その場でやるものなので、3 日あれば足りる。 */
+const ORDER_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
+/* それでも溜まったときの上限。超えたぶんは古い順に、同じ規則で落とす。 */
+const ORDER_MAX = 400;
+
+/** その注文を落としてよいか。理由が無ければ null */
+function droppableOrder(x, used, old){
+  if(!x) return null;
+  const taken = used.has(String(x.id));
+  if(taken && !x.cancelled) return old ? "取り込み済み" : null;
+  if(taken) return null;                       // 取り消し＋取り込み済み＝知らせる必要がある
+  if(x.cancelled) return old ? "取り消し済み" : null;
+  if(!x.paid) return old ? "未入金のまま古い" : null;
+  return null;                                 // 入金済みで未取り込み＝絶対に残す
+}
+
+/**
+ * 溜まった注文を落とす。落とした件数を返す。
+ * 読み込んだ直後と、同期で受け取った直後に走らせる。
+ */
+function pruneOrders(){
+  if(dataState === "broken") return 0;
+  const list = DB.orders || [];
+  if(!list.length) return 0;
+  const used = new Set(
+    DB.oripas.flatMap(o => (o.lots || []).map(l => String(l.orderId || ""))).filter(Boolean));
+  const line = Date.now() - ORDER_KEEP_MS;
+
+  const drop = [];
+  for(const x of list){
+    const why = droppableOrder(x, used, (Number(x.at) || 0) < line);
+    if(why) drop.push(x);
+  }
+  /* 上限を超えているぶんは、古い順にもう一段落とす（時間の線を無視する）。
+     ここでも「入金済みで未取り込み」は外さない。 */
+  if(list.length - drop.length > ORDER_MAX){
+    const dropped = new Set(drop.map(x => String(x.id)));
+    const rest = list.filter(x => !dropped.has(String(x.id)))
+      .slice().sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+    for(const x of rest){
+      if(list.length - drop.length <= ORDER_MAX) break;
+      if(droppableOrder(x, used, true)) drop.push(x);
+    }
+  }
+  if(!drop.length) return 0;
+
+  const ids = new Set(drop.map(x => String(x.id)));
+  const marks = new Map(drop.map(x => [String(x.id), orderMark(x)]));
+  // **墓標が先。**中身を消したあとだと版が拾えず 1 になり、生き返る
+  for(const id of ids) bury("order", id, marks.get(id));
+  DB.orders = list.filter(x => !ids.has(String(x.id)));
+  return ids.size;
+}
 
 /** その注文の商品 ID を持つオリパが 1 つも無いか */
 function isOrphanOrder(x){
@@ -3148,6 +3272,8 @@ async function syncNow(manual){
     if(!data.ok) throw new Error(data.error || "サーバが受け付けなかった");
 
     const changed = syncApply(data.items);
+    // 受け取ったぶんを含めて掃除する。溜まるのは受け取る側なので、ここで抑える
+    if(changed) pruneOrders();
     // 届いた落札はここでしか入ってこない。拾った直後に自動で立てる。
     // 立てると takeOrder が描き直すので、下の render は要らなくなる
     const took = autoTakeOrders();
@@ -3587,23 +3713,65 @@ function lotSlotPrice(lot, idx){
 }
 
 /**
+ * 落札 1 件の金額の内訳。**持っていない数字は作らない**（null のまま返す）。
+ *
+ *   落札額 − TikTok負担 − 自社値引 ＝ 買い手の支払い
+ *   落札額 − 自社値引             ＝ この落札の額（＝入金）
+ *
+ * `ok` はこの 2 つが（端数 1 円まで）成り立っているか。成り立たない注文が来たら、
+ * 額を作って辻褄を合わせるのではなく **合っていないと言う**（運用者の指示 2026-08-21）。
+ */
+function lotPromo(l){
+  const has = l && l.bidYen != null;
+  const 額   = l ? lotTotal(l) : 0;
+  if(!has) return { has: false, 額, bid: null, buyer: null, plat: null, sell: null, ok: true };
+  const bid   = Number(l.bidYen)   || 0;
+  const buyer = Number(l.buyerYen) || 0;
+  const plat  = Number(l.platYen)  || 0;
+  const sell  = Number(l.sellYen)  || 0;
+  /* 口数ぶんの端数を許す。注文は 1 口あたりで丸めて届くので、3 口なら
+     最大 3 円ずれうる。**食い違いは千円単位で出る**ので、これで見逃さない。 */
+  const slack = Math.max(1, Number(l.qty) || 1);
+  const near = (a, b) => Math.abs(a - b) <= slack;
+  return { has: true, 額, bid, buyer, plat, sell,
+           ok: near(bid - plat - sell, buyer) && near(bid - sell, 額) };
+}
+
+/** 内訳が噛み合っていない落札。押す前・記録する前に気づけるようにする */
+const lotOdd = l => { const p = lotPromo(l); return p.has && !p.ok; };
+
+/**
  * TikTok 負担の値引きの合計。**アプリの売上と LIVE マネージャーの差**そのもの。
  *
- * 落札に残した「買い手が払った額」（`buyerYen`）と落札の合計の差を積む。
- * 内訳を持っていない落札（手入力・古いデータ）は差 0 として飛ばす。
+ * **引き算で作らない。**落札が持っている `platYen` をそのまま積む。
+ * 内訳を持っていない落札（手入力・古いデータ）は数えない。
  * 排出まで済んだぶんだけ数える＝売上に入っている口だけ。
  */
 function platTotal(o){
-  let plat = 0, lots = 0;
+  let plat = 0, lots = 0, odd = 0;
   for(const l of (o && o.lots) || []){
-    if(l.buyerYen == null) continue;
+    const p = lotPromo(l);
+    if(!p.has) continue;
     const st = lotStats(o, l);
     if(!st.drawn) continue;
+    if(!p.ok){ odd++; continue; }          // 噛み合っていないものは足さない
     const share = st.drawn / Math.max(1, Number(l.qty) || 1);
-    const d = lotTotal(l) - (Number(l.buyerYen) || 0);
-    if(d > 0){ plat += d * share; lots++; }
+    if(p.plat > 0){ plat += p.plat * share; lots++; }
   }
-  return { plat: Math.round(plat), lots };
+  return { plat: Math.round(plat), lots, odd };
+}
+
+/** 落札額の合計（排出まで済んだぶん）。内訳が無い落札は落札の額で代える */
+function bidTotal(o){
+  let bid = 0;
+  for(const l of (o && o.lots) || []){
+    const st = lotStats(o, l);
+    if(!st.drawn) continue;
+    const p = lotPromo(l);
+    const share = st.drawn / Math.max(1, Number(l.qty) || 1);
+    bid += (p.has && p.ok ? p.bid : p.額) * share;
+  }
+  return Math.round(bid);
 }
 
 function addLot(price, qty, buyer, kind, rem){
@@ -3616,8 +3784,8 @@ function addLot(price, qty, buyer, kind, rem){
     buyer: String(buyer || ""),
     kind: kind || "auction",
     at: Date.now(),
-    // 買い手が払った額。TikTok から取り込んだときだけ入る（takeOrder が写す）
-    buyerYen: null
+    // 金額の内訳。TikTok から取り込んだときだけ入る（takeOrder が写す）
+    bidYen: null, buyerYen: null, platYen: null, sellYen: null
   };
   S.lots.push(lot);
   return lot;
@@ -3700,14 +3868,11 @@ function simulateBreakup(o, topMult, minReturn){
 
   const arr = slots.slice();
   for(let t = 0; t < trials; t++){
-    // 引き順をシャッフル（Fisher-Yates）
-    for(let i = N - 1; i > 0; i--){
-      const j = (rand() * (i + 1)) | 0;
-      const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-    }
-
     let costDrawn = 0, mktDrawn = 0, topDrawn = 0, k = N, stopped = false;
     for(let i = 0; i < N; i++){
+      // 引く直前に交換する（前から進める Fisher-Yates）。simFromHere と同じ理由
+      const j = i + ((rand() * (N - i)) | 0);
+      if(j !== i){ const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp; }
       const s = arr[i];
       costDrawn += s.c; mktDrawn += s.m; if(s.top) topDrawn++;
       const left = N - (i + 1);
@@ -3759,7 +3924,7 @@ function simulateBreakup(o, topMult, minReturn){
 }
 
 /* ============================================================
-   いま効く手（行動カード）
+   AIの提案（行動カード）／先に片付ける（取りこぼし）
 
    「次に何をすれば売上が伸びるか」を、いまの状態から組み立てて**上位 3 枚**出す。
    読み上げ用のカンペは現場で使われていなかったので外した（運用者の判断 2026-08-19）。
@@ -3819,12 +3984,47 @@ function reviveLine(dec){
 }
 
 /**
- * いま効く手を組み立てる。返すのは {key, tone, title, num, body, act} の配列。
- * `score` は円。押すと増える／取りこぼしている額で並べる。
+ * **やり忘れ**（まだ売上に入っていないもの）。提案とは別に出す。
+ *
+ * 以前は提案の札に混ぜていたが、並びが「押せば増える額」なので必ず先頭に居座り、
+ * 肝心の提案が 3 枚の枠から押し出されていた。そもそも提案ではない
+ * （運用者の指摘 2026-08-21：「開封待ちが残っているとかは効く手でもなんでもない」）。
+ */
+function todoItems(c){
+  if(!S || S.closedAt) return [];
+  const out = [];
+  if(c.pendingSlots > 0) out.push({
+    key: "pending",
+    title: "開封待ち", num: `${c.pendingSlots} 口 ／ ${yen(c.pendingRev)}`,
+    body: "出たカードを押すまで売上に入らない",
+  });
+  const f = ordersFor(S);
+  const sum = list => list.reduce((n, x) => n + x.price * x.qty, 0);
+  if(f.pending.length) out.push({
+    key: "inbox",
+    title: "取り込んでいない入金",
+    num: `${f.pending.length} 件 ／ ${yen(sum(f.pending))}`,
+    body: "受信箱の「これで登録」で落札になる",
+  });
+  /* **配信前に届いたぶんは自動では立たない。**受信箱の下のほうに出るだけなので、
+     気づかないまま配信が終わると「落札と実売が合わない」になる。ここに出す
+     （運用者からの相談 2026-08-21）。 */
+  if(f.earlier.length) out.push({
+    key: "earlier",
+    title: "配信前に届いた入金",
+    num: `${f.earlier.length} 件 ／ ${yen(sum(f.earlier))}`,
+    body: "自動では立たない。この配信で出すぶんだけ受信箱から押す",
+  });
+  return out;
+}
+
+/**
+ * AIの提案を組み立てる。返すのは {key, tone, title, num, body, act} の配列。
+ * `score` は円。**効きそうな順**（その手で動く額）に並べる。
  */
 function actionCards(c){
   const out = [];
-  // 締めたあとに「次の手」は無い。記録を見る画面なので何も出さない
+  // 締めたあとに提案は無い。記録を見る画面なので何も出さない
   if(!S || S.closedAt) return out;
   const dec = c.left > 0 && !S.closedAt ? decideNow(c) : null;
   const p   = paceOf(S);
@@ -3834,23 +4034,7 @@ function actionCards(c){
   const idleLine = IDLE_LINE_MS;
   const add = x => { if(x) out.push(x); };
 
-  // 1. 押すだけで売上に入るもの（取りこぼし）。いちばん強い
-  if(c.pendingSlots > 0) add({
-    key: "pending", tone: "is-now", score: c.pendingRev + 1e6,
-    title: "開封待ちが残っている", num: `${c.pendingSlots} 口 ／ ${yen(c.pendingRev)}`,
-    body: "出たカードを押すまで売上に入らない。押して確定させる。",
-  });
-
-  const inbox = !S.closedAt ? ordersFor(S).pending : [];
-  if(inbox.length) add({
-    key: "inbox", tone: "is-now",
-    score: inbox.reduce((n, x) => n + x.price * x.qty, 0) + 1e6,
-    title: "取り込んでいない入金がある",
-    num: `${inbox.length} 件 ／ ${yen(inbox.reduce((n, x) => n + x.price * x.qty, 0))}`,
-    body: "入金まで済んだ落札。受信箱の「これで登録」を押すとそのまま落札になる。",
-  });
-
-  /* 2. 値下げ。**そのまま続けるより利益額が高いときだけ**出す。
+  /* 1. 値下げ。**そのまま続けるより利益額が高いときだけ**出す。
         比べているのは「1 口の利益 × 売れる口数」だけではなく、**そこにかかる時間**も
         入れた額（`cutGain`）。値下げで GMV は落ちるが速くなる、そのつり合い。 */
   const cut = dec && dec.best && dec.stay && dec.best.p < dec.stay.p ? dec : null;
@@ -3886,7 +4070,7 @@ function actionCards(c){
     });
   }
 
-  // 3. 終わりどき
+  // 2. 終わりどき
   if(dec && dec.verdict === "stop") add({
     key: "stop", tone: "is-bad", score: Math.abs(Math.round(dec.gain)),
     title: dec.dead ? "もう回らない" : "ここで終了したほうが得",
@@ -3898,7 +4082,7 @@ function actionCards(c){
         + `残り ${c.left} 口は在庫に戻して組み直す。`,
   });
 
-  // 4. 売り文句になる材料
+  // 3. 売り文句になる材料
   const T = topsLeft(c);
   if(T.count > 0 && c.left > 0) add({
     key: "tops", tone: "",
@@ -3913,7 +4097,7 @@ function actionCards(c){
         + `この 2 つは配信で言える数字。`,
   });
 
-  // 5. ペースが落ちている（値下げの話とは別に、見せ方の問題として出す）
+  // 4. ペースが落ちている（値下げの話とは別に、見せ方の問題として出す）
   if(p && p.pace > 0 && p.recentPace > 0 && p.recentPace < p.pace * 0.6 && idle <= idleLine){
     add({
       key: "slow", tone: "is-warn", score: Math.round(p.gmv - p.recentGmv),
@@ -3923,7 +4107,7 @@ function actionCards(c){
     });
   }
 
-  // 6. 完売が近い
+  // 5. 完売が近い
   const eta = c.left > 0 ? etaOf(S, c) : null;
   if(eta && !eta.paused && eta.ms > 0 && eta.left > 0 && eta.ms < 30 * 60000) add({
     key: "eta", tone: "is-now", score: Math.round(c.left * (c.price || 0) / 10),
@@ -3931,7 +4115,7 @@ function actionCards(c){
     body: "追い込みの声かけが効く。残り口数を出して締める。",
   });
 
-  // 7. 時給が落ちている
+  // 6. 時給が落ちている
   if(p && p.gmv > 0 && p.recentGmv > 0 && p.recentGmv < p.gmv * 0.7 && idle <= idleLine) add({
     key: "gmv", tone: "is-warn", score: Math.round(p.gmv - p.recentGmv),
     title: "時給が落ちている",
@@ -3942,6 +4126,17 @@ function actionCards(c){
   return out.sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
+function renderTodo(c){
+  const box = $("todoBar");
+  if(!box) return;
+  const items = S ? todoItems(c) : [];
+  box.hidden = !items.length;
+  $("todoList").innerHTML = items.map(k =>
+    `<span class="todo"><b>${k.title}</b>`
+    + `<span class="n">${k.num}</span>`
+    + `<span class="b">${k.body}</span></span>`).join("");
+}
+
 function renderActCards(c){
   const box = $("actCards");
   if(!box) return;
@@ -3950,7 +4145,7 @@ function renderActCards(c){
   box.hidden = !cards.length;
   if(!cards.length){ $("actList").innerHTML = ""; return; }
 
-  $("actsSub").textContent = "いまの数字から。押す順に並べてある";
+  $("actsSub").textContent = "いまの数字から。効きそうな順";
   $("actList").innerHTML = cards.map(k => `<div class="act ${k.tone || ""}">`
     + `<span class="t">${k.title}</span>`
     + `<span class="n">${k.num}</span>`
@@ -3981,6 +4176,13 @@ function renderActCards(c){
    という食い違いが出るため。種に価格を混ぜていないので、回数さえ同じなら
    価格を変えても同じ引き順の束で比べられる。 */
 const LIVE_TRIALS = 1000;
+/* 1 価格あたりに引く口数の上限。**大きいオリパだけ効く。**
+   400 口のオリパは残り 280 口 × 1000 回 × 13 価格 ＝ 300 万回まわしていて、
+   カードを押すたび 0.2 秒かかっていた（2026-08-21 に実測）。
+   残りが 120 口までは 1000 回のまま＝これまでの数字は動かない。 */
+const TRIAL_BUDGET = 120000;
+const trialsFor = left =>
+  Math.max(250, Math.min(LIVE_TRIALS, Math.round(TRIAL_BUDGET / Math.max(1, left))));
 
 /**
  * いまの残りから、価格 p で売った場合の解体時の着地。
@@ -4052,12 +4254,15 @@ function simFromHere(c, p, topMult, minReturn, trials){
   for(let t = 0; t < T; t++){
     let k = 0, costMore = 0, mktMore = 0, revMore = 0;
     if(!thinNow && !overNow){
-      for(let i = R - 1; i > 0; i--){
-        const j = (rand() * (i + 1)) | 0;
-        const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-      }
       let topOut = topGoneAlready;
       for(let i = 0; i < R; i++){
+        /* **引く直前に 1 回だけ交換する**（前から進める Fisher-Yates）。
+           先に全部混ぜてしまうと、途中で解体になる回でも残り全部を混ぜることになる。
+           400 口のオリパは残り 268 口でも平均 48 口で解体に達するので、
+           混ぜる手間の 8 割が捨てられていた（2026-08-21 に実測）。
+           引いた先頭 k 個が一様な非復元抽出になる性質は変わらない。 */
+        const j = i + ((rand() * (R - i)) | 0);
+        if(j !== i){ const t2 = arr[i]; arr[i] = arr[j]; arr[j] = t2; }
         // **競り。**残りが熱いほど買い手は競り上げる。
         // 1 口引く前の残り期待値で値が決まる（買い手が見ているのはその時点の中身）。
         revMore += bidAt((mktLeft - mktMore) / (R - i), price, targetReturn, rand);
@@ -4096,15 +4301,46 @@ function simFromHere(c, p, topMult, minReturn, trials){
   };
 }
 
-/* 同じ価格を何度も回さないための入れ物。状態が変わったら liveSimSync() が捨てる */
-let priceSims = new Map();
+/* ------------------------------------------------------------
+   試算のキャッシュ
 
-/** 価格 p での試算。同じ価格なら使い回す */
+   同じ価格を何度も回さないための入れ物。**状態が変われば丸ごと捨てる。**
+
+   ⚠ 以前は捨てる仕掛けが別の入れ物（`liveSimCache`）側にあり、価格ごとの
+   キャッシュはどこからも捨てられていなかった。配信中に排出しても判断が
+   古いままになり、**解体条件に達したあとも「まだ 65 口さばける」と言い続けた**
+   （2026-08-21 に実測して発覚）。検査が 22 本とも手でキャッシュを初期化して
+   いたので、テストでも捕まらなかった。同じ轍を踏まないよう、
+   **捨てるのはここ 1 か所だけ**にしてある。
+   ------------------------------------------------------------ */
+let priceCache = { key: "", at: new Map(), bk: null };
+
+/**
+ * 状態の指紋。**JSON にしない**（1 回の描画で 25 回以上通るので重い）。
+ * 賞品の中身は c.N / costTotal / mktTotal に、引いた中身は costDrawn / mktDrawn に
+ * 数字として畳まれているので、これだけで試算の前提は決まる。
+ */
+function simKeyOf(c, topMult, minReturn){
+  return `${c.o.id}|${c.N}|${c.costTotal}|${c.mktTotal}`
+       + `|${c.sold}|${c.revenue}|${c.costDrawn}|${c.mktDrawn}`
+       + `|${c.price}|${c.feeRate}|${c.o.targetReturn}|${topMult}|${minReturn}`;
+}
+
+/** 状態が変わっていればキャッシュを捨てる。試算に入る口はすべてここを通る */
+function simSync(c, topMult, minReturn){
+  const key = simKeyOf(c, topMult, minReturn);
+  if(key !== priceCache.key) priceCache = { key, at: new Map(), bk: null };
+  return priceCache;
+}
+
+/** 価格 p での試算。同じ価格・同じ状態なら使い回す */
 function simAtPrice(c, p, topMult, minReturn){
   const k = Math.max(0, Math.round(p));
   if(k <= 0) return null;
-  if(!priceSims.has(k)) priceSims.set(k, simFromHere(c, k, topMult, minReturn, LIVE_TRIALS));
-  return priceSims.get(k);
+  const cache = simSync(c, topMult, minReturn);
+  if(!cache.at.has(k))
+    cache.at.set(k, simFromHere(c, k, topMult, minReturn, trialsFor(c.left)));
+  return cache.at.get(k);
 }
 
 /**
@@ -4632,6 +4868,7 @@ function fmtWhen(t){
 }
 
 function buildRecord(o, endedAt, memo){
+  const promoNow = platTotal(o);   // 内訳は 1 回だけ集める
   const c = compute(o);
   const byId = new Map(o.prizes.map(p => [p.id, p]));
   const p = paceOf(o);
@@ -4663,9 +4900,14 @@ function buildRecord(o, endedAt, memo){
     revenue: c.revenue,
     /* 買い手が実際に払った額と、TikTok 負担のクーポンの合計。
        LIVE マネージャーが出すのは `buyerRev` のほう。注文を掃き出しても
-       あとから内訳を言えるように、記録に焼き込む（運用者の指示 2026-08-20）。 */
-    platYen: platTotal(o).plat,
-    buyerRev: c.revenue - platTotal(o).plat,
+       あとから内訳を言えるように、記録に焼き込む（運用者の指示 2026-08-20）。
+       `platYen` は落札が持っている TikTok 負担を **そのまま積んだ額**で、
+       引き算では作らない。噛み合わない落札は数えず `oddLots` に件数だけ残す
+       （2026-08-21）。`bidYen` は値引き前の落札額の合計。 */
+    platYen: promoNow.plat,
+    buyerRev: c.revenue - promoNow.plat,
+    bidYen: bidTotal(o),
+    oddLots: promoNow.odd,
     costDrawn: c.costDrawn,
     costTotal: c.costTotal,
     profit: c.profitNow,
@@ -4675,11 +4917,11 @@ function buildRecord(o, endedAt, memo){
       const a = auctionSummary(o);
       return { lots: a.lots, auctions: a.auctions, avg: a.avg, max: a.max, min: a.min };
     })(),
-    lots: o.lots.map(l => {
-      const st = lotStats(o, l);
-      return { price: l.price, qty: l.qty, drawn: st.drawn, buyer: l.buyer,
-               kind: l.kind, revenue: st.revenue, cost: st.cost, profit: st.profit };
-    }),
+    /* ⚠ **落札 1 件ずつの写しは残さない。**1 回ぶんで 6.3 KB あり、記録の
+       82% を占めていたのに、**画面もCSVも道具も一度も読んでいなかった**
+       （2026-08-21 に測って外した）。件数と平均・最高・最低は上の `auction` に、
+       1 件ずつの中身はオリパ側の落札に残っていて、記録を押せばそれが出る。
+       記録は同期でも毎回まるごと運ぶので、細いほうが効く。 */
     prizes: o.prizes.map(p => ({
       name: p.name, cost: costOf(p), market: mktOf(p), items: (p.items || []).map(it => ({ ...it })),
       count: p.count, drawn: c.drawnBy.get(p.id) || 0
@@ -5694,7 +5936,11 @@ function renderReplay(){
     if(Number(r.platYen) > 0)
       note.push(`買い手の支払いは ${yen(Math.round(r.buyerRev))}`
         + `（TikTok 負担のクーポン ${yen(Math.round(r.platYen))}）。`
-        + `LIVE マネージャーに出るのはこちらの額。`);
+        + `LIVE マネージャーに出るのはこちらの額。`
+        + `${Number(r.bidYen) > 0 ? `値引き前の落札額は ${yen(Math.round(r.bidYen))}。` : ""}`);
+    if(Number(r.oddLots) > 0)
+      note.push(`⚠ 金額の内訳が噛み合わない落札が ${r.oddLots} 件あり、`
+        + `TikTok 負担には足していない。実際の差はこれより大きいことがある。`);
     if(Math.round(r.revenue) !== Math.round(c.revenue))
       note.push(`⚠ いま映しているオリパの売上は ${yen(c.revenue)} で、記録と食い違う。`
         + `記録したあとに中身を触っている。数字は記録のほうが正しい。`);
@@ -5713,6 +5959,29 @@ function renderReplayBar(){
   $("replayWhen").textContent = when
     + (p ? `　${fmtClock(p.startedAt)} 〜 ${fmtClock(p.lastAt)}・${fmtDur(p.wallMs)}` : "");
   renderReplay();
+}
+
+/* ------------------------------------------------------------
+   押した瞬間の反応を優先する
+
+   判断エンジン（`decideNow`）は 400 口のオリパで 0.2 秒近くかかる。
+   カードを押した直後にそれを走らせると、その間ずっと画面が固まる。
+   **軽い欄（KPI・カード・落札の表）だけ先に描いて、判断の欄は次の番に回す。**
+   数字は何も変えない。順番を変えるだけ。
+
+   `render()` をそのまま呼んだときは今までどおり全部その場で描く
+   （検査や同期の受信はそちらを通る）。軽い描画に切り替えるのは
+   **人が押した操作のときだけ**（`renderNow()`）。
+   ------------------------------------------------------------ */
+let liteRender = false;      // true のあいだ、判断エンジンを使う欄を飛ばす
+let heavyTimer = null;
+
+/** 人が押した直後の描画。軽い欄を先に出し、判断の欄は次の番で追いつかせる */
+function renderNow(){
+  liteRender = true;
+  try { render(); } finally { liteRender = false; }
+  clearTimeout(heavyTimer);
+  heavyTimer = setTimeout(() => { heavyTimer = null; render(); }, 0);
 }
 
 function renderLive(c){
@@ -5760,7 +6029,9 @@ function renderLive(c){
       + (pt.plat > 0
           ? `／買い手の支払い ${yen(Math.round(c.revenue - pt.plat))}`
             + `（TikTok 負担 ${yen(pt.plat)}）`
-          : "");
+          : "")
+      // 内訳が噛み合わない落札は足していない。黙って除くと差の理由が消えるので言う
+      + (pt.odd > 0 ? `／⚠ 内訳が合わない落札 ${pt.odd} 件` : "");
 
   // 残り口数はいちばん見たい数字なので、ここを主役にする（販売済は下に回す）
   $("kpiLeft").className = "kpi " + (c.left === 0 ? "is-good" : c.left <= 10 ? "is-warn" : "");
@@ -5783,15 +6054,19 @@ function renderLive(c){
     ? "まだ排出なし"
     : `手数料 ${pct(c.feeRate, 1)}（${syen(-Math.round(c.feeNow))}）を引いたあと`;
 
-  renderActCards(c);
+  renderTodo(c);        // 取りこぼしは軽い。押した瞬間に減るので遅らせない
   renderInbox(c);
   renderLotBar(c);
   renderPrizes(c);
   renderLotTable();
-  renderPrice(c);
-  renderPace(c);
   renderLiveSeat();
-  drawSpark(c);
+  // ここから下は判断エンジンを通る。押した直後は飛ばして、次の番で描く
+  if(!liteRender){
+    renderActCards(c);
+    renderPrice(c);
+    renderPace(c);
+    drawSpark(c);
+  }
 
   const reopen = $("btnReopen");
   if(reopen) reopen.addEventListener("click", reopenStream);
@@ -5938,21 +6213,49 @@ function takeOrder(orderId){
   if(c.left <= 0){ say("残りの口数がない。"); return; }
   touchLive();
   const qty = Math.max(1, Math.min(x.qty, c.left));
-  const total = x.price * x.qty;
-  const { price, rem } = lotUnitAndRem(total, qty);
+  /* ⚠ **残りが足りない注文の合計を、少ない口数に詰め込まない。**
+     以前は `x.price * x.qty`（切り詰める前の口数）で合計を出していたので、
+     3 口 ¥24,000 の注文を残り 1 口で取り込むと **1 口 ¥24,000 の落札**が立ち、
+     平均落札も「直近 5 件の中央値」（値下げの天井）も壊れていた
+     （2026-08-21 に見つけた）。渡せる口数ぶんだけを落札にする。 */
+  const short = qty < x.qty;
+  const { price, rem } = lotUnitAndRem(x.price * qty, qty);
   const lot = addLot(price, qty, x.buyer, "auction", rem);
   lot.orderId = String(x.id);          // これで受信箱から消える（二重取り込みの防止）
-  /* 買い手が払った額を落札に写す。**注文は掃き出すと消える**ので、ここで写して
-     おかないと過去の回の内訳がたどれなくなる（運用者の指示 2026-08-20）。
-     口数を減らして取り込んだときは、その口数ぶんだけ持つ。 */
-  if(x.buyerPaid != null) lot.buyerYen = Math.max(0, Math.round(Number(x.buyerPaid) * qty));
+  /* 金額の内訳を **4 つとも** 落札に写す。**注文は掃き出すと消える**ので、
+     ここで写しておかないと過去の回の内訳がたどれなくなる（2026-08-20）。
+     以前は買い手の支払いしか持たず、TikTok 負担ぶんを引き算で作っていたので、
+     数字が噛み合わない注文が来ると静かに水増しされた（2026-08-21 に修正）。
+     **足りない数字を作らない。**口数を減らして取り込んだぶんだけ持つ。 */
+  /* 内訳が入っているのは TikTok から来た落札だけ。注文は正規化で 0 に
+     揃うので、`!= null` では手入力と見分けられない（0 と 0 で「合わない」
+     と言い出す）。**落札額が入っているか**で見る。 */
+  if(Number(x.listPrice) > 0 && Number(x.buyerPaid) > 0){
+    const per = k => Math.max(0, Math.round((Number(x[k]) || 0) * qty));
+    lot.bidYen   = per("listPrice");
+    lot.buyerYen = per("buyerPaid");
+    lot.platYen  = per("platformDiscount");
+    lot.sellYen  = per("sellerDiscount");
+    // 落札額 − TikTok負担 − 自社値引 ＝ 買い手の支払い が崩れている注文。
+    // 黙って飲み込まず、その場で言う（あとで記録にも印が残る）
+    if(lotOdd(lot)) say(`この落札は金額の内訳が噛み合っていない。\n`
+      + `落札額 ${yen(lot.bidYen)} ／ TikTok負担 ${yen(lot.platYen)}`
+      + ` ／ 自社値引 ${yen(lot.sellYen)} ／ 買い手 ${yen(lot.buyerYen)}。\n`
+      + `落札そのものは ${yen(lotTotal(lot))} で立てた。TikTok の注文管理で確かめること。`);
+  }else if(Number(x.buyerPaid) > 0){
+    // 落札額が来ていない古い注文。買い手の支払いだけは残す
+    lot.buyerYen = Math.max(0, Math.round(Number(x.buyerPaid) * qty));
+  }
+  // 渡せない口が出た。売上にも入らないので、黙って飲み込まずに知らせる
+  if(short) say(`この落札は ${x.qty} 口だが、残りは ${qty} 口しかない。\n`
+    + `${qty} 口ぶんだけ落札にした。${x.qty - qty} 口ぶんは返金が要るか確かめること。`);
   // 迷子の注文を引き受けたなら、そのときに商品 ID を覚える。以降は
   // 「配信中だから引き受けた」ではなく、正しく結びついた注文として届く
   if(!String(S.shopProductId || "").trim() && x.productId){
     S.shopProductId = String(x.productId);
   }
   lotBarKey = "";
-  render();
+  renderNow();          // 押した手応えを先に返す
   return lot;
 }
 
@@ -5983,6 +6286,10 @@ function autoTakeOrders(){
   if(compute().left <= 0) return false;
   const next = pendingOrders(S)[0];         // 古いものから
   if(!next) return false;
+  /* 残りより口数が多い注文は自動で立てない。渡せない口が出るので、
+     返金するのか一部だけ渡すのかは人が決める。**次の注文へ飛ばさない**
+     （順番が入れ替わると、どれを処理したのか分からなくなる）。 */
+  if(next.qty > compute().left) return false;
   return !!takeOrder(next.id);
 }
 
@@ -6493,26 +6800,13 @@ function recentFloor(o){
   return mid > 0 ? roundPrice(mid * 0.7) : 0;
 }
 
-/* 値下げ判断は「完売したら」ではなく「解体まで売ったら」で出す。
-   価格ごとに引き直すので、状態が変わらないうちは使い回す。 */
-let liveSimCache = { key: "", bk: null, at: new Map() };
-
-function liveSimSync(c){
-  const { topMult, minReturn } = simParams();
-  const key = JSON.stringify([
-    c.o.id, c.o.prizes.map(p => [costOf(p), mktOf(p), p.count | 0]),
-    c.sold, c.revenue, c.costDrawn, c.price, topMult, minReturn
-  ]);
-  if(key !== liveSimCache.key){
-    liveSimCache = { key, bk: breakupAnchors(c, topMult, minReturn), at: new Map() };
-  }
-  return { topMult, minReturn };
-}
-
-/** 解体前提の損益分岐・目標利益率ライン。届かないときは Infinity */
+/** 解体前提の損益分岐・目標利益率ライン。届かないときは Infinity。
+    **要るときだけ引く**（落札ダイアログの下限表示にしか使っていない）。 */
 function liveBreakup(c){
-  liveSimSync(c);
-  return liveSimCache.bk;
+  const { topMult, minReturn } = simParams();
+  const cache = simSync(c, topMult, minReturn);
+  if(cache.bk === null) cache.bk = breakupAnchors(c, topMult, minReturn) || false;
+  return cache.bk || null;
 }
 
 
@@ -6553,9 +6847,9 @@ function renderPrice(c){
     return;
   }
 
-  const bk = c.left > 0 ? liveBreakup(c) : null;
-  const bBE  = bk ? bk.pBE : Infinity;      // 解体前提の損益分岐
-  const bTgt = bk ? bk.pTarget : Infinity;  // 解体前提で目標利益率に届く価格
+  /* ⚠ ここで `liveBreakup(c)` を引いていたが、取った値をどこでも使っていなかった。
+     1 回の描画で試算が 16 回ぶん無駄に回っていた（2026-08-21 に実測して削除）。
+     解体前提の損益分岐が要るのは落札ダイアログだけ。 */
 
   // ここが判断の本体。続けるのと止めるのを同じ物差しで比べる
   const dec = c.left > 0 ? decideNow(c) : null;
@@ -7671,8 +7965,13 @@ function renderCloseSummary(){
     ["利益率",      c.revenue > 0 ? spct(c.marginNow) : "—", c.marginNow >= 0 ? "pos" : "neg"],
     ["1口あたり利益", c.sold > 0 ? syen(Math.round(perSlot)) : "—", perSlot >= 0 ? "pos" : "neg"]
   ].concat(closePlat.plat > 0
-    ? [["買い手の支払い", yen(Math.round(c.revenue - closePlat.plat)), ""],
+    ? [["落札額", yen(bidTotal(S)), ""],
+       ["買い手の支払い", yen(Math.round(c.revenue - closePlat.plat)), ""],
        ["TikTok 負担", "−" + yen(closePlat.plat), ""]]
+    : [])
+   // 噛み合わない落札は負担に足していない。件数だけ出して人が確かめられるようにする
+   .concat(closePlat.odd > 0
+    ? [["⚠ 内訳が合わない落札", `${closePlat.odd} 件`, "neg"]]
     : []).map(([k, v, cls]) => `<div><span class="label">${k}</span><b class="${cls}">${v}</b></div>`).join("");
 
   const a = auctionSummary(S);
@@ -7793,7 +8092,14 @@ async function draw(prizeId, n = 1){
     const want = Math.max(1, Math.min(r.qty, c2.left));
     k = Math.min(want, (p.count|0) - drawn2, c2.left);
     if(k <= 0) return;
-    lot = addLot(r.price, want, r.buyer, r.kind, r.rem);
+    /* 残りが足りなくて口数を切り詰めたとき、**端数（合計を割った 1 円）を
+       そのまま持ち越さない。**持ち越すと、切り詰めた口数に元の合計の端数が
+       乗って落札の額が合わなくなる。渡せる口数ぶんだけを落札にして、
+       足りないことは人に知らせる（2026-08-21）。 */
+    const short = want < r.qty;
+    lot = addLot(r.price, want, r.buyer, r.kind, short ? 0 : r.rem);
+    if(short) say(`残りが ${c2.left} 口しかないので、${r.qty} 口 → ${want} 口で立てた。\n`
+      + `${r.qty - want} 口ぶんは落札に入っていない。返金が要るか確かめること。`);
   }
   if(k <= 0) return;
 
@@ -7803,7 +8109,7 @@ async function draw(prizeId, n = 1){
   for(let i = 0; i < k; i++){
     S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id, at: now });
   }
-  render();
+  renderNow();          // 押した手応えを先に返す。判断の欄はすぐ後から追いつく
   // 出し切ったなら、待っている落札をその場で立てる。次に取りに行くまで
   // 待たせると、届いているのに手が止まって見える
   autoTakeOrders();
@@ -7827,7 +8133,7 @@ function undo(){
       lot.rem = clamp(lot.rem || 0, 0, rest - 1);
     }
   }
-  render();
+  renderNow();          // 押した手応えを先に返す
 }
 
 document.querySelectorAll(".modes button").forEach(b => {
@@ -8245,6 +8551,7 @@ const mq = window.matchMedia("(prefers-color-scheme: dark)");
 mq.addEventListener("change", () => { if(mode === "live") drawSpark(compute()); });
 
 DB = loadDB();
+pruneOrders();          // 溜まった注文をここで落とす（残すものは残す）
 S = DB.oripas.find(o => o.id === DB.currentId) || null;
 mode = "list";
 loadSyncConf();
