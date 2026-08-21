@@ -221,10 +221,33 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 .kpi .v.neg{ color:var(--bad); }
 
 /* ============================================================
-   いま効く手（行動カード）
+   先に片付ける（取りこぼし）
+
+   開封待ち・取り込んでいない入金。**提案ではなく、やり忘れ。**
+   以前は提案の札に混ぜていたが、「押せば増える額」で並べていたので
+   いちばん上に居座り、提案が押し出されていた（運用者の指摘 2026-08-21）。
+   ============================================================ */
+.todobar{
+  border:1px solid color-mix(in srgb, var(--gold) 38%, var(--line));
+  background:var(--gold-bg); border-radius:11px; padding:12px 14px; margin-bottom:12px;
+}
+.todobar-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+.todobar-head h3{ margin:0; font-size:13.5px; letter-spacing:.02em; color:var(--gold-ink); }
+.todolist{ display:flex; flex-wrap:wrap; gap:8px 20px; }
+.todo{ display:flex; align-items:baseline; gap:8px; min-width:0; font-size:13px; }
+.todo .n{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:16px; font-weight:700; letter-spacing:-.02em; color:var(--gold-ink);
+}
+.todo .b{ font-size:12px; color:var(--ink-2); }
+
+/* ============================================================
+   AIの提案（行動カード）
 
    配信しながら「次に何をすれば売上が伸びるか」を 3 枚だけ出す。
    読み上げ用のカンペは現場で使われていなかったので外した（2026-08-19）。
+   取りこぼし（開封待ち・未取り込みの入金）はここに混ぜない。**あれは提案では
+   なくやり忘れ**なので、上の「先に片付ける」へ出す（2026-08-21）。
    **数字は compute() / decideNow() のものをそのまま使う。**盛らない。
    ============================================================ */
 .actcards{
@@ -1170,7 +1193,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='3480fcc (08/21 23:55)';</script>
+<script>window.__BUILD='2da5941 (08/22 00:32)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1408,9 +1431,20 @@ window.__SYNC_DEFAULTS = {
     <!-- いま何をすると売上が伸びるか。**上位 3 枚だけ**出す。
          以前はここに読み上げ用のカンペを置いていたが、現場で使われていなかった
          （運用者の判断 2026-08-19）。読む文ではなく、押す行動を出す -->
+    <!-- まだ売上に入っていないもの。**提案ではなく、やり忘れ。**
+         提案の札に混ぜると「押せば増える額」で並んでしまい、
+         いちばん強い＝いちばん上に居座って提案が見えなくなる -->
+    <section class="todobar" id="todoBar" hidden>
+      <div class="todobar-head">
+        <h3>先に片付ける</h3>
+        <span class="hint">まだ売上に入っていない</span>
+      </div>
+      <div class="todolist" id="todoList"></div>
+    </section>
+
     <section class="actcards" id="actCards" hidden>
       <div class="actcards-head">
-        <h3>いま効く手</h3>
+        <h3>AIの提案</h3>
         <span class="hint" id="actsSub"></span>
       </div>
       <div class="actlist" id="actList"></div>
@@ -1620,7 +1654,7 @@ window.__SYNC_DEFAULTS = {
           <div class="g-step">
             <span class="g-num">2</span>
             <div>
-              <h4>上の「いま効く手」を見る</h4>
+              <h4>上の「AIの提案」を見る</h4>
               <p class="g-big">
                 いまの数字から、<b>次にやると売上が伸びること</b>を 3 つまで出す。
                 上ほど効く（押すだけで売上に入るものが先に来る）。
@@ -1771,7 +1805,7 @@ window.__SYNC_DEFAULTS = {
           <ul>
             <li><b>手で入れた相場は書き換えない。</b>効くのは自動の行だけ
               （編集画面の相場欄が破線＋灰色なら自動）。</li>
-            <li>この 1 つの数字で<b>還元率・目玉の判定・ハズレ枠の線・「いま効く手」が
+            <li>この 1 つの数字で<b>還元率・目玉の判定・ハズレ枠の線・「AIの提案」が
               言う相場</b>が動く。低すぎると判断が「もっと下げろ」に寄る。</li>
             <li><b>ハズレ枠は自動</b>（相場が販売単価の 20% 以下）。印を付ける操作はない。
               まとめ排出はこの印とは無関係で、残りが 5 口以上の行に出る。</li>
@@ -3845,7 +3879,7 @@ function simulateBreakup(o, topMult, minReturn){
 }
 
 /* ============================================================
-   いま効く手（行動カード）
+   AIの提案（行動カード）／先に片付ける（取りこぼし）
 
    「次に何をすれば売上が伸びるか」を、いまの状態から組み立てて**上位 3 枚**出す。
    読み上げ用のカンペは現場で使われていなかったので外した（運用者の判断 2026-08-19）。
@@ -3905,12 +3939,37 @@ function reviveLine(dec){
 }
 
 /**
- * いま効く手を組み立てる。返すのは {key, tone, title, num, body, act} の配列。
- * `score` は円。押すと増える／取りこぼしている額で並べる。
+ * **やり忘れ**（まだ売上に入っていないもの）。提案とは別に出す。
+ *
+ * 以前は提案の札に混ぜていたが、並びが「押せば増える額」なので必ず先頭に居座り、
+ * 肝心の提案が 3 枚の枠から押し出されていた。そもそも提案ではない
+ * （運用者の指摘 2026-08-21：「開封待ちが残っているとかは効く手でもなんでもない」）。
+ */
+function todoItems(c){
+  if(!S || S.closedAt) return [];
+  const out = [];
+  if(c.pendingSlots > 0) out.push({
+    key: "pending",
+    title: "開封待ち", num: `${c.pendingSlots} 口 ／ ${yen(c.pendingRev)}`,
+    body: "出たカードを押すまで売上に入らない",
+  });
+  const inbox = ordersFor(S).pending;
+  if(inbox.length) out.push({
+    key: "inbox",
+    title: "取り込んでいない入金",
+    num: `${inbox.length} 件 ／ ${yen(inbox.reduce((n, x) => n + x.price * x.qty, 0))}`,
+    body: "受信箱の「これで登録」で落札になる",
+  });
+  return out;
+}
+
+/**
+ * AIの提案を組み立てる。返すのは {key, tone, title, num, body, act} の配列。
+ * `score` は円。**効きそうな順**（その手で動く額）に並べる。
  */
 function actionCards(c){
   const out = [];
-  // 締めたあとに「次の手」は無い。記録を見る画面なので何も出さない
+  // 締めたあとに提案は無い。記録を見る画面なので何も出さない
   if(!S || S.closedAt) return out;
   const dec = c.left > 0 && !S.closedAt ? decideNow(c) : null;
   const p   = paceOf(S);
@@ -3920,23 +3979,7 @@ function actionCards(c){
   const idleLine = IDLE_LINE_MS;
   const add = x => { if(x) out.push(x); };
 
-  // 1. 押すだけで売上に入るもの（取りこぼし）。いちばん強い
-  if(c.pendingSlots > 0) add({
-    key: "pending", tone: "is-now", score: c.pendingRev + 1e6,
-    title: "開封待ちが残っている", num: `${c.pendingSlots} 口 ／ ${yen(c.pendingRev)}`,
-    body: "出たカードを押すまで売上に入らない。押して確定させる。",
-  });
-
-  const inbox = !S.closedAt ? ordersFor(S).pending : [];
-  if(inbox.length) add({
-    key: "inbox", tone: "is-now",
-    score: inbox.reduce((n, x) => n + x.price * x.qty, 0) + 1e6,
-    title: "取り込んでいない入金がある",
-    num: `${inbox.length} 件 ／ ${yen(inbox.reduce((n, x) => n + x.price * x.qty, 0))}`,
-    body: "入金まで済んだ落札。受信箱の「これで登録」を押すとそのまま落札になる。",
-  });
-
-  /* 2. 値下げ。**そのまま続けるより利益額が高いときだけ**出す。
+  /* 1. 値下げ。**そのまま続けるより利益額が高いときだけ**出す。
         比べているのは「1 口の利益 × 売れる口数」だけではなく、**そこにかかる時間**も
         入れた額（`cutGain`）。値下げで GMV は落ちるが速くなる、そのつり合い。 */
   const cut = dec && dec.best && dec.stay && dec.best.p < dec.stay.p ? dec : null;
@@ -3972,7 +4015,7 @@ function actionCards(c){
     });
   }
 
-  // 3. 終わりどき
+  // 2. 終わりどき
   if(dec && dec.verdict === "stop") add({
     key: "stop", tone: "is-bad", score: Math.abs(Math.round(dec.gain)),
     title: dec.dead ? "もう回らない" : "ここで終了したほうが得",
@@ -3984,7 +4027,7 @@ function actionCards(c){
         + `残り ${c.left} 口は在庫に戻して組み直す。`,
   });
 
-  // 4. 売り文句になる材料
+  // 3. 売り文句になる材料
   const T = topsLeft(c);
   if(T.count > 0 && c.left > 0) add({
     key: "tops", tone: "",
@@ -3999,7 +4042,7 @@ function actionCards(c){
         + `この 2 つは配信で言える数字。`,
   });
 
-  // 5. ペースが落ちている（値下げの話とは別に、見せ方の問題として出す）
+  // 4. ペースが落ちている（値下げの話とは別に、見せ方の問題として出す）
   if(p && p.pace > 0 && p.recentPace > 0 && p.recentPace < p.pace * 0.6 && idle <= idleLine){
     add({
       key: "slow", tone: "is-warn", score: Math.round(p.gmv - p.recentGmv),
@@ -4009,7 +4052,7 @@ function actionCards(c){
     });
   }
 
-  // 6. 完売が近い
+  // 5. 完売が近い
   const eta = c.left > 0 ? etaOf(S, c) : null;
   if(eta && !eta.paused && eta.ms > 0 && eta.left > 0 && eta.ms < 30 * 60000) add({
     key: "eta", tone: "is-now", score: Math.round(c.left * (c.price || 0) / 10),
@@ -4017,7 +4060,7 @@ function actionCards(c){
     body: "追い込みの声かけが効く。残り口数を出して締める。",
   });
 
-  // 7. 時給が落ちている
+  // 6. 時給が落ちている
   if(p && p.gmv > 0 && p.recentGmv > 0 && p.recentGmv < p.gmv * 0.7 && idle <= idleLine) add({
     key: "gmv", tone: "is-warn", score: Math.round(p.gmv - p.recentGmv),
     title: "時給が落ちている",
@@ -4028,6 +4071,17 @@ function actionCards(c){
   return out.sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
+function renderTodo(c){
+  const box = $("todoBar");
+  if(!box) return;
+  const items = S ? todoItems(c) : [];
+  box.hidden = !items.length;
+  $("todoList").innerHTML = items.map(k =>
+    `<span class="todo"><b>${k.title}</b>`
+    + `<span class="n">${k.num}</span>`
+    + `<span class="b">${k.body}</span></span>`).join("");
+}
+
 function renderActCards(c){
   const box = $("actCards");
   if(!box) return;
@@ -4036,7 +4090,7 @@ function renderActCards(c){
   box.hidden = !cards.length;
   if(!cards.length){ $("actList").innerHTML = ""; return; }
 
-  $("actsSub").textContent = "いまの数字から。押す順に並べてある";
+  $("actsSub").textContent = "いまの数字から。効きそうな順";
   $("actList").innerHTML = cards.map(k => `<div class="act ${k.tone || ""}">`
     + `<span class="t">${k.title}</span>`
     + `<span class="n">${k.num}</span>`
@@ -5933,6 +5987,7 @@ function renderLive(c){
     ? "まだ排出なし"
     : `手数料 ${pct(c.feeRate, 1)}（${syen(-Math.round(c.feeNow))}）を引いたあと`;
 
+  renderTodo(c);        // 取りこぼしは軽い。押した瞬間に減るので遅らせない
   renderInbox(c);
   renderLotBar(c);
   renderPrizes(c);
