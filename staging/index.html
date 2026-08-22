@@ -1240,7 +1240,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='b91504e (08/22 19:27)';</script>
+<script>window.__BUILD='5a391e1 (08/22 19:39)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1272,6 +1272,8 @@ window.__SYNC_DEFAULTS = {
 
   <!-- ========== オリパ一覧 ========== -->
   <section id="view-list" class="stack">
+    <!-- 二重に立った落札の後始末。**見つかったときだけ出る** -->
+    <div id="dupNotice"></div>
     <div id="orderNotice"></div>
     <!-- 相場想定。CSV に相場の列が無いオリパの相場をここで決める -->
     <div class="mktbar">
@@ -4395,6 +4397,134 @@ function assignWholeRecord(r, ids){
   return r.stints[0];
 }
 /* ============================================================
+   二重に立った落札を探して直す
+
+   `takeOrder` が同じ注文から何度でも落札を立てられた（2026-08-21 に修正）。
+   `orderId` は二重取り込みを防ぐ鍵として書き込んでいたのに、立てる前に
+   照合していなかった。二度立つと、その口を開封した瞬間に**売上が二重に乗る**。
+
+   入口は塞いだが、**すでに立ってしまったぶんは残っている**ので、
+   過去のオリパと記録をまとめて洗う。
+
+   ⚠ **見分け方は当て推量ではない。**同じ `orderId` の落札が 2 件以上ある、
+   という一点だけで決める。金額や時刻の近さで「似ているから同じだろう」とは
+   判定しない（本当に 2 回買った客を消してしまう）。
+   ============================================================ */
+
+/**
+ * そのオリパの中で、同じ注文から二重に立った落札を拾う。
+ * 返すのは組の配列で、`keep` が残すもの（いちばん古い）、`extra` が余分。
+ */
+function dupLots(o){
+  const by = new Map();
+  for(const l of (o && o.lots) || []){
+    if(!l.orderId) continue;                       // 手入力は対象外
+    const k = String(l.orderId);
+    if(!by.has(k)) by.set(k, []);
+    by.get(k).push(l);
+  }
+  const out = [];
+  for(const [orderId, list] of by){
+    if(list.length < 2) continue;
+    // いちばん古いものを本物として残す。あとから立ったほうが取り込み事故
+    const sorted = list.slice().sort((a, b) => (a.at || 0) - (b.at || 0));
+    const keep = sorted[0], extra = sorted.slice(1);
+    /* ⚠ **落札額と「売上に乗っていた額」は違う。**
+       売上に入るのは**開封済みの口だけ**（compute() は排出の値段を足す）。
+       出ていない口は開封待ちで、売上には入っていない。
+       ここを混ぜると「売上が ¥13,000 多い」と言いながら実際は ¥8,000、
+       という誤った数字を出すことになる。分けて持つ。 */
+    let yenDrawn = 0, drawn = 0;
+    for(const l of extra){
+      const st = lotStats(o, l);
+      drawn += st.drawn;
+      for(let i = 0; i < st.drawn; i++) yenDrawn += lotSlotPrice(l, i);
+    }
+    const yen = extra.reduce((n, l) => n + lotTotal(l), 0);
+    out.push({
+      orderId, keep, extra,
+      yen,                       // 余分な落札の額（開封待ちを含む）
+      yenDrawn,                  // そのうち**売上に乗っていた**額
+      yenPending: yen - yenDrawn,
+      drawn,
+      slots: extra.reduce((n, l) => n + (Number(l.qty) || 1), 0),
+    });
+  }
+  return out;
+}
+
+/** 全部のオリパを洗う。記録しか残っていない回も、元のオリパを辿って見る */
+function scanDupes(){
+  const hits = [];
+  for(const o of DB.oripas || []){
+    const d = dupLots(o);
+    if(!d.length) continue;
+    hits.push({
+      oripa: o, groups: d,
+      yen: d.reduce((n, g) => n + g.yen, 0),
+      yenDrawn: d.reduce((n, g) => n + g.yenDrawn, 0),
+      yenPending: d.reduce((n, g) => n + g.yenPending, 0),
+      drawn: d.reduce((n, g) => n + g.drawn, 0),
+      // この回は締めてあるか（記録の作り直しが要る）
+      rec: (DB.records || []).find(r => String(r.oripaId) === String(o.id)) || null,
+    });
+  }
+  return hits;
+}
+
+/**
+ * 1 つのオリパを直す。
+ *
+ * ⚠ **出てしまったカードの扱いが肝心。**余分な落札からカードが出ている
+ * なら、そのカードは**現実に手元から出ている**。落札ごと消して排出も消すと、
+ * 在庫に「まだある」ことになって数が合わなくなる。
+ *
+ * だから：
+ *   ・余分な**落札**は消す（＝売上が二重に乗らなくなる）
+ *   ・出てしまった**排出は残す**。ただし値段を 0 にし、落札との紐づけを外す
+ *     ＝「代金をもらっていないのに出たカード」として正しく残る
+ *   ・出ていない口は、ただ消える
+ */
+function fixDupes(o){
+  const groups = dupLots(o);
+  if(!groups.length) return { lots: 0, yen: 0, yenDrawn: 0, freed: 0 };
+  let lots = 0, yen = 0, yenDrawn = 0, freed = 0;
+  for(const g of groups){
+    yenDrawn += g.yenDrawn;      // 実際に売上から減る額
+    for(const l of g.extra){
+      yen += lotTotal(l);
+      lots++;
+      for(const e of o.events){
+        if(e.lotId !== l.id) continue;
+        e.price = 0;          // 代金は二重だったので消す
+        e.lotId = null;       // 落札との紐づけを外す（落札は消えるため）
+        freed++;
+      }
+      o.lots = o.lots.filter(x => x.id !== l.id);
+    }
+  }
+  return { lots, yen, yenDrawn, freed };
+}
+
+/**
+ * 直したあと、締めてある回は**記録も作り直す**。
+ * 記録は締めた時点の写しなので、オリパを直しても勝手には動かない。
+ * id・締めた時刻・メモは引き継ぐ（別物になってしまわないように）。
+ */
+function rebuildRecord(o){
+  const i = (DB.records || []).findIndex(r => String(r.oripaId) === String(o.id));
+  if(i < 0) return null;
+  const old = DB.records[i];
+  const fresh = buildRecord(o, Number(old.endedAt) || Date.now(), old.memo || "");
+  fresh.id = old.id;
+  fresh.endedAt = old.endedAt;
+  // 版を進めないと他の端末に届かない
+  fresh.rev = Math.max(0, Math.round(Number(old.rev) || 0)) + 1;
+  fresh.updatedAt = Date.now();
+  DB.records[i] = fresh;
+  return { before: Math.round(Number(old.revenue) || 0), after: Math.round(fresh.revenue) };
+}
+/* ============================================================
    解体シミュレーション
 
    オリパは「目玉が出尽くす」か「残りが薄くなりすぎる」と解体になる。
@@ -6117,6 +6247,73 @@ function commonMarketMult(){
 
 /* 落札は画面を見ていないときにも届く。配信中の受信箱だけに出していると、
    一覧にいるあいだは届いたことに気づけない（実際それで「押しても何もない」になった）。 */
+/* ------------------------------------------------------------
+   二重に立った落札の知らせと修復
+
+   `takeOrder` が同じ注文から二度落札を立てられた不具合（2026-08-21 に修正）の
+   **後始末**。入口は塞いだが、すでに立ってしまったぶんは残っている。
+   ⚠ **見つからなければ何も出さない。**普段は存在しない画面。
+   ------------------------------------------------------------ */
+function renderDupNotice(){
+  const el = $("dupNotice");
+  if(!el) return;
+  const hits = scanDupes();
+  if(!hits.length){ el.innerHTML = ""; return; }
+
+  // ⚠ 売上に乗っているのは**開封済みの口だけ**。出ていない口は開封待ちで、
+  //    売上には入っていない。混ぜると誤った金額を出すことになる
+  const 売上ぶん = hits.reduce((n, h) => n + h.yenDrawn, 0);
+  const 待ちぶん = hits.reduce((n, h) => n + h.yenPending, 0);
+  const 件数 = hits.reduce((n, h) => n + h.groups.length, 0);
+  el.innerHTML = `<div class="notice is-bad"><span>`
+    + `<b>同じ注文から二重に立った落札が ${件数} 件ある。`
+    + `売上が ${yen(売上ぶん)} 多く出ている。</b>`
+    + (待ちぶん ? `（ほかに開封待ちが ${yen(待ちぶん)}。こちらはまだ売上に入っていない）` : "")
+    + `<br>`
+    + `<span class="hint">取り込みの不具合（2026-08-21 に修正済み）で立ってしまったぶん。`
+    + `同じ注文 ID の落札が 2 件以上あるものだけを数えている。`
+    + `金額や時刻が似ているだけの落札は触らない。</span><br>`
+    + hits.map(h => `・<b>${esc(h.oripa.name || "無題")}</b>：`
+        + `${h.groups.length} 件 ／ 売上 ${yen(h.yenDrawn)} 多い`
+        + (h.yenPending ? `（開封待ち ${yen(h.yenPending)}）` : "")
+        + (h.drawn ? ` ／ カードが ${h.drawn} 枚出てしまっている` : " ／ カードは出ていない")
+        + (h.rec ? "（記録済み。記録も作り直す）" : "")).join("<br>")
+    + `</span><span><button type="button" class="btn primary" id="btnFixDupes">`
+    + `二重ぶんを直す</button></span></div>`;
+  const b = $("btnFixDupes");
+  if(b) b.addEventListener("click", fixDupesFlow);
+}
+
+async function fixDupesFlow(){
+  const hits = scanDupes();
+  if(!hits.length) return;
+  const 合計 = hits.reduce((n, h) => n + h.yenDrawn, 0);
+  const drawn = hits.reduce((n, h) => n + h.drawn, 0);
+  /* ⚠ **何をするかを先に全部言う。**金額を触るので、押したあとに
+     「そんなつもりではなかった」が起きてはいけない。 */
+  if(!await ask(`二重に立った落札を消して、売上を ${yen(合計)} 減らす。\n\n`
+    + `・残すのは同じ注文でいちばん古い落札。あとから立ったほうを消す\n`
+    + (drawn ? `・出てしまったカード ${drawn} 枚は**残す**（現実に手元から出ているため）。\n`
+             + `  ただし代金は 0 にする＝「代金をもらっていないのに出たカード」として残る\n` : "")
+    + `・締めてある回は記録も作り直す\n\n`
+    + `元に戻せない。`, { okLabel: "直す", danger: true })) return;
+
+  const 明細 = [];
+  for(const h of hits){
+    const r = fixDupes(h.oripa);
+    h.oripa.updatedAt = Date.now();
+    h.oripa.rev = Math.max(0, Math.round(Number(h.oripa.rev) || 0)) + 1;
+    const rec = rebuildRecord(h.oripa);
+    明細.push(`${h.oripa.name || "無題"}：落札 ${r.lots} 件 ／ 売上 ${yen(r.yenDrawn)} 減`
+      + (r.freed ? ` ／ カード ${r.freed} 枚は代金 0 で残した` : "")
+      + (rec ? ` ／ 記録の売上 ${yen(rec.before)} → ${yen(rec.after)}` : ""));
+  }
+  save();
+  render();
+  await say(`直した。\n\n${明細.join("\n")}\n\n`
+    + `他の端末へは次の同期で届く。`);
+}
+
 function renderOrderNotice(){
   const el = $("orderNotice");
   const per = DB.oripas.map(o => ({ o, ...ordersFor(o) }));
@@ -6261,6 +6458,7 @@ function renderUnlinkedPanel(){
 
 function renderList(){
   renderMktBar();
+  renderDupNotice();      // 二重ぶんがあるときだけ出る
   renderOrderNotice();
   renderUnlinkedPanel();
   renderSyncBox();
