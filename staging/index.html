@@ -1264,7 +1264,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='0632e85 (08/22 20:42)';</script>
+<script>window.__BUILD='274d365 (08/22 21:06)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -4264,6 +4264,20 @@ function castSpans(o, from, to){
    月の合計と各回に出ている数字の合計が数円ずれる。必ず問い合わせが来る。
    ------------------------------------------------------------ */
 
+/**
+ * 損益をキャストの手取りに直す。
+ *
+ * 「キャスト未登録ぶん」は**損益のまま**出していたので、すぐ上に並ぶキャストの
+ * 行（手取り）と桁が 20 倍違って読めなかった（運用者の指示 2026-08-22：
+ * 「その期間の利益じゃなくてキャストの手取り額を表示するようにしろ」）。
+ *
+ * ⚠ **丸め方をキャストの行と同じにする。**`bonusFromSpans` と同じ `Math.trunc`。
+ * ここだけ四捨五入にすると、割り当て直した瞬間に数字が 1 円動いて見える。
+ * ⚠ 人数で割らない。2 名の区間でも**払う総額は損益の 5%**（1 人あたりが半分に
+ * なるだけ）なので、未登録ぶんも「その時間に払われたはずの総額」で出す。
+ */
+const castBonusOf = profit => Math.trunc((Number(profit) || 0) * CAST_RATE);
+
 /** 区間の並びから、キャストごとの取り分（切り捨て前）を出す */
 function bonusFromSpans(spans){
   const by = new Map();
@@ -6826,8 +6840,10 @@ function renderCastScreen(){
   const note = [];
   if(t.rows.length) note.push(`ボーナスの合計 ${yen(t.payable)}`);
   if(t.unassigned)
-    note.push(`⚠ キャスト未登録ぶん ${syen(t.unassigned)}`
-      + `（出演を立てていない時間の損益。記録を開いて「出演を直す」で割り当てられる）`);
+    // ⚠ 上の表の「ボーナス」列と同じ手取りで出す。損益は括弧に添える
+    note.push(`⚠ 未登録ぶんのボーナス ${syen(castBonusOf(t.unassigned))}`
+      + `（出演を立てていない時間のぶん。損益 ${syen(t.unassigned)} の 5%。`
+      + `記録を開いて「出演を直す」で割り当てられる）`);
   note.push(`ボーナスは現金損益の 5%。2 名で出た区間は 2.5% ずつ。`
     + `月の合計がマイナスなら 0 円で、翌月には持ち越さない。`);
   $("castNote").textContent = note.join("　");
@@ -7124,7 +7140,10 @@ function renderReplayCasts(){
 
   const note = [];
   if(pay.unassigned)
-    note.push(`⚠ ${syen(pay.unassigned)} が誰にも付いていない。上の行から出演者を入れれば実績になる。`);
+    // ⚠ 下に並ぶ「この回のボーナス」と同じ手取りで出す（損益は括弧に添える）
+    note.push(`⚠ 未登録ぶんのボーナス ${syen(castBonusOf(pay.unassigned))}`
+      + `（損益 ${syen(pay.unassigned)}）が誰にも付いていない。`
+      + `上の行から出演者を入れれば実績になる。`);
   if(pay.pay.length)
     note.push("この回のボーナス：" + pay.pay.map(p => `${castName(p.castId)} ${syen(p.yen)}`).join("　"));
   note.push("直せるのは出演者だけ。時刻と金額は動かない。");
@@ -7355,10 +7374,14 @@ function renderCastBar(c){
   if(!now.length && !pay.length){
     /* 誰も立てていない。**この時間の損益は誰にも付かない。**
        黙って 0 にすると押し忘れに一生気づけないので、その場で言う */
+    /* ⚠ 出すのは**手取り**（損益の 5%）。損益のままだと、キャストが立って
+       いるときの行と桁が 20 倍違って読めない（運用者の指示 2026-08-22）。
+       もとの損益は下の行に添えて、どこから来た数字かを消さない。 */
     $("castList").innerHTML = `<div class="castone is-none">`
-      + `<span class="t">キャスト未登録</span>`
-      + `<span class="n">${un ? syen(un) : "—"}</span>`
-      + `<span class="s">この時間の損益は誰にも付かない</span></div>`;
+      + `<span class="t">未登録ぶんのボーナス</span>`
+      + `<span class="n">${un ? syen(castBonusOf(un)) : "—"}</span>`
+      + `<span class="s">${un ? `損益 ${syen(un)} の 5%・誰にも付かない`
+                              : "この時間の損益は誰にも付かない"}</span></div>`;
   }else{
     const byId = new Map(pay.map(p => [String(p.castId), p]));
     // いま出ている人を先に。退席した人も、この回の実績があるなら残して出す
@@ -7375,10 +7398,10 @@ function renderCastBar(c){
                               : "まだ実績なし"}</span>`
         + `</div>`;
     }).join("")
-    // 押し忘れぶんがあるなら必ず添える。合計が合わない理由がここにある
-    + (un ? `<div class="castone is-none"><span class="t">キャスト未登録ぶん</span>`
-          + `<span class="n">${syen(un)}</span>`
-          + `<span class="s">誰にも付いていない</span></div>` : "");
+    // 押し忘れぶんがあるなら必ず添える。**上の行と同じ手取りの土俵で**出す
+    + (un ? `<div class="castone is-none"><span class="t">未登録ぶんのボーナス</span>`
+          + `<span class="n">${syen(castBonusOf(un))}</span>`
+          + `<span class="s">損益 ${syen(un)} の 5%・誰にも付いていない</span></div>` : "");
   }
 
   // ボタン。ブリッジと記録では出さない（見るだけ）
