@@ -1240,7 +1240,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='1349028 (08/22 19:03)';</script>
+<script>window.__BUILD='0868106 (08/22 19:10)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -6905,6 +6905,24 @@ function renderLive(c){
   if(odd) notes.push(`<div class="notice">⚠ 金額の内訳が噛み合わない落札が <b>${odd} 件</b>。`
     + `落札そのものは立ててあるので配信は続けてよい。`
     + `あとで TikTok の注文管理と突き合わせること。</div>`);
+  /* ⚠ **同じ注文から二度立った落札。**開封すると売上が二重に乗る。
+     取り込む側は塞いだが、**すでに立ってしまったぶんは人が消すしかない**
+     ので、どの落札かが分かるように出す（2026-08-21 の配信中に発生）。 */
+  const seen = new Map();
+  for(const l of S.lots || []){
+    if(!l.orderId) continue;
+    const k = String(l.orderId);
+    seen.set(k, (seen.get(k) || 0) + 1);
+  }
+  const dup = [...seen.entries()].filter(([, n]) => n > 1);
+  if(dup.length){
+    const 口 = dup.reduce((n, [k, c]) => n + (c - 1)
+      * ((S.lots.find(l => String(l.orderId) === k) || {}).qty || 1), 0);
+    notes.push(`<div class="notice">⚠ 同じ注文から <b>二重に立った落札</b> が `
+      + `${dup.length} 件（余分 ${口} 口）。<b>売上が多く出る。</b>`
+      + `落札の表で同じ落札者・同じ金額の行を見つけて、あとから立ったほうを`
+      + `「×」で取り消すこと。注文 ID: ${dup.map(([k]) => esc(k)).join("・")}</div>`);
+  }
   const short = (S.lots || []).filter(l => Number(l.shortBy) > 0);
   if(short.length) notes.push(`<div class="notice">⚠ 残りが足りず渡せなかった口が `
     + `<b>${short.reduce((n, l) => n + Number(l.shortBy), 0)} 口</b>`
@@ -7269,11 +7287,22 @@ function renderInbox(c){
   });
 }
 
+/** その注文から立った落札。**二重取り込みの照合はこれで行う** */
+const lotForOrder = (o, id) =>
+  ((o && o.lots) || []).find(l => l.orderId && String(l.orderId) === String(id)) || null;
+
 /** 届いた落札を、進行中の落札として立てる */
 function takeOrder(orderId){
   if(!S || S.closedAt || activeLot()) return;
   const x = (DB.orders || []).find(o => String(o.id) === String(orderId));
   if(!x) return;
+  /* ⚠ **同じ注文から二度立てない。**`orderId` は二重取り込みを防ぐ鍵として
+     書き込んでいたのに、**立てる前に照合していなかった**。受信箱は取り込み
+     済みを隠すので普段は起きないが、描き直す前の古いボタンを押す・自動取込と
+     手押しが重なる、といった経路で通る。二度立つと開封した瞬間に**売上が
+     二重に乗る**（2026-08-21 の配信中に「売上が実際より多い」として出た）。 */
+  const dup = lotForOrder(S, x.id);
+  if(dup) return dup;
   // 保険。入金が確認できたものしか届かない建て付けだが、万一混じっても売上にしない
   if(!x.paid || x.cancelled){ say("この落札は入金が確認できていない。"); return; }
   const c = compute();
