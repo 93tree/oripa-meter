@@ -639,7 +639,10 @@ table.edit input.auto{ color:var(--ink-3); border-style:dashed; }
   box-shadow:var(--shadow); padding:14px 16px; position:relative; overflow:hidden;
 }
 @media (min-width:820px){
-  .ocard{ grid-template-columns: minmax(0,1.1fr) minmax(0,2.7fr) auto; }
+  /* 名前 ／ 数字 ／ ボタン ／ 取り込み日。**取り込み日はいちばん右**
+     （運用者の指示 2026-08-22）。どの回がいつ入ったものかを、並び順と
+     突き合わせて読めるようにする。 */
+  .ocard{ grid-template-columns: minmax(0,1.1fr) minmax(0,2.7fr) auto auto; }
 }
 .ocard::before{
   content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--line-2);
@@ -673,6 +676,27 @@ table.edit input.auto{ color:var(--ink-3); border-style:dashed; }
 }
 .ostats b.pos{ color:var(--good); } .ostats b.neg{ color:var(--bad); }
 .ocard .acts{ display:flex; gap:6px; flex-wrap:wrap; }
+/* 取り込み日。並びの根拠そのものなので出すが、**主役ではない**ので細く出す */
+.ocard .oday{ text-align:right; white-space:nowrap; }
+.ocard .oday .label{ display:block; font-size:10px; letter-spacing:.1em; color:var(--ink-3); }
+.ocard .oday b{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:13px; font-weight:600; color:var(--ink-2); margin-top:1px;
+}
+.ocard .oday .of2{ display:block; font-size:10.5px; color:var(--ink-3); }
+/* 横に並ばない幅では、右端ではなく行として読ませる（右寄せのまま浮かせない） */
+@media (max-width:819px){
+  .ocard .oday{ text-align:left; display:flex; align-items:baseline; gap:6px; }
+  .ocard .oday .label{ display:inline; }
+  .ocard .oday b, .ocard .oday .of2{ display:inline; }
+}
+
+/* 古いオリパを畳む帯 */
+.listfold{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:2px 2px 0;
+}
+.listfold .hint{ font-size:12px; color:var(--ink-3); }
 .ocard.just-added{ animation: added 1.6s ease-out 1; }
 @keyframes added{
   0%   { box-shadow: var(--shadow), 0 0 0 2px var(--gold); }
@@ -1233,7 +1257,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='c68b12d (08/22 19:48)';</script>
+<script>window.__BUILD='2e692c8 (08/23 03:30)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -3711,6 +3735,10 @@ function compute(o){
 
   const drawnBy = new Map();
   let revenue = 0, costDrawn = 0, mktDrawn = 0;
+  /* アド＝**買い手が得をした口**。出たカードの相場が、その口で払った額を上回ること
+     （運用者から教わった 2026-08-22）。オークションなので**口ごとに払った額が違う**
+     ので、1 口ずつ判定する。判定は相場で見る（原価ではない。買い手は相場で値踏みする）。 */
+  let adoDone = 0, adoYen = 0;
   for(const e of o.events){
     const p = byId.get(e.prizeId);
     if(!p) continue;
@@ -3718,6 +3746,8 @@ function compute(o){
     revenue   += e.price || 0;
     costDrawn += costOf(p);
     mktDrawn  += mktOf(p);
+    const m = mktOf(p), paid = e.price || 0;
+    if(m > paid){ adoDone++; adoYen += m - paid; }   // 「上回る」なので同額はアドではない
   }
 
   const sold     = o.events.length;
@@ -3749,6 +3779,27 @@ function compute(o){
   const feeNow   = revenue * feeRate;
   const profitNow = revenue - feeNow - costDrawn;
   const marginNow = revenue > 0 ? profitNow / revenue : 0;
+
+  /* 残りのアド率。**この値段で買ったら得をする口が、残りに何口あるか。**
+     配信で言えるのはこちら（「アドまだ ◯% 残ってます」）。
+
+     ⚠ **還元率とは別物。**還元率（`returnAll`）は相場の合計 ÷ 売上の合計＝
+     **お金の比**で、アド率は**口数の比**。1 枚のバケモノが還元率を持ち上げても、
+     アド率は上がらない。実データでは 8/15 が還元率 85.2% でアド率 11.0%、
+     8/20 17:13 が還元率 61.1% でアド率 33.3% と、平気で逆を向く。
+     ⚠ **目玉が残っているか（`heat`）とも別物。**あちらは上の 1 枚の話、
+     こちらは分布の話。目玉が残っていてもアド率 3% なら当たるのは一人だけ。 */
+  const adoLeftAt = q => {
+    const px = Math.max(0, Number(q) || 0);
+    if(px <= 0) return 0;
+    let k = 0;
+    for(const p of o.prizes){
+      if(mktOf(p) <= px) continue;
+      k += Math.max(0, (p.count | 0) - (drawnBy.get(p.id) || 0));
+    }
+    return k;
+  };
+  const adoLeft = adoLeftAt(price);
 
   const baseEvMkt  = N > 0 ? mktTotal / N : 0;
   const heat       = (baseEvMkt > 0 && left > 0) ? evMkt / baseEvMkt : 1;
@@ -3788,6 +3839,10 @@ function compute(o){
     addNeeded,
     costTotal, mktTotal, costDrawn, mktDrawn, costLeft, mktLeft,
     revenue, feeRate, feeNow, profitNow, marginNow, evCost, evMkt, baseEvMkt, heat,
+    /* アド（買い手が得をした口）。`adoLeftAt` は値段を変えたときの残り口数を返す
+       ので、値下げの効き目をアド率で測れる。 */
+    adoDone, adoYen, adoDoneRate: sold > 0 ? adoDone / sold : 0,
+    adoLeft, adoLeftRate: left > 0 ? adoLeft / left : 0, adoLeftAt,
     returnLeft, returnAll, finalRev, finalProfit, finalMargin,
     pBE, pTarget, pBuyer, pFloor, rec, tm, state, verdict, drawnBy
   };
@@ -4229,6 +4284,20 @@ function castSpans(o, from, to){
    月の合計と各回に出ている数字の合計が数円ずれる。必ず問い合わせが来る。
    ------------------------------------------------------------ */
 
+/**
+ * 損益をキャストの手取りに直す。
+ *
+ * 「キャスト未登録ぶん」は**損益のまま**出していたので、すぐ上に並ぶキャストの
+ * 行（手取り）と桁が 20 倍違って読めなかった（運用者の指示 2026-08-22：
+ * 「その期間の利益じゃなくてキャストの手取り額を表示するようにしろ」）。
+ *
+ * ⚠ **丸め方をキャストの行と同じにする。**`bonusFromSpans` と同じ `Math.trunc`。
+ * ここだけ四捨五入にすると、割り当て直した瞬間に数字が 1 円動いて見える。
+ * ⚠ 人数で割らない。2 名の区間でも**払う総額は損益の 5%**（1 人あたりが半分に
+ * なるだけ）なので、未登録ぶんも「その時間に払われたはずの総額」で出す。
+ */
+const castBonusOf = profit => Math.trunc((Number(profit) || 0) * CAST_RATE);
+
 /** 区間の並びから、キャストごとの取り分（切り捨て前）を出す */
 function bonusFromSpans(spans){
   const by = new Map();
@@ -4604,7 +4673,12 @@ function simulateBreakup(o, topMult, minReturn){
       if(left === 0) break;
       const evMkt = (mktTotal - mktDrawn) / left;
       const topGone = topCount > 0 && topDrawn === topCount;
-      const thin = minReturn > 0 && evMkt / price < minReturn;
+      /* ⚠ **目玉が残っているうちは「薄い」で終わらない**（運用者の指摘
+         2026-08-22）。目玉は卓を回している理由なので、出ないまま解体する
+         ことは無い。ここを外していたので、目玉を抱えたまま終わる——
+         **いちばん高いカードの原価を一度も払わない**——試行が混ざり、
+         利益が実態より良く出ていた。`simFromHere` と同じ直し。 */
+      const thin = minReturn > 0 && topDrawn >= topCount && evMkt / price < minReturn;
       if(topGone || thin){ k = i + 1; stopped = true; break; }
     }
 
@@ -4971,8 +5045,18 @@ function simFromHere(c, p, topMult, minReturn, trials){
   const mktLeft  = rest.reduce((n, s) => n + s.m, 0);
   const costLeft = rest.reduce((n, s) => n + s.c, 0);
 
-  // すでに解体条件を満たしているなら、ここが終わり（追加0口）
-  const thinNow = minReturn > 0 && (mktLeft / R) / price < minReturn;
+  /* すでに解体条件を満たしているなら、ここが終わり（追加0口）。
+
+     ⚠ **目玉が残っているうちは「薄い」で終わらない**（運用者の指摘 2026-08-22：
+     「目玉が出ないまま終わることを想定して計算されることがある。それはあり得ない
+     終わり方」）。目玉は卓を回している理由そのものなので、出ないまま解体する
+     ことは無い。終わるのは**目玉が出尽くしたとき**か**完売**のどちらか。
+
+     直す前は 8/17 の回で **49.1%** の試行が目玉を残したまま終わっていた。
+     そういう回は**いちばん高いカードの原価を一度も払わない**ので、
+     平均原価 ¥191,281（目玉が出た回は ¥297,979）——**¥106,698 も安く**出て、
+     「続ける」側の利益がその分だけ良く見えていた。 */
+  const thinNow = minReturn > 0 && topLeft === 0 && (mktLeft / R) / price < minReturn;
   const overNow = topTotal > 0 && topLeft === 0;
 
   // 種に価格を混ぜない。価格を変えても**同じ引き順の束**で比べられるので、
@@ -5005,7 +5089,11 @@ function simFromHere(c, p, topMult, minReturn, trials){
         const leftAfter = R - k;
         if(leftAfter === 0) break;
         const ev = (mktLeft - mktMore) / leftAfter;
-        if((topTotal > 0 && topOut === topTotal) || (minReturn > 0 && ev / price < minReturn)) break;
+        // 目玉が出尽くした＝ここで解体
+        if(topTotal > 0 && topOut === topTotal) break;
+        /* 残りが薄いのを理由に終われるのは、**待つ目玉がもう無いとき**だけ。
+           目玉が卓に残っているのに解体する終わり方は起こらない（上の注記）。 */
+        if(minReturn > 0 && topOut >= topTotal && ev / price < minReturn) break;
       }
     }
     const rev  = c.revenue + revMore;
@@ -6469,6 +6557,38 @@ function renderUnlinkedPanel(){
   }).join("");
 }
 
+/* ------------------------------------------------------------
+   一覧の折りたたみ
+
+   オリパは配信のたびに 1 件増えて減らない。10 件を超えたあたりから
+   一覧が縦に伸びて、いま出す回を探すのに転がすことになる（運用者の指示
+   2026-08-22）。**新しい順に上から並べて、古いぶんを畳む。**
+   ------------------------------------------------------------ */
+const LIST_FOLD = 10;
+/** 開いているかどうか。**端末ごとの見た目**なので同期には乗せない */
+let listOpen = (() => {
+  try{ return localStorage.getItem("oripa-list-open") === "1"; }catch(_){ return false; }
+})();
+function setListOpen(v){
+  listOpen = !!v;
+  try{ localStorage.setItem("oripa-list-open", listOpen ? "1" : "0"); }catch(_){}
+}
+
+/**
+ * 畳んではいけないオリパ。**畳んだせいで見落とすものを作らない。**
+ *
+ * 並びは取り込んだ順なので、ふつう出す回はいちばん上に来る。ただし
+ * 同じオリパを何晩かに分けて出すことがあり（`paceOf` の注記）、そのときは
+ * 古い回が配信中のまま下に沈む。席を持っている回と、入金済みの落札が
+ * 届いている回は、何番目にあっても出す。
+ */
+function mustShowInList(o){
+  return !!liveHolder(o) || pendingOrders(o).length > 0;
+}
+
+/** 取り込んだ日。CSV を読み込んでオリパが立った時刻 */
+const importedAt = o => Number(o && o.createdAt) || 0;
+
 function renderList(){
   renderMktBar();
   renderDupNotice();      // 二重ぶんがあるときだけ出る
@@ -6478,7 +6598,11 @@ function renderList(){
   const wrap = $("oripaList");
   wrap.innerHTML = "";
 
-  const items = DB.oripas.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  /* **取り込んだ日の新しい順。**更新順にしていたが、こちらが過去の回を
+     直すだけで並びが変わってしまう（8/22 に 3 件直したら、その 3 件が
+     一覧の先頭に出てきた）。取り込んだ日は動かない。 */
+  const items = DB.oripas.slice().sort((a, b) =>
+    (importedAt(b) - importedAt(a)) || (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
   const flashed = flashId; flashId = null;
   const stock = items.reduce((n, o) => n + o.prizes.reduce((m, p) => m + costOf(p) * p.count, 0), 0);
   // 版を必ず出す。どの版が動いているか画面で分からないと、
@@ -6492,7 +6616,16 @@ function renderList(){
     return;
   }
 
-  for(const o of items){
+  /* 畳む。**畳んだぶんは作らない**（10 件を超えたぶんの compute を
+     毎回まわす意味が無い）。ただし配信中・入金済みが届いている回は必ず出す。 */
+  const folded = !listOpen && items.length > LIST_FOLD;
+  const shown = folded
+    ? items.filter((o, i) => i < LIST_FOLD || mustShowInList(o))
+    : items;
+  const 引き上げ = folded ? shown.length - LIST_FOLD : 0;
+  const 畳んだ数 = items.length - shown.length;
+
+  for(const o of shown){
     const c = compute(o);
     const started = c.sold > 0;
     const done    = c.N > 0 && c.left === 0;
@@ -6534,7 +6667,10 @@ function renderList(){
       <div class="ostats">
         <div><span class="label">販売単価</span><b>${yen(c.price)}</b></div>
         <div><span class="label">残り口数</span><b>${c.left}<span class="of">/${c.N}</span></b></div>
-        <div><span class="label">還元率</span><b>${c.price > 0 ? pct(c.returnAll, 0) : "—"}</b></div>
+        <div><span class="label">還元率</span><b>${c.price > 0 ? pct(c.returnAll, 0) : "—"}</b>`
+      + `<span class="of2">${c.price > 0 && c.left > 0
+            ? `アド ${pct(c.adoLeftRate, 0)}` : ""}</span></div>`
+      + `
         <div>
           <span class="label">${started ? "現在利益率" : "設計利益率"}</span>
           <b class="${c.price > 0 ? (margin >= 0 ? "pos" : "neg") : ""}">${c.price > 0 ? spct(margin, 0) : "—"}</b>
@@ -6547,7 +6683,12 @@ function renderList(){
         <button type="button" class="btn ghost" data-act="edit">編集</button>
         <button type="button" class="btn ghost" data-act="copy">複製</button>
         <button type="button" class="btn ghost danger" data-act="del">削除</button>
-      </div>`;
+      </div>
+      <div class="oday"><span class="label">取り込み</span>`
+      + (importedAt(o)
+          ? `<b>${fmtDate(importedAt(o))}</b><span class="of2">${fmtClock(importedAt(o))}</span>`
+          : `<b>—</b>`)
+      + `</div>`;
 
     el.querySelector(".oname").addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="edit"]').addEventListener("click", () => openOripa(o.id, "edit"));
@@ -6562,6 +6703,20 @@ function renderList(){
     });
     if(o.id === flashed) el.classList.add("just-added");
     wrap.appendChild(el);
+  }
+
+  if(items.length > LIST_FOLD){
+    const bar = document.createElement("div");
+    bar.className = "listfold";
+    bar.innerHTML = `<button type="button" class="btn ghost" id="btnListFold">`
+      + (folded ? `古いオリパをあと ${畳んだ数} 件出す` : `古いオリパを畳む`)
+      + `</button>`
+      + (引き上げ
+          ? `<span class="hint">配信中・入金済みの落札が届いている ${引き上げ} 件は`
+            + `畳まずに出している。</span>`
+          : `<span class="hint">新しく取り込んだ順に ${LIST_FOLD} 件だけ出している。</span>`);
+    wrap.appendChild(bar);
+    $("btnListFold").addEventListener("click", () => { setListOpen(!listOpen); renderList(); });
   }
 }
 
@@ -6727,8 +6882,10 @@ function renderCastScreen(){
   const note = [];
   if(t.rows.length) note.push(`ボーナスの合計 ${yen(t.payable)}`);
   if(t.unassigned)
-    note.push(`⚠ キャスト未登録ぶん ${syen(t.unassigned)}`
-      + `（出演を立てていない時間の損益。記録を開いて「出演を直す」で割り当てられる）`);
+    // ⚠ 上の表の「ボーナス」列と同じ手取りで出す。損益は括弧に添える
+    note.push(`⚠ 未登録ぶんのボーナス ${syen(castBonusOf(t.unassigned))}`
+      + `（出演を立てていない時間のぶん。損益 ${syen(t.unassigned)} の 5%。`
+      + `記録を開いて「出演を直す」で割り当てられる）`);
   note.push(`ボーナスは現金損益の 5%。2 名で出た区間は 2.5% ずつ。`
     + `月の合計がマイナスなら 0 円で、翌月には持ち越さない。`);
   $("castNote").textContent = note.join("　");
@@ -7025,7 +7182,10 @@ function renderReplayCasts(){
 
   const note = [];
   if(pay.unassigned)
-    note.push(`⚠ ${syen(pay.unassigned)} が誰にも付いていない。上の行から出演者を入れれば実績になる。`);
+    // ⚠ 下に並ぶ「この回のボーナス」と同じ手取りで出す（損益は括弧に添える）
+    note.push(`⚠ 未登録ぶんのボーナス ${syen(castBonusOf(pay.unassigned))}`
+      + `（損益 ${syen(pay.unassigned)}）が誰にも付いていない。`
+      + `上の行から出演者を入れれば実績になる。`);
   if(pay.pay.length)
     note.push("この回のボーナス：" + pay.pay.map(p => `${castName(p.castId)} ${syen(p.yen)}`).join("　"));
   note.push("直せるのは出演者だけ。時刻と金額は動かない。");
@@ -7171,10 +7331,14 @@ function renderLive(c){
   // 残り口数はいちばん見たい数字なので、ここを主役にする（販売済は下に回す）
   $("kpiLeft").className = "kpi " + (c.left === 0 ? "is-good" : c.left <= 10 ? "is-warn" : "");
   $("mSold").textContent = c.left > 0 ? String(c.left) : "完売";
+  /* 還元率の隣にアド率を置く。**この 2 つは平気で逆を向く**ので、並べないと
+     読み違える（運用者から教わった 2026-08-22）。還元率は「いくら配ったか」、
+     アド率は「何人が得をするか」。客が回し続けるかを決めるのは後者。 */
   $("mSoldSub").textContent = c.left > 0
     ? `販売済 ${c.sold}/${c.N}`
       + (c.pendingSlots > 0 ? `・開封待ち ${c.pendingSlots} 口` : "")
       + `・残り還元率 ${c.price > 0 ? pct(c.returnLeft, 0) : "—"}`
+      + `・アド ${c.price > 0 ? `${pct(c.adoLeftRate, 0)}（${c.adoLeft} 口）` : "—"}`
     : `${c.N} 口すべて排出済み`;
 
   // 予想の着地ではなく、いま手元にある損益（売上 − 出た賞品の原価）
@@ -7256,10 +7420,14 @@ function renderCastBar(c){
   if(!now.length && !pay.length){
     /* 誰も立てていない。**この時間の損益は誰にも付かない。**
        黙って 0 にすると押し忘れに一生気づけないので、その場で言う */
+    /* ⚠ 出すのは**手取り**（損益の 5%）。損益のままだと、キャストが立って
+       いるときの行と桁が 20 倍違って読めない（運用者の指示 2026-08-22）。
+       もとの損益は下の行に添えて、どこから来た数字かを消さない。 */
     $("castList").innerHTML = `<div class="castone is-none">`
-      + `<span class="t">キャスト未登録</span>`
-      + `<span class="n">${un ? syen(un) : "—"}</span>`
-      + `<span class="s">この時間の損益は誰にも付かない</span></div>`;
+      + `<span class="t">未登録ぶんのボーナス</span>`
+      + `<span class="n">${un ? syen(castBonusOf(un)) : "—"}</span>`
+      + `<span class="s">${un ? `損益 ${syen(un)} の 5%・誰にも付かない`
+                              : "この時間の損益は誰にも付かない"}</span></div>`;
   }else{
     const byId = new Map(pay.map(p => [String(p.castId), p]));
     // いま出ている人を先に。退席した人も、この回の実績があるなら残して出す
@@ -7276,10 +7444,10 @@ function renderCastBar(c){
                               : "まだ実績なし"}</span>`
         + `</div>`;
     }).join("")
-    // 押し忘れぶんがあるなら必ず添える。合計が合わない理由がここにある
-    + (un ? `<div class="castone is-none"><span class="t">キャスト未登録ぶん</span>`
-          + `<span class="n">${syen(un)}</span>`
-          + `<span class="s">誰にも付いていない</span></div>` : "");
+    // 押し忘れぶんがあるなら必ず添える。**上の行と同じ手取りの土俵で**出す
+    + (un ? `<div class="castone is-none"><span class="t">未登録ぶんのボーナス</span>`
+          + `<span class="n">${syen(castBonusOf(un))}</span>`
+          + `<span class="s">損益 ${syen(un)} の 5%・誰にも付いていない</span></div>` : "");
   }
 
   // ボタン。ブリッジと記録では出さない（見るだけ）
@@ -8386,6 +8554,26 @@ function renderPulse(c, dec){
   cell("残り還元率", c.price > 0 ? pct(c.returnLeft, 0) : "—",
     `残り1口の期待 ${yen(Math.round(c.evMkt))}`,
     c.returnLeft >= 1 ? "is-good" : c.returnLeft >= 0.7 ? "is-key" : "is-bad");
+
+  /* アド率。**還元率と並べて置く。**還元率は「いくら配ったか」（お金の比）で、
+     アド率は「何人が得をするか」（口数の比）。1 枚のバケモノが還元率を
+     持ち上げても、アド率は上がらない（運用者から教わった 2026-08-22）。
+
+     下に**値下げしたときのアド率**を添える。価格を下げれば `相場 > 価格` を
+     満たす賞品が増えるので、**値下げの効き目をアド率で測れる**。
+     ⚠ ほとんど動かない卓が多い（中身が「高い数枚 ＋ ほぼ無価値な大量」で、
+     中間の価格帯にカードが居ないため）。動く卓とそうでない卓の見分けがここに出る。 */
+  if(c.price > 0 && c.left > 0){
+    const at = q => c.left > 0 ? c.adoLeftAt(q) / c.left : 0;
+    const cut = dec && dec.plan && dec.plan.p > 0 && dec.plan.p < c.price ? dec.plan.p : 0;
+    const sub = cut
+      ? (Math.abs(at(cut) - c.adoLeftRate) < 0.005
+          ? `${yen(cut)} に下げても ${pct(at(cut), 0)}（動かない卓）`
+          : `${yen(cut)} に下げれば ${pct(at(cut), 0)} まで上がる`)
+      : `残り ${c.left} 口のうち ${c.adoLeft} 口が、この値段なら得`;
+    cell("アド率", pct(c.adoLeftRate, 0), sub,
+      c.adoLeftRate >= 0.2 ? "is-good" : c.adoLeftRate >= 0.1 ? "is-key" : "is-bad");
+  }
 
   // 続けるならこの先どれだけ回るか。時間の見当がつく
   if(dec && dec.best && dec.best.r && dec.verdict !== "stop"){
