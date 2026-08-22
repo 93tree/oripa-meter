@@ -639,7 +639,10 @@ table.edit input.auto{ color:var(--ink-3); border-style:dashed; }
   box-shadow:var(--shadow); padding:14px 16px; position:relative; overflow:hidden;
 }
 @media (min-width:820px){
-  .ocard{ grid-template-columns: minmax(0,1.1fr) minmax(0,2.7fr) auto; }
+  /* 名前 ／ 数字 ／ ボタン ／ 取り込み日。**取り込み日はいちばん右**
+     （運用者の指示 2026-08-22）。どの回がいつ入ったものかを、並び順と
+     突き合わせて読めるようにする。 */
+  .ocard{ grid-template-columns: minmax(0,1.1fr) minmax(0,2.7fr) auto auto; }
 }
 .ocard::before{
   content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--line-2);
@@ -673,6 +676,27 @@ table.edit input.auto{ color:var(--ink-3); border-style:dashed; }
 }
 .ostats b.pos{ color:var(--good); } .ostats b.neg{ color:var(--bad); }
 .ocard .acts{ display:flex; gap:6px; flex-wrap:wrap; }
+/* 取り込み日。並びの根拠そのものなので出すが、**主役ではない**ので細く出す */
+.ocard .oday{ text-align:right; white-space:nowrap; }
+.ocard .oday .label{ display:block; font-size:10px; letter-spacing:.1em; color:var(--ink-3); }
+.ocard .oday b{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:13px; font-weight:600; color:var(--ink-2); margin-top:1px;
+}
+.ocard .oday .of2{ display:block; font-size:10.5px; color:var(--ink-3); }
+/* 横に並ばない幅では、右端ではなく行として読ませる（右寄せのまま浮かせない） */
+@media (max-width:819px){
+  .ocard .oday{ text-align:left; display:flex; align-items:baseline; gap:6px; }
+  .ocard .oday .label{ display:inline; }
+  .ocard .oday b, .ocard .oday .of2{ display:inline; }
+}
+
+/* 古いオリパを畳む帯 */
+.listfold{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:2px 2px 0;
+}
+.listfold .hint{ font-size:12px; color:var(--ink-3); }
 .ocard.just-added{ animation: added 1.6s ease-out 1; }
 @keyframes added{
   0%   { box-shadow: var(--shadow), 0 0 0 2px var(--gold); }
@@ -1240,7 +1264,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='c6e310e (08/22 20:15)';</script>
+<script>window.__BUILD='0632e85 (08/22 20:30)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -6480,6 +6504,38 @@ function renderUnlinkedPanel(){
   }).join("");
 }
 
+/* ------------------------------------------------------------
+   一覧の折りたたみ
+
+   オリパは配信のたびに 1 件増えて減らない。10 件を超えたあたりから
+   一覧が縦に伸びて、いま出す回を探すのに転がすことになる（運用者の指示
+   2026-08-22）。**新しい順に上から並べて、古いぶんを畳む。**
+   ------------------------------------------------------------ */
+const LIST_FOLD = 10;
+/** 開いているかどうか。**端末ごとの見た目**なので同期には乗せない */
+let listOpen = (() => {
+  try{ return localStorage.getItem("oripa-list-open") === "1"; }catch(_){ return false; }
+})();
+function setListOpen(v){
+  listOpen = !!v;
+  try{ localStorage.setItem("oripa-list-open", listOpen ? "1" : "0"); }catch(_){}
+}
+
+/**
+ * 畳んではいけないオリパ。**畳んだせいで見落とすものを作らない。**
+ *
+ * 並びは取り込んだ順なので、ふつう出す回はいちばん上に来る。ただし
+ * 同じオリパを何晩かに分けて出すことがあり（`paceOf` の注記）、そのときは
+ * 古い回が配信中のまま下に沈む。席を持っている回と、入金済みの落札が
+ * 届いている回は、何番目にあっても出す。
+ */
+function mustShowInList(o){
+  return !!liveHolder(o) || pendingOrders(o).length > 0;
+}
+
+/** 取り込んだ日。CSV を読み込んでオリパが立った時刻 */
+const importedAt = o => Number(o && o.createdAt) || 0;
+
 function renderList(){
   renderMktBar();
   renderDupNotice();      // 二重ぶんがあるときだけ出る
@@ -6489,7 +6545,11 @@ function renderList(){
   const wrap = $("oripaList");
   wrap.innerHTML = "";
 
-  const items = DB.oripas.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  /* **取り込んだ日の新しい順。**更新順にしていたが、こちらが過去の回を
+     直すだけで並びが変わってしまう（8/22 に 3 件直したら、その 3 件が
+     一覧の先頭に出てきた）。取り込んだ日は動かない。 */
+  const items = DB.oripas.slice().sort((a, b) =>
+    (importedAt(b) - importedAt(a)) || (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
   const flashed = flashId; flashId = null;
   const stock = items.reduce((n, o) => n + o.prizes.reduce((m, p) => m + costOf(p) * p.count, 0), 0);
   // 版を必ず出す。どの版が動いているか画面で分からないと、
@@ -6503,7 +6563,16 @@ function renderList(){
     return;
   }
 
-  for(const o of items){
+  /* 畳む。**畳んだぶんは作らない**（10 件を超えたぶんの compute を
+     毎回まわす意味が無い）。ただし配信中・入金済みが届いている回は必ず出す。 */
+  const folded = !listOpen && items.length > LIST_FOLD;
+  const shown = folded
+    ? items.filter((o, i) => i < LIST_FOLD || mustShowInList(o))
+    : items;
+  const 引き上げ = folded ? shown.length - LIST_FOLD : 0;
+  const 畳んだ数 = items.length - shown.length;
+
+  for(const o of shown){
     const c = compute(o);
     const started = c.sold > 0;
     const done    = c.N > 0 && c.left === 0;
@@ -6558,7 +6627,12 @@ function renderList(){
         <button type="button" class="btn ghost" data-act="edit">編集</button>
         <button type="button" class="btn ghost" data-act="copy">複製</button>
         <button type="button" class="btn ghost danger" data-act="del">削除</button>
-      </div>`;
+      </div>
+      <div class="oday"><span class="label">取り込み</span>`
+      + (importedAt(o)
+          ? `<b>${fmtDate(importedAt(o))}</b><span class="of2">${fmtClock(importedAt(o))}</span>`
+          : `<b>—</b>`)
+      + `</div>`;
 
     el.querySelector(".oname").addEventListener("click", () => openOripa(o.id, "edit"));
     el.querySelector('[data-act="edit"]').addEventListener("click", () => openOripa(o.id, "edit"));
@@ -6573,6 +6647,20 @@ function renderList(){
     });
     if(o.id === flashed) el.classList.add("just-added");
     wrap.appendChild(el);
+  }
+
+  if(items.length > LIST_FOLD){
+    const bar = document.createElement("div");
+    bar.className = "listfold";
+    bar.innerHTML = `<button type="button" class="btn ghost" id="btnListFold">`
+      + (folded ? `古いオリパをあと ${畳んだ数} 件出す` : `古いオリパを畳む`)
+      + `</button>`
+      + (引き上げ
+          ? `<span class="hint">配信中・入金済みの落札が届いている ${引き上げ} 件は`
+            + `畳まずに出している。</span>`
+          : `<span class="hint">新しく取り込んだ順に ${LIST_FOLD} 件だけ出している。</span>`);
+    wrap.appendChild(bar);
+    $("btnListFold").addEventListener("click", () => { setListOpen(!listOpen); renderList(); });
   }
 }
 
