@@ -1233,7 +1233,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='5a391e1 (08/22 19:38)';</script>
+<script>window.__BUILD='c68b12d (08/22 19:48)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -2378,6 +2378,10 @@ function normalizeOripa(o){
            残りを引き算で作っていたので、実際には無い額が静かに記録された。 */
         // 残りが足りず、渡せなかった口数。0 = 全部渡せた
         shortBy: Math.max(0, Math.round(Number(l.shortBy) || 0)),
+        /* 二重に立ってしまった落札の印。どの落札の二重かを持つ。
+           金額は 0 にしてあり、平均落札などからも外れる（auctionSummary）。
+           **消さずに残す**ので、あとから何があったか読める */
+        dupOf: l.dupOf ? String(l.dupOf) : "",
         bidYen:   l.bidYen   == null ? null : Math.max(0, Math.round(Number(l.bidYen)   || 0)),
         buyerYen: l.buyerYen == null ? null : Math.max(0, Math.round(Number(l.buyerYen) || 0)),
         platYen:  l.platYen  == null ? null : Math.max(0, Math.round(Number(l.platYen)  || 0)),
@@ -3966,17 +3970,23 @@ function addLot(price, qty, buyer, kind, rem){
 /** 落札の集計（配信全体） */
 function auctionSummary(o){
   const done = lotDrawn(o);
-  const auctions = o.lots.filter(l => l.kind === "auction");
-  const drawnQty = o.lots.reduce((n, l) => n + (done.get(l.id) || 0), 0);
-  const revenue  = o.events.reduce((n, e) => n + (e.lotId ? (Number(e.price) || 0) : 0), 0);
-  const prices = o.lots.filter(l => (done.get(l.id) || 0) > 0).map(l => l.price);
+  /* ⚠ **二重に立った落札（金額 0）は数えない。**残してあるのは履歴のためで、
+     平均落札や最高・最低に混ぜると数字が濁る（最低が ¥0 になる）。
+     値下げの天井（recentMid）は元から 0 円を外している。 */
+  const real = o.lots.filter(l => !l.dupOf);
+  const dupIds = new Set(o.lots.filter(l => l.dupOf).map(l => l.id));
+  const auctions = real.filter(l => l.kind === "auction");
+  const drawnQty = real.reduce((n, l) => n + (done.get(l.id) || 0), 0);
+  const revenue  = o.events.reduce((n, e) =>
+    n + (e.lotId && !dupIds.has(e.lotId) ? (Number(e.price) || 0) : 0), 0);
+  const prices = real.filter(l => (done.get(l.id) || 0) > 0).map(l => l.price);
   return {
-    lots: o.lots.length,
+    lots: real.length,
     auctions: auctions.length,
     avg: drawnQty ? revenue / drawnQty : 0,
     max: prices.length ? Math.max(...prices) : 0,
     min: prices.length ? Math.min(...prices) : 0,
-    last: o.lots.length ? o.lots[o.lots.length - 1].price : 0
+    last: real.length ? real[real.length - 1].price : 0
   };
 }
 
@@ -4408,6 +4418,10 @@ function dupLots(o){
   const by = new Map();
   for(const l of (o && o.lots) || []){
     if(!l.orderId) continue;                       // 手入力は対象外
+    /* ⚠ **直し済みの印が付いたものは、もう二重として数えない。**
+       落札は消さずに残す方式なので、ここを見ないと直したあとも
+       同じものを拾い続け、知らせが消えない（2026-08-21）。 */
+    if(l.dupOf) continue;
     const k = String(l.orderId);
     if(!by.has(k)) by.set(k, []);
     by.get(k).push(l);
@@ -4462,17 +4476,21 @@ function scanDupes(){
 }
 
 /**
- * 1 つのオリパを直す。
+ * 1 つのオリパを直す。**消さずに直す**（運用者の指示 2026-08-21）。
  *
- * ⚠ **出てしまったカードの扱いが肝心。**余分な落札からカードが出ている
- * なら、そのカードは**現実に手元から出ている**。落札ごと消して排出も消すと、
- * 在庫に「まだある」ことになって数が合わなくなる。
+ * 余分な落札を消してしまうと、何が起きたのかが history から消える。
+ * 落札はそのまま残し、**金額を 0 にして「二重」の印を付ける**。
+ *   ・売上には乗らなくなる（＝直る）
+ *   ・落札者も時刻も注文 ID も残るので、あとから何があったか読める
+ *   ・出てしまったカードもそのまま。落札との紐づけも切らない
  *
- * だから：
- *   ・余分な**落札**は消す（＝売上が二重に乗らなくなる）
- *   ・出てしまった**排出は残す**。ただし値段を 0 にし、落札との紐づけを外す
- *     ＝「代金をもらっていないのに出たカード」として正しく残る
- *   ・出ていない口は、ただ消える
+ * ⚠ **出てしまったカードは現実に手元から出ている。**排出を消すと在庫に
+ * 「まだある」ことになって数が合わなくなるので、排出は残して値段だけ 0 にする
+ * ＝「代金をもらっていないのに出たカード」として正しく残る。
+ *
+ * ⚠ 金額 0 の落札が**平均落札・最高・最低**に混ざると数字が濁るので、
+ * `dupOf` の付いた落札は `auctionSummary()` が数えない。
+ * 値下げの天井（`recentMid`）は元から 0 円を外している。
  */
 function fixDupes(o){
   const groups = dupLots(o);
@@ -4483,13 +4501,15 @@ function fixDupes(o){
     for(const l of g.extra){
       yen += lotTotal(l);
       lots++;
+      // 金額を 0 にする。落札そのものは残す
+      l.price = 0;
+      l.rem = 0;
+      l.dupOf = String(g.keep.id);      // どの落札の二重なのか
       for(const e of o.events){
         if(e.lotId !== l.id) continue;
-        e.price = 0;          // 代金は二重だったので消す
-        e.lotId = null;       // 落札との紐づけを外す（落札は消えるため）
-        freed++;
+        e.price = 0;               // 代金は二重だったので 0
+        freed++;                   // 排出も紐づけもそのまま残す
       }
-      o.lots = o.lots.filter(x => x.id !== l.id);
     }
   }
   return { lots, yen, yenDrawn, freed };
@@ -6280,10 +6300,14 @@ async function fixDupesFlow(){
   const drawn = hits.reduce((n, h) => n + h.drawn, 0);
   /* ⚠ **何をするかを先に全部言う。**金額を触るので、押したあとに
      「そんなつもりではなかった」が起きてはいけない。 */
-  if(!await ask(`二重に立った落札を消して、売上を ${yen(合計)} 減らす。\n\n`
-    + `・残すのは同じ注文でいちばん古い落札。あとから立ったほうを消す\n`
-    + (drawn ? `・出てしまったカード ${drawn} 枚は**残す**（現実に手元から出ているため）。\n`
-             + `  ただし代金は 0 にする＝「代金をもらっていないのに出たカード」として残る\n` : "")
+  /* ⚠ **落札は消さない。**金額を 0 にして印を付けるだけ（運用者の指示）。
+     消すと何が起きたのかが履歴から消える。 */
+  if(!await ask(`二重に立った落札を直して、売上を ${yen(合計)} 減らす。\n\n`
+    + `・落札は消さない。あとから立ったほうの金額を 0 にして「二重」の印を付ける\n`
+    + `・落札者・時刻・注文 ID は残るので、あとから何があったか読める\n`
+    + (drawn ? `・出てしまったカード ${drawn} 枚もそのまま残す（現実に手元から出ているため）。\n`
+             + `  代金だけ 0 にする＝「代金をもらっていないのに出たカード」として残る\n` : "")
+    + `・金額 0 の落札は平均落札・最高・最低から外れる\n`
     + `・締めてある回は記録も作り直す\n\n`
     + `元に戻せない。`, { okLabel: "直す", danger: true })) return;
 
@@ -6293,7 +6317,7 @@ async function fixDupesFlow(){
     h.oripa.updatedAt = Date.now();
     h.oripa.rev = Math.max(0, Math.round(Number(h.oripa.rev) || 0)) + 1;
     const rec = rebuildRecord(h.oripa);
-    明細.push(`${h.oripa.name || "無題"}：落札 ${r.lots} 件 ／ 売上 ${yen(r.yenDrawn)} 減`
+    明細.push(`${h.oripa.name || "無題"}：落札 ${r.lots} 件を 0 円に ／ 売上 ${yen(r.yenDrawn)} 減`
       + (r.freed ? ` ／ カード ${r.freed} 枚は代金 0 で残した` : "")
       + (rec ? ` ／ 記録の売上 ${yen(rec.before)} → ${yen(rec.after)}` : ""));
   }
@@ -7978,6 +8002,9 @@ function renderLotTable(){
       : (st.drawn === 0 ? `<br><span class="hint">排出待ち</span>` : "");
     tr.innerHTML =
       `<td class="l"><span class="lotno">${i + 1}</span>` +
+        /* 二重に立ってしまった落札。消さずに金額 0 で残してある。
+           何があったのか表から読めるように印を出す（2026-08-21）*/
+        `${lot.dupOf ? `<span class="offtag">二重・代金なし</span>` : ""}` +
         `${lot.kind === "auction" ? "オークション" : "即決"}` +
         `${lotSrc(lot)}` +
         `${lot.buyer ? " ／ " + esc(lot.buyer) : ""}${names}</td>` +
