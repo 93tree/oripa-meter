@@ -1240,7 +1240,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='0868106 (08/22 19:13)';</script>
+<script>window.__BUILD='b91504e (08/22 19:24)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -7547,15 +7547,24 @@ async function editLot(id){
   $("drawTitle").textContent = "この落札を直す";
   $("drawSub").textContent = `${fmtClock(lot.at)} に記録`
     + (drawn ? ` ／ すでに ${drawn} 口ぶん出している（これより減らせない）` : "")
-    + ` ／ 残り ${c.left} 口`;
+    + ` ／ 残り ${c.left} 口`
+    // textContent なので飾りは使わない。素の文で伝える
+    + `　金額は落札額（合計）。口数を変えると、この額の中で割る`;
   $("drawList").hidden = true;
   $("drawOk").textContent = "この内容に直す";
-  $("drawPrice").value = String(lot.price);
+  /* ⚠ **直すときは「合計」で開く。**
+     2 口ぶんを 1 口として出品し、落札後に口数を直す、という使い方をしている
+     （運用者 2026-08-21）。単価で開くと口数を 2 にした瞬間に**落札額が倍**に
+     なり、開封した時点で売上が実際より多く出る。
+     落札額は TikTok 側で決まった動かせない事実なので、**それを固定して
+     口数で割る**のが正しい。端数の 1 円は lotUnitAndRem が先頭の口に乗せる。
+     単価で入れ直したいときは「単価」に切り替えられる。 */
+  $("drawPrice").value = String(lotTotal(lot));
   $("drawQty").value   = String(lot.qty);
   $("drawBuyer").value = lot.buyer || "";
-  lotDraft.mode = "unit";
-  $("drawModeUnit").setAttribute("aria-pressed", "true");
-  $("drawModeTotal").setAttribute("aria-pressed", "false");
+  lotDraft.mode = "total";
+  $("drawModeUnit").setAttribute("aria-pressed", "false");
+  $("drawModeTotal").setAttribute("aria-pressed", "true");
   updateDrawArm(c);
   $("drawModal").hidden = false;
 
