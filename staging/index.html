@@ -1240,7 +1240,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='de68ea7 (08/22 06:30)';</script>
+<script>window.__BUILD='1349028 (08/22 19:03)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2385,6 +2385,8 @@ function normalizeOripa(o){
 
            ⚠ **足りない数字を計算で作らない。**以前は「買い手の支払い」しか持たず、
            残りを引き算で作っていたので、実際には無い額が静かに記録された。 */
+        // 残りが足りず、渡せなかった口数。0 = 全部渡せた
+        shortBy: Math.max(0, Math.round(Number(l.shortBy) || 0)),
         bidYen:   l.bidYen   == null ? null : Math.max(0, Math.round(Number(l.bidYen)   || 0)),
         buyerYen: l.buyerYen == null ? null : Math.max(0, Math.round(Number(l.buyerYen) || 0)),
         platYen:  l.platYen  == null ? null : Math.max(0, Math.round(Number(l.platYen)  || 0)),
@@ -6895,6 +6897,18 @@ function renderLive(c){
   if(c.left === 0 && c.N > 0){
     notes.push(`<div class="notice">完売。着地は ${syen(c.finalProfit)}（利益率 ${pct(c.finalMargin)}）。</div>`);
   }
+  /* ⚠ **配信中の知らせはここに出す。モーダルは絶対に使わない。**
+     `.modal` は画面全体を覆うので、出た瞬間に賞品ボタンが押せなくなり、
+     排出が記録されず売上が実際より少なくなる（2026-08-21 の配信中に発生）。
+     どちらも「あとで確かめること」であって、その場で止める用事ではない。 */
+  const odd = (S.lots || []).filter(lotOdd).length;
+  if(odd) notes.push(`<div class="notice">⚠ 金額の内訳が噛み合わない落札が <b>${odd} 件</b>。`
+    + `落札そのものは立ててあるので配信は続けてよい。`
+    + `あとで TikTok の注文管理と突き合わせること。</div>`);
+  const short = (S.lots || []).filter(l => Number(l.shortBy) > 0);
+  if(short.length) notes.push(`<div class="notice">⚠ 残りが足りず渡せなかった口が `
+    + `<b>${short.reduce((n, l) => n + Number(l.shortBy), 0)} 口</b>`
+    + `（落札 ${short.length} 件）。返金が要るか確かめること。</div>`);
   $("liveNotice").innerHTML = notes.join("");
 
   // --- KPI ---
@@ -7289,19 +7303,19 @@ function takeOrder(orderId){
     lot.buyerYen = per("buyerPaid");
     lot.platYen  = per("platformDiscount");
     lot.sellYen  = per("sellerDiscount");
-    // 落札額 − TikTok負担 − 自社値引 ＝ 買い手の支払い が崩れている注文。
-    // 黙って飲み込まず、その場で言う（あとで記録にも印が残る）
-    if(lotOdd(lot)) say(`この落札は金額の内訳が噛み合っていない。\n`
-      + `落札額 ${yen(lot.bidYen)} ／ TikTok負担 ${yen(lot.platYen)}`
-      + ` ／ 自社値引 ${yen(lot.sellYen)} ／ 買い手 ${yen(lot.buyerYen)}。\n`
-      + `落札そのものは ${yen(lotTotal(lot))} で立てた。TikTok の注文管理で確かめること。`);
+    /* ⚠ **配信中にモーダルを出さない。**ここは autoTakeOrders から
+       **自動で**呼ばれる。`.modal` は inset:0 / z-index:200 で画面全体を
+       覆うので、出た瞬間に**賞品ボタンが押せなくなり、排出が記録されず
+       売上が実際より少なくなる**（2026-08-21 の配信中に発生）。
+       印は落札に残っていて lotOdd() で拾えるので、
+       配信画面の知らせ枠に静かに出す。 */
   }else if(Number(x.buyerPaid) > 0){
     // 落札額が来ていない古い注文。買い手の支払いだけは残す
     lot.buyerYen = Math.max(0, Math.round(Number(x.buyerPaid) * qty));
   }
-  // 渡せない口が出た。売上にも入らないので、黙って飲み込まずに知らせる
-  if(short) say(`この落札は ${x.qty} 口だが、残りは ${qty} 口しかない。\n`
-    + `${qty} 口ぶんだけ落札にした。${x.qty - qty} 口ぶんは返金が要るか確かめること。`);
+  /* 渡せない口が出た。黙って飲み込まないが、**モーダルでは出さない**
+     （上と同じ理由。配信が止まる）。落札に刻んで知らせ枠に出す。 */
+  if(short) lot.shortBy = x.qty - qty;
   // 迷子の注文を引き受けたなら、そのときに商品 ID を覚える。以降は
   // 「配信中だから引き受けた」ではなく、正しく結びついた注文として届く
   if(!String(S.shopProductId || "").trim() && x.productId){
