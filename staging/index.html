@@ -1264,7 +1264,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='94fa11a (08/23 02:38)';</script>
+<script>window.__BUILD='2e692c8 (08/23 03:30)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -3746,6 +3746,10 @@ function compute(o){
 
   const drawnBy = new Map();
   let revenue = 0, costDrawn = 0, mktDrawn = 0;
+  /* アド＝**買い手が得をした口**。出たカードの相場が、その口で払った額を上回ること
+     （運用者から教わった 2026-08-22）。オークションなので**口ごとに払った額が違う**
+     ので、1 口ずつ判定する。判定は相場で見る（原価ではない。買い手は相場で値踏みする）。 */
+  let adoDone = 0, adoYen = 0;
   for(const e of o.events){
     const p = byId.get(e.prizeId);
     if(!p) continue;
@@ -3753,6 +3757,8 @@ function compute(o){
     revenue   += e.price || 0;
     costDrawn += costOf(p);
     mktDrawn  += mktOf(p);
+    const m = mktOf(p), paid = e.price || 0;
+    if(m > paid){ adoDone++; adoYen += m - paid; }   // 「上回る」なので同額はアドではない
   }
 
   const sold     = o.events.length;
@@ -3784,6 +3790,27 @@ function compute(o){
   const feeNow   = revenue * feeRate;
   const profitNow = revenue - feeNow - costDrawn;
   const marginNow = revenue > 0 ? profitNow / revenue : 0;
+
+  /* 残りのアド率。**この値段で買ったら得をする口が、残りに何口あるか。**
+     配信で言えるのはこちら（「アドまだ ◯% 残ってます」）。
+
+     ⚠ **還元率とは別物。**還元率（`returnAll`）は相場の合計 ÷ 売上の合計＝
+     **お金の比**で、アド率は**口数の比**。1 枚のバケモノが還元率を持ち上げても、
+     アド率は上がらない。実データでは 8/15 が還元率 85.2% でアド率 11.0%、
+     8/20 17:13 が還元率 61.1% でアド率 33.3% と、平気で逆を向く。
+     ⚠ **目玉が残っているか（`heat`）とも別物。**あちらは上の 1 枚の話、
+     こちらは分布の話。目玉が残っていてもアド率 3% なら当たるのは一人だけ。 */
+  const adoLeftAt = q => {
+    const px = Math.max(0, Number(q) || 0);
+    if(px <= 0) return 0;
+    let k = 0;
+    for(const p of o.prizes){
+      if(mktOf(p) <= px) continue;
+      k += Math.max(0, (p.count | 0) - (drawnBy.get(p.id) || 0));
+    }
+    return k;
+  };
+  const adoLeft = adoLeftAt(price);
 
   const baseEvMkt  = N > 0 ? mktTotal / N : 0;
   const heat       = (baseEvMkt > 0 && left > 0) ? evMkt / baseEvMkt : 1;
@@ -3823,6 +3850,10 @@ function compute(o){
     addNeeded,
     costTotal, mktTotal, costDrawn, mktDrawn, costLeft, mktLeft,
     revenue, feeRate, feeNow, profitNow, marginNow, evCost, evMkt, baseEvMkt, heat,
+    /* アド（買い手が得をした口）。`adoLeftAt` は値段を変えたときの残り口数を返す
+       ので、値下げの効き目をアド率で測れる。 */
+    adoDone, adoYen, adoDoneRate: sold > 0 ? adoDone / sold : 0,
+    adoLeft, adoLeftRate: left > 0 ? adoLeft / left : 0, adoLeftAt,
     returnLeft, returnAll, finalRev, finalProfit, finalMargin,
     pBE, pTarget, pBuyer, pFloor, rec, tm, state, verdict, drawnBy
   };
@@ -6647,7 +6678,10 @@ function renderList(){
       <div class="ostats">
         <div><span class="label">販売単価</span><b>${yen(c.price)}</b></div>
         <div><span class="label">残り口数</span><b>${c.left}<span class="of">/${c.N}</span></b></div>
-        <div><span class="label">還元率</span><b>${c.price > 0 ? pct(c.returnAll, 0) : "—"}</b></div>
+        <div><span class="label">還元率</span><b>${c.price > 0 ? pct(c.returnAll, 0) : "—"}</b>`
+      + `<span class="of2">${c.price > 0 && c.left > 0
+            ? `アド ${pct(c.adoLeftRate, 0)}` : ""}</span></div>`
+      + `
         <div>
           <span class="label">${started ? "現在利益率" : "設計利益率"}</span>
           <b class="${c.price > 0 ? (margin >= 0 ? "pos" : "neg") : ""}">${c.price > 0 ? spct(margin, 0) : "—"}</b>
@@ -7308,10 +7342,14 @@ function renderLive(c){
   // 残り口数はいちばん見たい数字なので、ここを主役にする（販売済は下に回す）
   $("kpiLeft").className = "kpi " + (c.left === 0 ? "is-good" : c.left <= 10 ? "is-warn" : "");
   $("mSold").textContent = c.left > 0 ? String(c.left) : "完売";
+  /* 還元率の隣にアド率を置く。**この 2 つは平気で逆を向く**ので、並べないと
+     読み違える（運用者から教わった 2026-08-22）。還元率は「いくら配ったか」、
+     アド率は「何人が得をするか」。客が回し続けるかを決めるのは後者。 */
   $("mSoldSub").textContent = c.left > 0
     ? `販売済 ${c.sold}/${c.N}`
       + (c.pendingSlots > 0 ? `・開封待ち ${c.pendingSlots} 口` : "")
       + `・残り還元率 ${c.price > 0 ? pct(c.returnLeft, 0) : "—"}`
+      + `・アド ${c.price > 0 ? `${pct(c.adoLeftRate, 0)}（${c.adoLeft} 口）` : "—"}`
     : `${c.N} 口すべて排出済み`;
 
   // 予想の着地ではなく、いま手元にある損益（売上 − 出た賞品の原価）
@@ -8527,6 +8565,26 @@ function renderPulse(c, dec){
   cell("残り還元率", c.price > 0 ? pct(c.returnLeft, 0) : "—",
     `残り1口の期待 ${yen(Math.round(c.evMkt))}`,
     c.returnLeft >= 1 ? "is-good" : c.returnLeft >= 0.7 ? "is-key" : "is-bad");
+
+  /* アド率。**還元率と並べて置く。**還元率は「いくら配ったか」（お金の比）で、
+     アド率は「何人が得をするか」（口数の比）。1 枚のバケモノが還元率を
+     持ち上げても、アド率は上がらない（運用者から教わった 2026-08-22）。
+
+     下に**値下げしたときのアド率**を添える。価格を下げれば `相場 > 価格` を
+     満たす賞品が増えるので、**値下げの効き目をアド率で測れる**。
+     ⚠ ほとんど動かない卓が多い（中身が「高い数枚 ＋ ほぼ無価値な大量」で、
+     中間の価格帯にカードが居ないため）。動く卓とそうでない卓の見分けがここに出る。 */
+  if(c.price > 0 && c.left > 0){
+    const at = q => c.left > 0 ? c.adoLeftAt(q) / c.left : 0;
+    const cut = dec && dec.plan && dec.plan.p > 0 && dec.plan.p < c.price ? dec.plan.p : 0;
+    const sub = cut
+      ? (Math.abs(at(cut) - c.adoLeftRate) < 0.005
+          ? `${yen(cut)} に下げても ${pct(at(cut), 0)}（動かない卓）`
+          : `${yen(cut)} に下げれば ${pct(at(cut), 0)} まで上がる`)
+      : `残り ${c.left} 口のうち ${c.adoLeft} 口が、この値段なら得`;
+    cell("アド率", pct(c.adoLeftRate, 0), sub,
+      c.adoLeftRate >= 0.2 ? "is-good" : c.adoLeftRate >= 0.1 ? "is-key" : "is-bad");
+  }
 
   // 続けるならこの先どれだけ回るか。時間の見当がつく
   if(dec && dec.best && dec.best.r && dec.verdict !== "stop"){
