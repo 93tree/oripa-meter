@@ -1264,7 +1264,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='fd86d77 (08/23 02:19)';</script>
+<script>window.__BUILD='94fa11a (08/23 02:38)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -4653,7 +4653,12 @@ function simulateBreakup(o, topMult, minReturn){
       if(left === 0) break;
       const evMkt = (mktTotal - mktDrawn) / left;
       const topGone = topCount > 0 && topDrawn === topCount;
-      const thin = minReturn > 0 && evMkt / price < minReturn;
+      /* ⚠ **目玉が残っているうちは「薄い」で終わらない**（運用者の指摘
+         2026-08-22）。目玉は卓を回している理由なので、出ないまま解体する
+         ことは無い。ここを外していたので、目玉を抱えたまま終わる——
+         **いちばん高いカードの原価を一度も払わない**——試行が混ざり、
+         利益が実態より良く出ていた。`simFromHere` と同じ直し。 */
+      const thin = minReturn > 0 && topDrawn >= topCount && evMkt / price < minReturn;
       if(topGone || thin){ k = i + 1; stopped = true; break; }
     }
 
@@ -5020,8 +5025,18 @@ function simFromHere(c, p, topMult, minReturn, trials){
   const mktLeft  = rest.reduce((n, s) => n + s.m, 0);
   const costLeft = rest.reduce((n, s) => n + s.c, 0);
 
-  // すでに解体条件を満たしているなら、ここが終わり（追加0口）
-  const thinNow = minReturn > 0 && (mktLeft / R) / price < minReturn;
+  /* すでに解体条件を満たしているなら、ここが終わり（追加0口）。
+
+     ⚠ **目玉が残っているうちは「薄い」で終わらない**（運用者の指摘 2026-08-22：
+     「目玉が出ないまま終わることを想定して計算されることがある。それはあり得ない
+     終わり方」）。目玉は卓を回している理由そのものなので、出ないまま解体する
+     ことは無い。終わるのは**目玉が出尽くしたとき**か**完売**のどちらか。
+
+     直す前は 8/17 の回で **49.1%** の試行が目玉を残したまま終わっていた。
+     そういう回は**いちばん高いカードの原価を一度も払わない**ので、
+     平均原価 ¥191,281（目玉が出た回は ¥297,979）——**¥106,698 も安く**出て、
+     「続ける」側の利益がその分だけ良く見えていた。 */
+  const thinNow = minReturn > 0 && topLeft === 0 && (mktLeft / R) / price < minReturn;
   const overNow = topTotal > 0 && topLeft === 0;
 
   // 種に価格を混ぜない。価格を変えても**同じ引き順の束**で比べられるので、
@@ -5054,7 +5069,11 @@ function simFromHere(c, p, topMult, minReturn, trials){
         const leftAfter = R - k;
         if(leftAfter === 0) break;
         const ev = (mktLeft - mktMore) / leftAfter;
-        if((topTotal > 0 && topOut === topTotal) || (minReturn > 0 && ev / price < minReturn)) break;
+        // 目玉が出尽くした＝ここで解体
+        if(topTotal > 0 && topOut === topTotal) break;
+        /* 残りが薄いのを理由に終われるのは、**待つ目玉がもう無いとき**だけ。
+           目玉が卓に残っているのに解体する終わり方は起こらない（上の注記）。 */
+        if(minReturn > 0 && topOut >= topTotal && ev / price < minReturn) break;
       }
     }
     const rev  = c.revenue + revMore;
