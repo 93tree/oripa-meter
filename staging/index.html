@@ -1294,7 +1294,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='eb545c8 (08/24 23:27)';</script>
+<script>window.__BUILD='6543a01 (08/25 00:17)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2382,6 +2382,26 @@ function sampleOripa(){
   return o;
 }
 
+/**
+ * 何も無いところから始めるときの一覧の中身。
+ *
+ * **配布版では見本を作らない。**手元が空の端末が開くたびに見本が 1 件でき、
+ * 同期がそれを共有の部屋へ送るので、誰も作っていない「デモ用オリパ」が
+ * 一覧に湧く（運用者の指摘 2026-08-24：「デモ用オリパというのをたまに
+ * 取り込むことがあるが、これは何か意図があるのか？」）。
+ * 空になるのは初めて開いた端末・履歴を消した端末・シークレットウィンドウで、
+ * どれも「新しく始めた」のではなく**ただ手元が空なだけ**。同期が中身を
+ * 運んでくるので、見本を置く必要がない。
+ *
+ * 自動操作のブラウザぶんは 2026-08-15 に別の部屋（`-auto`）へ隔離したが、
+ * **人が素の端末で開く経路は塞いでいなかった**。ここがその経路。
+ *
+ * 見本が要るときは一覧の「サンプル」から出せるので、失うものは無い。
+ */
+function starterOripas(){
+  return syncCapable() ? [] : [sampleOripa()];
+}
+
 /** 読み込んだ値を必ず期待する形に整える（旧データ・手書き JSON 対策） */
 function normalizeOripa(o){
   const t = Date.now();
@@ -2996,7 +3016,7 @@ function loadDB(){
     }
   }catch(e){}
 
-  return normalizeDB({ oripas: [sampleOripa()], records: [] });
+  return normalizeDB({ oripas: starterOripas(), records: [] });
 }
 
 function save(){
@@ -3361,6 +3381,21 @@ function saveSyncConf(){
   try{ localStorage.setItem(SYNC_KEY, JSON.stringify(syncConf)); }catch(_){}
 }
 const syncOn = () => !!(syncConf.url && syncConf.room && syncConf.token);
+
+/**
+ * **同期に繋がりうる版か。**いま繋がっているかではない。
+ *
+ * 配布版は入口（ID とパスワード）を通れば必ず繋がるので、通す前でも
+ * 「繋がる版」として扱う。立ち上げの順は
+ *   `DB = loadDB()` → `loadSyncConf()`
+ * なので、`syncOn()` は**手元にデータが無い端末では必ず false**になる。
+ * 初めて開いた端末で見本を作るかどうかは、そこで決めてはいけない。
+ */
+function syncCapable(){
+  if(syncOn()) return true;
+  const d = window.__SYNC_DEFAULTS;
+  return !!(d && d.url && d.room && d.key);
+}
 
 /** 消したものの控え。相手の端末へ「消した」を伝えるまで持っておく */
 function graves(){
@@ -5556,8 +5591,16 @@ function decideNow(c){
      現行価格から `MAX_OFF` を超えて下げる提案はしない。原価や損益分岐から見て
      まだ下げられる局面でも、配信の値付けとしては下げすぎになるため。 */
   const capFloor = Math.round((c.price || 0) * (1 - MAX_OFF));
+  /* ただし**実績までならいつでも下りられる。**下げ幅の上限は「配信で一気に
+     下げすぎない」ための線であって、**場がすでにそこまで落ちている**日には
+     意味を持たない。直近の落札が 15% 下より安いなら、そこまで枠を開ける
+     （運用者の指摘 2026-08-24：現行 ¥17,650 の 15% 下＝¥15,000 を、直近が
+     もっと安く落ちているのに「続けるなら ¥15,000」と出していた）。
+     追いつくのは値下げではなく、**すでに動いた相場に合わせているだけ**。 */
+  const seen = recentSeen(c.o);
+  const cut = seen > 0 ? Math.min(capFloor, Math.round(seen)) : capFloor;
   let floor = Math.max(10, Math.round(Math.max(
-    Number(c.evCost) || 0, Number(c.pBE) || 0, capFloor)));
+    Number(c.evCost) || 0, Number(c.pBE) || 0, cut)));
   // 現行価格は超えない。原価のほうが高い局面でも、配信中に値上げはしない
   if(c.price > 0) floor = Math.min(floor, Math.round(c.price));
 
@@ -5572,10 +5615,9 @@ function decideNow(c){
   const top0 = Math.max(hi, lo, Math.round(Number(c.price) || 0));
   /* **実際に売れている額より高い提案はしない**（運用者の指摘 2026-08-20）。
      現行 ¥9,000・直近の落札 ¥8,000 のときに ¥8,900 を勧めても、その値では
-     誰も買っていない。天井を実績（直近 5 件の中央値）まで下ろす。
-     下限（`lo`＝下げ幅 15% の線）は割らない。実績が無いうちは今までどおり。
+     誰も買っていない。天井を実績（`recentSeen`＝直近 5 件の中央値と、
+     直近の落札の低いほう）まで下ろす。実績が無いうちは今までどおり。
      競り上がって実績が現行を超えている日は、天井は現行のままになる。 */
-  const seen = recentMid(c.o);
   const top = seen > 0 ? Math.max(lo, Math.min(top0, Math.round(seen))) : top0;
 
   /* ---- GMV を数に入れる ----
@@ -5716,7 +5758,13 @@ function decideNow(c){
     }
   }
 
-  return { verdict, stop, best, gain, hi, lo, top, seen, dead, revive,
+  /* 下限が何で決まったか。画面はここを見て「なぜここで止まるのか」を出す。
+     下げ幅の上限が効いているのか、原価・損益分岐で止まっているのかで
+     言うことが変わる。 */
+  const cutBound = cut >= Math.max(Number(c.evCost) || 0,
+                                   isFinite(c.pBE) ? Number(c.pBE) || 0 : 0) - 1;
+
+  return { verdict, stop, best, gain, hi, lo, top, seen, cut, capFloor, cutBound, dead, revive,
            stay, cutGain, plan: bestPlan, hoursLeft,
            elast: pm ? pm.elast : 0, elastMeasured: !!(pm && pm.measured) };
 }
@@ -6260,7 +6308,7 @@ function renderDataNotice(){
       if(!await ask("退避データは残したまま、新しく始めますか？", { okLabel: "新しく始める" })) return;
       dataState = "ok";
       brokenRaw = null;
-      DB = normalizeDB({ oripas: [sampleOripa()], records: [] });
+      DB = normalizeDB({ oripas: starterOripas(), records: [] });
       S = null;
       go("list");
     });
@@ -8740,11 +8788,45 @@ let priceAdj = 0, priceAdjKey = "";
  * **実際にいくらで売れているか。**直近 5 件（排出まで済んだぶん）の中央値。
  * 提案の下限と上限は、どちらもこの実績から引く。0 なら実績が無い。
  */
-function recentMid(o){
+/**
+ * 直近 n 件の「出た」落札の単価（古い順）。
+ *
+ * 落札の `price` は**1 口あたり**（合計は `lotTotal`）なので、販売単価と
+ * そのまま比べられる。0 円と、二重に立ったぶん（`dupOf`）は数えない。
+ * 以前は 0 円を外す前に 5 件を切っていたので、訂正のぶんだけ窓が痩せていた。
+ */
+function recentLotPrices(o, n){
   const done = lotDrawn(o);
-  const ps = (o.lots || []).filter(l => (done.get(l.id) || 0) > 0).slice(-5)
-    .map(l => Number(l.price) || 0).filter(v => v > 0).sort((a, b) => a - b);
+  const ps = ((o && o.lots) || [])
+    .filter(l => !l.dupOf && (done.get(l.id) || 0) > 0)
+    .map(l => Number(l.price) || 0)
+    .filter(v => v > 0);
+  return ps.slice(-Math.max(1, Math.round(n) || 5));
+}
+
+/** 直近 5 件の落札の中央値。単発の高値・安値に振り回されない「場の中心」 */
+function recentMid(o){
+  const ps = recentLotPrices(o, 5).sort((a, b) => a - b);
   return ps.length ? ps[Math.floor(ps.length / 2)] : 0;
+}
+
+/**
+ * **いま実際に買われている額。**値付けの天井も下限もここから引く。
+ *
+ * 中央値だけで見ると、**下がり続けている場に遅れて残る**。
+ * ¥20,000→18,000→15,000→13,000→12,000 と落ちてきた場の中央は ¥15,000 で、
+ * 直近の落札 ¥12,000 より 3,000 円高い。その ¥15,000 を「続けるなら」として
+ * 出していた（運用者の指摘 2026-08-24：「直近更に低い金額で落札されていて、
+ * 直近よりも更に利益率が低下しているのに直近の落札額より上回った金額に
+ * なっている場合がある」）。**直近の落札を上回らない**ところまで下ろす。
+ *
+ * 競り上がっている場（直近が中央より上）では中央のまま＝上へは引っぱられない。
+ * 単発の高値で天井が跳ね上がると、その値では続かない額を勧めることになる。
+ */
+function recentSeen(o){
+  const ps = recentLotPrices(o, 5);
+  if(!ps.length) return 0;
+  return Math.min(recentMid(o), ps[ps.length - 1]);
 }
 
 /**
@@ -8753,11 +8835,15 @@ function recentMid(o){
  * 計算だけで価格を出すと、目玉が出きった直後などに**いま買われている額より
  * ずっと安い数字**が出ることがある。実際にその値で売れている以上、そこまで
  * 下げる理由は無い（下げれば下げたぶんだけ取りこぼす）。
- * 直近の落札の中央値の 7 割を下限に置く。
+ * 直近の落札（`recentSeen`）の 7 割を下限に置く。
+ *
+ * ⚠ ここは**中央値ではなく `recentSeen`** から引く。中央値から引くと、
+ * 下がり相場では 7 割の線そのものが直近の落札より高くなり、エンジンが
+ * 出した額を実績より上へ押し戻していた（2026-08-24）。
  */
 function recentFloor(o){
-  const mid = recentMid(o);
-  return mid > 0 ? roundPrice(mid * 0.7) : 0;
+  const seen = recentSeen(o);
+  return seen > 0 ? roundPrice(seen * 0.7) : 0;
 }
 
 /** 解体前提の損益分岐・目標利益率ライン。届かないときは Infinity。
@@ -8816,7 +8902,14 @@ function renderPrice(c){
   const raw = dec && dec.best ? dec.best.p : 0;
   // **いま買われている額より大きく下げない。**下げたぶんだけ取りこぼす
   const floor = raw > 0 ? recentFloor(S) : 0;
-  const base = raw > 0 ? Math.max(raw, floor) : 0;
+  const seen = raw > 0 ? Math.round(recentSeen(S)) : 0;
+  /* ⚠ 下限で押し上げるときも、**直近の落札は超えない。**
+     ここを見ていなかったので、下がり相場ではエンジンが出した額を
+     下限が実績より上へ押し戻していた（2026-08-24）。
+     エンジン自身が実績より上を出しているとき（原価・損益分岐が実績より
+     高い局面）は、その額を尊重する＝ここでは下げない。 */
+  let base = raw > 0 ? Math.max(raw, floor) : 0;
+  if(base > 0 && seen > 0) base = Math.min(base, Math.max(raw, seen));
   // 提案そのものが動いたら、手で足したぶんは捨てる
   const key = `${S.id}|${base}`;
   if(priceAdjKey !== key){ priceAdjKey = key; priceAdj = 0; }
@@ -8854,18 +8947,34 @@ function renderPrice(c){
     $("recPrice").textContent = (go || even) && !dec.dead ? yen(goPrice) : "終了してOK";
     const diff = c.price - goPrice;
     const adj = priceAdj ? `／手動で ${priceAdj > 0 ? "+" : ""}${yen(priceAdj)}` : "";
-    const held = floor > raw ? `／直近の落札に合わせて据え置き` : "";
-    // 下げ幅が上限に張り付いているときは、そう言う（「なぜここで止まるのか」を隠さない）
-    const capped = diff > 0 && diff >= Math.round(c.price * MAX_OFF) - 1
+    const held = base > raw ? `／直近の落札に合わせて据え置き` : "";
+    /* 下げ幅が上限に張り付いているときは、そう言う（「なぜここで止まるのか」を
+       隠さない）。**実績に追いついて止まっているとき**は 15% の線ではないので
+       言わない（下の `seenCap` がその理由を出す）。 */
+    const capped = diff > 0 && dec.cutBound && goPrice <= dec.lo + 1
+      && dec.cut >= Math.round(c.price * (1 - MAX_OFF)) - 1
       ? `／下げ幅は ${pct(MAX_OFF, 0)} まで` : "";
-    // 実績より上を出さないために天井を下ろしたときは、その理由を出す
-    const seenCap = dec.seen > 0 && dec.top < Math.round(c.price) && goPrice >= dec.top - 1
-      ? `／直近 5 件の落札（中央 ${yen(Math.round(dec.seen))}）より上は出さない` : "";
+    /* 実績より上を出さないために天井を下ろしたときは、その理由を出す。
+       **天井が実績まで下りているときだけ**言う。原価や損益分岐で止まっていて
+       実績より上に居るのに「実績より上は出さない」と出していた（2026-08-24）。 */
+    const seenAt = Math.round(Number(dec.seen) || 0);
+    const seenCap = seenAt > 0 && seenAt < Math.round(c.price)
+      && dec.top <= seenAt + 1 && goPrice >= dec.top - 1
+      ? `／直近の落札（${yen(seenAt)}）より上は出さない` : "";
+    /* 逆に、原価・損益分岐が実績より上にあって**そこまで下りられない**ときは、
+       そう言う。黙って実績より高い額を出すと「その値では売れていない」ことが
+       隠れる。下げ幅の上限では起きない（実績までは開けてある）ので、
+       ここに出るのは中身の原価が場に追い越された局面だけ。 */
+    const lo = Math.round(Number(dec.lo) || 0);
+    const 割れない線 = isFinite(c.pBE) && c.pBE > 0 && lo >= Math.round(c.pBE) - 1
+      ? "損益分岐" : "残り1口の原価";
+    const overSeen = seenAt > 0 && goPrice > seenAt && !seenCap
+      ? `／直近の落札 ${yen(seenAt)} より上だが、${割れない線} ${yen(lo)} は割れない` : "";
     $("recDelta").textContent = ((go || even)
       ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
          : diff < 0 ? `現行から ${yen(-diff)} 上げ`
          : "現行価格のまま（下げる理由なし）")
-      : `残りを在庫に戻す`) + held + capped + seenCap + adj;
+      : `残りを在庫に戻す`) + held + capped + seenCap + overSeen + adj;
 
     // **続けた場合の振れ幅を出す。**「いま解体」は現時点での利益と同じ額に
     // なるので別枠にしない（解体したカードは原価のまま在庫に戻るため）。
