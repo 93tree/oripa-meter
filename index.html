@@ -1287,7 +1287,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='2170305 (08/24 21:58)';</script>
+<script>window.__BUILD='eb545c8 (08/24 23:17)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -1743,7 +1743,7 @@ window.__SYNC_DEFAULTS = {
     <section class="panel" id="replayCastPanel" hidden>
       <header>
         <h2>出演を直す</h2>
-        <span class="hint">直せるのは出演者だけ。時刻と金額は動かない。分け前は配信の合計損益を実働で按分したもの</span>
+        <span class="hint">直せるのは出演者だけ。時刻と金額は動かない。分け前は配信の合計損益を、その区間で売れた額で按分したもの</span>
       </header>
       <div class="body">
         <div class="scroll-x">
@@ -3039,11 +3039,20 @@ let syncFails = 0, pollTimer = null;
    ============================================================ */
 const LIVE_BEAT_MS  = 30 * 1000;        // 席を握っているあいだの合図の間隔
 const LIVE_LEASE_MS = 3 * 60 * 1000;    // 合図が途切れてこれだけ経てば席は空く
-const LIVE_AUTO_END_MS = 30 * 60 * 1000;// 操作がこれだけ無ければ自分から席を立つ
-const LIVE_WARN_MS = 5 * 60 * 1000;     // 席を立つ何分前から画面で知らせるか
-// 配信の区切り。前の動きからこれだけ空いて席に座ったら「別の日の配信」として
-// 開始時刻を取り直す。席が自動で空くのと同じ長さにそろえてある
-const LIVE_SESSION_GAP_MS = LIVE_AUTO_END_MS;
+/* 配信の区切り。前の動きからこれだけ空いて席に座ったら「別の日の配信」として
+   開始時刻を取り直す。 */
+const LIVE_SESSION_GAP_MS = 30 * 60 * 1000;
+
+/* ⚠ **操作が無くても席は立たない**（運用者の指示 2026-08-24）。
+
+   以前は 30 分操作が無いと自分から席を立っていた（`LIVE_AUTO_END_MS`）。
+   だが**売れない時間はふつうにある**。今日の配信でも 25 分売れなかった。
+   そのあいだ触っていないだけで配信中から抜けてしまい、戻るまで落札も
+   排出も記録できない。「売れていない」と「配信していない」は別のこと。
+
+   代わりに、**抜け忘れは外から降ろせるようにした**（`kickLive`）。
+   一覧で「◯◯ が配信中」と出ている回に「配信中を解除」が出る。
+   タブを開きっぱなしの端末にも届く（下の合図が `liveKick` を見て降りる）。 */
 
 let DEVICE_ID = "", DEVICE_NAME = "";
 try{
@@ -3058,6 +3067,9 @@ if(!DEVICE_NAME) DEVICE_NAME = "PC-" + (DEVICE_ID || "").slice(1, 5);
 
 let liveBeatTimer = null;
 let lastActionAt = 0;        // 最後に排出・落札・値付けをした時刻
+/* この端末が席に座った時刻。**同期には乗せない**（自分の話なので）。
+   降ろされたかどうかは「印が自分の着席より後か」で決める。 */
+let liveClaimedAt = 0;
 
 /** いま札を持っている端末。期限切れなら null */
 function liveHolder(o){
@@ -3150,7 +3162,8 @@ function armLiveStart(o){
 
 function claimLive(o){
   armLiveStart(o);
-  o.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
+  liveClaimedAt = Date.now();      // これより後の「解除」だけが効く
+  o.live = { by: DEVICE_ID, name: DEVICE_NAME, at: liveClaimedAt, ver: BUILD };
   o.updatedAt = Date.now();
 }
 
@@ -3221,9 +3234,10 @@ function startLiveBeat(){
   lastActionAt = Date.now();
   liveBeatTimer = setInterval(() => {
     if(mode !== "live" || !S){ clearInterval(liveBeatTimer); liveBeatTimer = null; return; }
-    // 一時停止は「席を外している」と自分で言っている状態。放置とみなして降ろさない
-    if(pauseNow(S)) lastActionAt = Date.now();
-    if(Date.now() - lastActionAt >= LIVE_AUTO_END_MS){ autoLeaveLive(); return; }
+    /* ⚠ **放置では降りない**（運用者の指示 2026-08-24）。売れない時間は
+       ふつうにあるので、触っていないことを理由に席を空けない。
+       降りるのは**外から降ろされたとき**だけ。 */
+    if(kickedOut(S)){ forcedLeaveLive(); return; }
     S.live = { by: DEVICE_ID, name: DEVICE_NAME, at: Date.now(), ver: BUILD };
     S.updatedAt = Date.now();
     scheduleSync();
@@ -3232,15 +3246,49 @@ function startLiveBeat(){
 }
 function stopLiveBeat(){ clearInterval(liveBeatTimer); liveBeatTimer = null; }
 
-function autoLeaveLive(){
+/* ------------------------------------------------------------
+   外から席を降ろす
+
+   抜け忘れた端末を、別の端末から降ろす（運用者の指示 2026-08-24）。
+   ⚠ **合図を止めるだけでは足りない。**降ろされる側はタブを開いたまま
+   30 秒ごとに席を握り直しているので、`live` を空にしても次の合図で戻る。
+   「降ろした」という印（`liveKick`）を残し、握っている側がそれを見て降りる。
+   ------------------------------------------------------------ */
+
+/**
+ * 自分が座ったあとに降ろされたか。
+ *
+ * ⚠ 比べるのは**着席した時刻**（`liveClaimedAt`）であって、`live.at` ではない。
+ * `live.at` は 30 秒ごとの合図で書き換わるので、それと比べると
+ * 「降ろされた直後に入り直しても、また降ろされる」ことになる
+ * （実際そう書いて検査で落ちた）。古い印で二度と入れなくなるのがいちばん困る。
+ */
+function kickedOut(o){
+  const k = o && o.liveKick;
+  if(!k || !k.at) return false;
+  return Number(k.at) > liveClaimedAt;
+}
+
+/** 別の端末の席を降ろす。印を残すので、開きっぱなしの端末にも効く */
+function kickLive(o){
+  if(!o) return null;
+  const who = o.live && (o.live.name || o.live.by) || "";
+  o.liveKick = { at: Date.now(), by: DEVICE_ID, name: DEVICE_NAME };
+  o.live = null;
+  o.updatedAt = Date.now();
+  o.rev = Math.max(0, Math.round(Number(o.rev) || 0)) + 1;
+  return who;
+}
+
+/** 降ろされた側。**記録は消さない。**配信中から抜けるだけ */
+function forcedLeaveLive(){
   stopLiveBeat();
   const name = S ? S.name : "";
+  const who = (S && S.liveKick && (S.liveKick.name || S.liveKick.by)) || "別の PC";
   releaseLive(S);
   go("list");
-  say(`操作が ${Math.round(LIVE_AUTO_END_MS / 60000)} 分無かったので、`
-    + `「${name}」の配信中を抜けた。\n`
-    + `記録は消えていない。続けるならもう一度ひらく。\n`
-    + `席を空けておかないと、他の PC から入れないため。`);
+  say(`「${name}」の配信中を、${who} から解除された。\n\n`
+    + `記録は消えていない。続けるならもう一度ひらく。`);
 }
 
 /** 排出・落札・値付けのたびに呼ぶ。これが無いと自動で席を立つ */
@@ -4175,7 +4223,7 @@ function auctionSummary(o){
 
      ・利益の 5% を積み、損の 5% を引く（相殺する）
      ・元になるのは**現金損益**（売上 − 手数料 − 排出原価）
-     ・**その配信の合計損益を、出演時間で按分する**（運用者の指示 2026-08-23）
+     ・**その配信の合計損益を、その区間で売れた額で按分する**（運用者の指示 2026-08-24）
      ・2 名出演の区間は **2.5% ずつ**（人数で割ってから率をかける）
      ・区間は**落札の時刻**で切る。開封の時刻ではない
      ・0 止めは**月の合計**でかける。翌月に持ち越さない
@@ -4185,19 +4233,31 @@ function auctionSummary(o){
    ⚠ **キャストは消せない。**休止だけ。過去の記録から名前が消えると
    支払った額の裏が取れなくなる（運用者の指示 2026-08-21）。
 
-   ■ 按分の仕方を変えた（2026-08-23）
-   前は**その区間で出た損益**をその区間の出演者に付けていた。運用者の指示：
-   「その配信内で発生した合計損益を出演したキャストの時間で分配」。
+   ■ 按分の仕方を 2 度変えている
 
-   区間ごとに付けると、**当たりが出た時間に居たかどうか**で取り分が決まる。
-   どのカードが出るかはキャストに動かせないので、運の当たり外れがそのまま
-   報酬になっていた。時間で按分すれば、同じ配信に同じだけ出た人は同じ額になる。
+   ① 8/23：**区間の損益** → **出演時間**
+      区間ごとに付けると、当たりが出た時間に居たかどうかで取り分が決まる。
+      どのカードが出るかはキャストに動かせないので、運がそのまま報酬になっていた。
 
-     ひとりぶん ＝ 配信の合計損益 × （その区間の実働 ÷ 配信全体の実働）÷ 人数
+   ② 8/24：**出演時間** → **その区間で売れた額**（いまここ）
+      運用者の指示：「売れた金額で分配率を決め、割ることにしたい」。
+      時間は**拘束時間への対価**、売上は**成果への対価**。どちらが正しいという
+      話ではなく、経営の判断で後者を採った。
 
-   ⚠ **割る時間は無人の時間も含めた全体**。含めないと、押し忘れた時間のぶんまで
-   出演者に配られる。無人ぶんは今までどおり「キャスト未登録ぶん」に出す。
-   ⚠ 実働からは**人が押した一時停止を引いてある**（`castSpans` が `ms` を作る所）。
+      ⚠ **①で外した「区間の損益」に戻ったのではない。**損益は
+      「どのカードが出たか」＝キャストに動かせない運。売上は
+      「どれだけ売ったか」＝**本人の働き**。別のものを見ている。
+
+     ひとりぶん ＝ 配信の合計損益 × （その区間の売上 ÷ 配信全体の売上）÷ 人数
+
+   ⚠ **割る売上は無人の時間のぶんも含めた全体**。含めないと、押し忘れた時間の
+   損益まで出演者に配られる。無人ぶんは今までどおり「キャスト未登録ぶん」に出す。
+   ⚠ **損の回も同じ規則で割る**（運用者の指示 2026-08-24）。規則を 1 本にする。
+      その回だけ見ると「売った人ほど損を被る」形になるが、0 止めは**月の合計**で
+      かかるので、黒字の回と相殺される。
+   ⚠ 売れた額が**全体で 0 円**の回は按分しようがないので、**出演時間で割る**
+      （そこも 0 なら誰にも付けない）。区間ごとの売上 0 は 0 円のままでよい
+      （運用者の指示 2026-08-24）。
    ============================================================ */
 
 /** ボーナス率。2 名なら人数で割るので実質 2.5% ずつになる */
@@ -4411,16 +4471,22 @@ function castSpans(o, from, to){
   const activeMs = spans.reduce((n, s) => n + Math.max(0, Number(s.ms) || 0), 0);
   const noneMs = spans.filter(s => !(s.castIds || []).length)
                       .reduce((n, s) => n + Math.max(0, Number(s.ms) || 0), 0);
-  /* 無人の時間ぶん。実働が 1 ミリも無いなら誰にも配りようが無いので全部ここ。 */
-  const nobody = activeMs > 0 ? total * (noneMs / activeMs) : total;
-  return { spans, loose, looseLots, nobody, total, activeMs, noneMs,
+  // 按分の重み＝売れた額。全体が 0 円のときだけ実働に逃げる（`bonusFromSpans` と同じ規則）
+  const allRev = spans.reduce((n, s) => n + Math.max(0, Number(s.revenue) || 0), 0);
+  const noneRev = spans.filter(s => !(s.castIds || []).length)
+                       .reduce((n, s) => n + Math.max(0, Number(s.revenue) || 0), 0);
+  /* 無人のぶん。売上でも実働でも測れないなら、誰にも配りようが無いので全部ここ。 */
+  const nobody = allRev > 0 ? total * (noneRev / allRev)
+               : activeMs > 0 ? total * (noneMs / activeMs)
+               : total;
+  return { spans, loose, looseLots, nobody, total, activeMs, noneMs, allRev, noneRev,
            unassigned: loose + nobody };   // 「キャスト未登録ぶん」として出す額
 }
 
 /* ------------------------------------------------------------
    ボーナス
 
-   区間のひとりぶん ＝ 配信の合計損益 × (区間の実働 ÷ 全体の実働) ÷ 人数
+   区間のひとりぶん ＝ 配信の合計損益 × (区間の売上 ÷ 全体の売上) ÷ 人数
    その回のボーナス ＝ trunc( Σ(ひとりぶん) × 5% )
 
    ⚠ **切り捨ては 0 の方向**（`Math.trunc`）。利益も損も額が小さくなる側に
@@ -4447,11 +4513,16 @@ const castBonusOf = profit => Math.trunc((Number(profit) || 0) * CAST_RATE);
  * 区間の並びから、キャストごとの取り分（切り捨て前）を出す。
  *
  * `total` は**その配信で出た合計損益**。区間ごとの損益は使わない
- * （運用者の指示 2026-08-23。どのカードが出るかはキャストに動かせないので、
- * 運の当たり外れを報酬に持ち込まない）。
+ * （8/23 の指示。どのカードが出るかはキャストに動かせないので、運を報酬にしない）。
  *
- * ⚠ **割る時間は無人の時間も含めた全体。**出演者ぶんだけで割ると、
+ * **重みは「その区間で売れた額」**（運用者の指示 2026-08-24）。
+ * ⚠ これは 8/23 に外した「区間の損益で割る」とは別物。損益は**運**、
+ * 売上は**本人の働き**。
+ *
+ * ⚠ **割る売上は無人の時間のぶんも含めた全体。**出演者ぶんだけで割ると、
  * 押し忘れた時間の損益まで出演者に配られてしまう。
+ * ⚠ **全体の売上が 0 円**なら按分しようがないので**実働で割る**。
+ * そこも 0 なら誰にも付けない（未登録ぶんへ回る）。
  *
  * `profit` は按分した取り分（ボーナスの元）。`revenue` / `lots` / `ms` は
  * **その人が出ていた時間に実際に起きたこと**で、按分しない。
@@ -4461,20 +4532,26 @@ const castBonusOf = profit => Math.trunc((Number(profit) || 0) * CAST_RATE);
 function bonusFromSpans(spans, total){
   const list = spans || [];
   const P = Number(total) || 0;
-  const D = list.reduce((n, s) => n + Math.max(0, Number(s.ms) || 0), 0);
+  const rev = s => Math.max(0, Number(s.revenue) || 0);
+  const ms  = s => Math.max(0, Number(s.ms) || 0);
+  const R = list.reduce((n, s) => n + rev(s), 0);
+  const D = list.reduce((n, s) => n + ms(s), 0);
+  /* 売上で割る。1 円も売れていない回だけ実働に逃げる。
+     ⚠ 区間ごとの売上 0 は 0 円のままでよい（運用者の指示 2026-08-24）。 */
+  const 重み = R > 0 ? rev : (D > 0 ? ms : null);
+  const 全体 = R > 0 ? R : D;
   const by = new Map();
-  // 実働がまったく無いなら按分できない。誰にも付けない（未登録ぶんへ回る）
-  if(!(D > 0)) return [];
+  if(!重み) return [];          // 売上も実働も無い＝按分できない
   for(const s of list){
     const n = (s.castIds || []).length;
-    const ms = Math.max(0, Number(s.ms) || 0);
-    if(!n || !ms) continue;
-    const share = P * (ms / D) / n;
+    const w = 重み(s);
+    if(!n || !w) continue;
+    const share = P * (w / 全体) / n;
     for(const id of s.castIds){
       const e = by.get(String(id)) || { castId: String(id), profit: 0, ms: 0, lots: 0, revenue: 0 };
       e.profit  += share;              // 按分した取り分
       e.revenue += s.revenue / n;      // その時間に実際に売れた額（按分しない）
-      e.ms      += ms;
+      e.ms      += ms(s);
       e.lots    += s.lots;
       by.set(String(id), e);
     }
@@ -4503,9 +4580,9 @@ function stintsForRecord(o, from, to){
  */
 function recordPay(r){
   const spans = (r && Array.isArray(r.stints)) ? r.stints : [];
-  /* 分ける元は**記録の現金損益**。焼き込んだ区間ごとの損益ではない
-     （運用者の指示 2026-08-23）。区間から使うのは**実働（ms）**だけなので、
-     あとから出演者を直しても、時間が変わらないかぎり総額は動かない。 */
+  /* 分ける元は**記録の現金損益**。焼き込んだ区間ごとの損益ではない。
+     区間から使うのは**売れた額（revenue）**だけなので（運用者の指示 2026-08-24）、
+     あとから出演者を直しても、売上が変わらないかぎり総額は動かない。 */
   const total = Number(r && r.profit) || 0;
   const pay = bonusFromSpans(spans, total);
   const named = pay.reduce((n, p) => n + p.profit, 0);
@@ -6841,6 +6918,37 @@ function mustShowInList(o){
 /** 取り込んだ日。CSV を読み込んでオリパが立った時刻 */
 const importedAt = o => Number(o && o.createdAt) || 0;
 
+/**
+ * 抜け忘れた端末を外から降ろす（運用者の指示 2026-08-24）。
+ *
+ * 放置で席を立つのをやめたので、**降ろす道はここだけ**。
+ * ⚠ 相手がまだ本当に配信していたら、その端末は配信画面から放り出される。
+ * 押す前に必ず確認を出す。
+ */
+async function kickLiveFlow(o){
+  const seat = liveHolder(o);
+  if(!seat) { render(); return; }
+  const 経過 = Math.max(0, Math.round((Date.now() - (Number(seat.at) || 0)) / 60000));
+  if(!await ask(`「${o.name || "無題のオリパ"}」の配信中を解除しますか？
+
+`
+    + `いま席を持っているのは ${seat.name || seat.by}（最後の合図 ${経過 <= 0 ? "たったいま" : `${経過} 分前`}）。
+
+`
+    + `⚠ その PC がまだ配信中なら、配信画面から抜けてしまいます。
+`
+    + `記録は消えません。`,
+    { okLabel: "解除する", danger: true })) return;
+  const who = kickLive(o);
+  save();
+  scheduleSync();
+  render();
+  await say(`${who || "別の PC"} の席を解除した。
+
+`
+    + `相手の画面は次の合図（最長 30 秒）で一覧に戻る。`);
+}
+
 function renderList(){
   renderMktBar();
   renderDupNotice();      // 二重ぶんがあるときだけ出る
@@ -6934,8 +7042,13 @@ function renderList(){
         <button type="button" class="btn" data-act="live"${c.N ? "" : " disabled title='賞品が無いのでまだ配信できない'"}>配信</button>
         <button type="button" class="btn ghost" data-act="edit">編集</button>
         <button type="button" class="btn ghost" data-act="copy">複製</button>
-        <button type="button" class="btn ghost danger" data-act="del">削除</button>
-      </div>
+        <button type="button" class="btn ghost danger" data-act="del">削除</button>`
+      /* 抜け忘れた端末を外から降ろす（運用者の指示 2026-08-24）。
+         放置で席を立つのをやめたので、**降ろす道はここだけ**。
+         自分が持っている席には出さない（配信画面から普通に抜ければよい）。 */
+      + `${seat && seat.by !== DEVICE_ID
+          ? `<button type="button" class="btn ghost" data-act="kick">配信中を解除</button>` : ""}`
+      + `</div>
       <div class="oday"><span class="label">取り込み</span>`
       + (importedAt(o)
           ? `<b>${fmtDate(importedAt(o))}</b><span class="of2">${fmtClock(importedAt(o))}</span>`
@@ -6950,6 +7063,8 @@ function renderList(){
       goLive(o);                       // 席の確認を挟む
     });
     el.querySelector('[data-act="copy"]').addEventListener("click", () => duplicateOripa(o, "（複製）", false));
+    const kick = el.querySelector('[data-act="kick"]');
+    if(kick) kick.addEventListener("click", () => kickLiveFlow(o));
     el.querySelector('[data-act="del"]').addEventListener("click", async () => {
       if(await deleteOripa(o)) render();
     });
@@ -7139,9 +7254,9 @@ function renderCastScreen(){
       + `（出演を立てていない時間のぶん。損益 ${syen(t.unassigned)} の 5%。`
       + `記録を開いて「出演を直す」で割り当てられる）`);
   /* 分け方を必ず書く。数字の出どころが分からないと、キャストに説明できない */
-  note.push(`ボーナスは「配信の合計損益を実働で按分した額」の 5%。`
+  note.push(`ボーナスは「配信の合計損益を、その区間で売れた額で按分した額」の 5%。`
     + `2 名で出た区間は 2.5% ずつ。`
-    + `どのカードが出るかはキャストに動かせないので、区間ごとの当たり外れでは分けない。`
+    + `どのカードが出たか（＝運）では分けない。分けるのは売った額。`
     + `月の合計がマイナスなら 0 円で、翌月には持ち越さない。`);
   $("castNote").textContent = note.join("　");
 
@@ -7419,12 +7534,16 @@ function renderReplayCasts(){
   const tb = $("replayCastTable").querySelector("tbody");
   tb.innerHTML = "";
 
-  /* 区間ごとのボーナスも**時間按分**で出す（運用者の指示 2026-08-23）。
+  /* 区間ごとのボーナスも**売上按分**で出す（運用者の指示 2026-08-24）。
      区間の損益からは作らない。ここだけ古い出し方が残ると、上の表と
-     下の「この回のボーナス」で額が合わなくなる。 */
+     下の「この回のボーナス」で額が合わなくなる。
+     売上が全体で 0 円の回だけ実働に逃げる（`bonusFromSpans` と同じ規則）。 */
+  const 全体売上 = spans.reduce((n, x) => n + Math.max(0, Number(x.revenue) || 0), 0);
   const 全体ms = spans.reduce((n, x) => n + Math.max(0, Number(x.ms) || 0), 0);
   const 配信の損益 = Number(r.profit) || 0;
-  const 按分 = s => 全体ms > 0 ? 配信の損益 * (Math.max(0, Number(s.ms) || 0) / 全体ms) : 0;
+  const 按分 = s => 全体売上 > 0
+    ? 配信の損益 * (Math.max(0, Number(s.revenue) || 0) / 全体売上)
+    : 全体ms > 0 ? 配信の損益 * (Math.max(0, Number(s.ms) || 0) / 全体ms) : 0;
 
   spans.forEach((s, i) => {
     const n = (s.castIds || []).length;
@@ -7436,8 +7555,10 @@ function renderReplayCasts(){
         `<td class="n">${fmtClock(s.at)} 〜 ${fmtClock(s.to)}</td>`
       + `<td class="l">${esc(who)}</td>`
       + `<td class="n">${s.lots || 0}</td>`
+      /* 按分の根拠は**売上の割合**。実働も出すが、割合は売上のほうを出す */
       + `<td class="n">${s.ms ? fmtDur(s.ms) : "—"}`
-        + `${全体ms > 0 ? `<br><span class="hint">${pct((s.ms || 0) / 全体ms, 0)}</span>` : ""}</td>`
+        + `<br><span class="hint">売上 ${全体売上 > 0
+            ? pct(Math.max(0, Number(s.revenue) || 0) / 全体売上, 0) : "—"}</span></td>`
       /* 按分した取り分。**その区間で出た損益ではない。**見出しも
          「分け前」にしてある（時間で分けた額であることを字面で示す） */
       + `<td class="n ${按分(s) >= 0 ? "pos" : "neg"}">${syen(Math.round(按分(s)))}</td>`
@@ -8951,22 +9072,17 @@ function seriesData(){
    完売見込みは「このまま最後まで売れたら」の話。うちのオリパは途中で
    解体するのが前提なので、解体までの見込みも並べて出す。
    ============================================================ */
-/* 配信中の席の表示。放置で自動的に抜けるまでの残り時間もここに出す。
-   合図のたびにここだけ描き直す（全体を描き直すと入力中のダイアログが飛ぶ）。 */
+/* 配信中の席の表示。
+   ⚠ **「あと N 分で抜ける」は出さない**（運用者の指示 2026-08-24）。
+   放置で席を立つのをやめたので、出す残り時間が無い。抜け忘れは一覧の
+   「配信中を解除」で外から降ろす。 */
 function renderLiveSeat(){
   const el = $("liveSeat");
   if(!el || mode !== "live" || !S){ if(el) el.textContent = ""; return; }
-  const idle = Date.now() - lastActionAt;
-  const leftMs = LIVE_AUTO_END_MS - idle;
-  if(leftMs > LIVE_WARN_MS){
-    el.className = "seat";
-    el.textContent = `${DEVICE_NAME} で配信中`;
-    el.title = "同じオリパは同時に 1 台しか開けない";
-  }else{
-    el.className = "seat is-warn";
-    el.textContent = `操作が無いので あと ${Math.max(1, Math.round(leftMs / 60000))} 分で抜ける`;
-    el.title = `${Math.round(LIVE_AUTO_END_MS / 60000)} 分操作が無いと席を空ける`;
-  }
+  el.className = "seat";
+  el.textContent = `${DEVICE_NAME} で配信中`;
+  el.title = "同じオリパは同時に 1 台しか開けない。"
+    + "抜け忘れたときは、別の PC の一覧から「配信中を解除」で降ろせる";
 }
 
 /**
