@@ -1264,7 +1264,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='c6a8440 (08/24 20:58)';</script>
+<script>window.__BUILD='8e89f2b (08/24 21:07)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2270,6 +2270,9 @@ window.__SYNC_DEFAULTS = {
 const STORE_KEY  = "oripa-stg-v2";
 const LEGACY_KEY = "oripa-stg-live-v1";
 const BACKUP_PREFIX = "oripa-stg-backup-";
+/* 取り消しで外した落札。**画面に出すためだけに持つ**（保存も同期もしない）。
+   黙って外すと「売上が減ったのに理由が分からない」になるので、必ず知らせる。 */
+let voidedNow = [];
 const APP_DATA_VERSION = 2;   // 保存形式の版。上げるときは migrate() に段を足す
 
 /* 配っている版の印。
@@ -2839,6 +2842,51 @@ function dropOrdersFor(oripaId){
 
 function troubleOrders(){
   return DB.oripas.flatMap(o => ordersFor(o).trouble.map(x => ({ o, x })));
+}
+
+/**
+ * 取り消しになった注文の落札を、**まるごと無かったことにする**。
+ *
+ * 運用者の指示（2026-08-24）：「落札後に取り消しになる場合もあり、この場合は
+ * 落札そのものがなかったことにするようにしろ」。
+ *
+ * 落札と、その落札から出た排出をどちらも外す。**排出も外すのが肝心**で、
+ * 外さないと「代金は消えたのにカードは出たまま」になり、口数も賞品の残りも
+ * 合わなくなる。買われていないのだから、口も賞品も卓に戻るのが正しい。
+ *
+ * ⚠ **確認を出さない。**ここは同期で届いた瞬間に走る。`.modal` は画面全体を
+ * 覆うので、配信中に出ると賞品ボタンが押せなくなり、排出が記録されず売上が
+ * 実際より少なくなる（2026-08-21 の配信中に起こした）。黙って直して、
+ * 何をしたかは知らせ枠に出す。
+ *
+ * 締めた回は触らない。記録は締めた時点の写しで、あとから動かすと
+ * 記録とオリパが食い違う。知らせ（`trouble`）には出るので人が判断する。
+ *
+ * 返すのは外したぶんの一覧（画面に出すため）。
+ */
+function voidCancelledLots(){
+  const done = [];
+  const byId = new Map((DB.orders || []).map(x => [String(x.id), x]));
+  for(const o of DB.oripas || []){
+    if(o.closedAt) continue;
+    for(const l of (o.lots || []).slice()){
+      if(!l.orderId || l.voidedAt) continue;
+      const x = byId.get(String(l.orderId));
+      if(!x || !x.cancelled) continue;
+      const drawn = (o.events || []).filter(e => e.lotId === l.id).length;
+      o.events = (o.events || []).filter(e => e.lotId !== l.id);
+      o.lots   = (o.lots   || []).filter(y => y.id !== l.id);
+      done.push({ oripa: o, lot: l, order: x, drawn,
+                  yen: (Number(l.price) || 0) * Math.max(1, Number(l.qty) || 1) + (Number(l.rem) || 0) });
+    }
+  }
+  if(done.length){
+    for(const d of [...new Set(done.map(x => x.oripa))]){
+      d.updatedAt = Date.now();
+      d.rev = Math.max(0, Math.round(Number(d.rev) || 0)) + 1;
+    }
+  }
+  return done;
 }
 
 /** 上書きの前に、そのときの中身をそのまま別キーへ退避する */
@@ -3517,6 +3565,10 @@ async function syncNow(manual){
     const changed = syncApply(data.items);
     // 受け取ったぶんを含めて掃除する。溜まるのは受け取る側なので、ここで抑える
     if(changed) pruneOrders();
+    /* 取り消しになった落札を無かったことにする。**取り込みの前**に走らせる。
+       あとにすると、取り消し済みの注文から立てた落札を、その場でまた
+       外すことになる（画面がちらつく）。 */
+    if(changed) voidedNow = voidCancelledLots().concat(voidedNow);
     // 届いた落札はここでしか入ってこない。拾った直後に自動で立てる。
     // 立てると takeOrder が描き直すので、下の render は要らなくなる
     const took = autoTakeOrders();
@@ -6521,11 +6573,25 @@ function renderOrderNotice(){
      隠すだけだと「入金があるのにどこにも出ない」になる（2026-08-24）。 */
   const stale  = staleOrphans();
 
-  if(!ready.length && !wait && !older && !bad.length && !orphans && !stale.length){
+  if(!ready.length && !wait && !older && !bad.length && !orphans && !stale.length
+     && !(voidedNow || []).length){
     el.innerHTML = ""; return;
   }
 
   const out = [];
+
+  /* 取り消しで外した落札。配信画面を見ていないときのために一覧にも出す */
+  if((voidedNow || []).length){
+    out.push(`<div class="notice is-bad"><span>`
+      + `<b>取り消しになった落札を ${voidedNow.length} 件、無かったことにした`
+      + `（売上 −${yen(voidedNow.reduce((n, v) => n + v.yen, 0))}）。</b><br>`
+      + `<span class="hint">`
+      + voidedNow.map(v => `${esc(v.oripa.name || "無題")}：`
+          + `${esc(v.order.buyer || "落札者不明")} ${yen(v.yen)}`
+          + (v.drawn ? `／カード ${v.drawn} 枚を卓に戻した` : "")).join("<br>")
+      + `</span></span><span>`
+      + `<button type="button" class="btn" id="btnVoidedSeenList">確認した</button></span></div>`);
+  }
 
   // 売上が実態と食い違っている状態なので、いちばん強く出す
   if(bad.length){
@@ -6598,6 +6664,8 @@ function renderOrderNotice(){
   });
   const drop = $("btnDropUnlinked");
   if(drop) drop.addEventListener("click", dropUnlinkedOrders);
+  const vs = $("btnVoidedSeenList");
+  if(vs) vs.addEventListener("click", () => { voidedNow = []; render(); });
   el.querySelectorAll("[data-dropfor]").forEach(btn => {
     btn.addEventListener("click", () => dropOrdersFor(btn.dataset.dropfor));
   });
@@ -7425,7 +7493,20 @@ function renderLive(c){
   if(short.length) notes.push(`<div class="notice">⚠ 残りが足りず渡せなかった口が `
     + `<b>${short.reduce((n, l) => n + Number(l.shortBy), 0)} 口</b>`
     + `（落札 ${short.length} 件）。返金が要るか確かめること。</div>`);
+  /* 取り消しで外した落札。**黙って売上を減らさない。**
+     ⚠ ここもモーダルにしない（配信中に賞品ボタンが押せなくなる）。 */
+  const 外した = (voidedNow || []).filter(v => String(v.oripa.id) === String(S.id));
+  if(外した.length) notes.unshift(`<div class="notice is-bad"><span>`
+    + `<b>取り消しになった落札を ${外した.length} 件、無かったことにした`
+    + `（売上 −${yen(外した.reduce((n, v) => n + v.yen, 0))}）。</b><br>`
+    + `<span class="hint">TikTok 側で取り消し・返金になったぶん。`
+    + `落札も、そこから出た排出も外してある`
+    + `${外した.some(v => v.drawn) ? `（カード ${外した.reduce((n, v) => n + v.drawn, 0)} 枚は卓に戻した）` : ""}。`
+    + `${外した.map(v => `${esc(v.order.buyer || "落札者不明")} ${yen(v.yen)}`).join("／")}</span>`
+    + `</span><span><button type="button" class="btn" id="btnVoidedSeen">確認した</button></span></div>`);
   $("liveNotice").innerHTML = notes.join("");
+  const vb = $("btnVoidedSeen");
+  if(vb) vb.addEventListener("click", () => { voidedNow = []; renderNow(); });
 
   // --- KPI ---
   const kM = $("kpiMargin");
@@ -10196,6 +10277,8 @@ mq.addEventListener("change", () => { if(mode === "live") drawSpark(compute()); 
 
 DB = loadDB();
 pruneOrders();          // 溜まった注文をここで落とす（残すものは残す）
+// 端末を閉じているあいだに取り消しが届いていることがある
+voidedNow = voidCancelledLots();
 S = DB.oripas.find(o => o.id === DB.currentId) || null;
 mode = "list";
 loadSyncConf();
