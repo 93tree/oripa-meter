@@ -506,6 +506,24 @@ tr.is-off td{ opacity:.55; }
 .cmp > div.win .v{ color:var(--gold-ink); }
 .cmp.three{ grid-template-columns:repeat(3,minmax(0,1fr)); }
 .cmp.three .k .sub{ display:block; font-weight:400; letter-spacing:0; font-size:10.5px; margin-top:1px; }
+/* ---- 続けた場合の確率（下振れ・中央・上振れのすぐ下）----
+   分位は「どこに着地するか」しか言わない。**悪くなる目がどれだけあるか**は
+   別の数字なので、同じ枠の中で 1 段下に並べる（運用者の指示 2026-08-25）。 */
+.cmp.three .odds{
+  grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 14px;
+  padding:10px 14px; background:var(--surface-2);
+}
+.cmp.three .odds .k{ flex:1 1 100%; }
+.cmp.three .odds .k .sub{ display:block; font-weight:400; letter-spacing:0; font-size:10.5px; margin-top:1px; }
+.cmp.three .odds .p{ font-size:12px; color:var(--ink-2); white-space:nowrap; }
+.cmp.three .odds .p b{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:17px; font-weight:700; letter-spacing:-.02em; margin-right:5px;
+}
+.cmp.three .odds .bad b{ color:var(--bad); }
+.cmp.three .odds .warn b{ color:var(--gold-ink); }
+.cmp.three .odds .good b{ color:var(--good); }
+.cmp.three .odds .flat b{ color:var(--ink-3); }
 .cmp.three .foot{
   grid-column:1/-1; font-size:11.5px; color:var(--ink-3);
   padding:9px 14px; background:var(--surface);
@@ -1287,7 +1305,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='eb545c8 (08/24 23:17)';</script>
+<script>window.__BUILD='05c5d8c (08/25 02:50)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -2371,6 +2389,26 @@ function sampleOripa(){
   return o;
 }
 
+/**
+ * 何も無いところから始めるときの一覧の中身。
+ *
+ * **配布版では見本を作らない。**手元が空の端末が開くたびに見本が 1 件でき、
+ * 同期がそれを共有の部屋へ送るので、誰も作っていない「デモ用オリパ」が
+ * 一覧に湧く（運用者の指摘 2026-08-24：「デモ用オリパというのをたまに
+ * 取り込むことがあるが、これは何か意図があるのか？」）。
+ * 空になるのは初めて開いた端末・履歴を消した端末・シークレットウィンドウで、
+ * どれも「新しく始めた」のではなく**ただ手元が空なだけ**。同期が中身を
+ * 運んでくるので、見本を置く必要がない。
+ *
+ * 自動操作のブラウザぶんは 2026-08-15 に別の部屋（`-auto`）へ隔離したが、
+ * **人が素の端末で開く経路は塞いでいなかった**。ここがその経路。
+ *
+ * 見本が要るときは一覧の「サンプル」から出せるので、失うものは無い。
+ */
+function starterOripas(){
+  return syncCapable() ? [] : [sampleOripa()];
+}
+
 /** 読み込んだ値を必ず期待する形に整える（旧データ・手書き JSON 対策） */
 function normalizeOripa(o){
   const t = Date.now();
@@ -2985,7 +3023,7 @@ function loadDB(){
     }
   }catch(e){}
 
-  return normalizeDB({ oripas: [sampleOripa()], records: [] });
+  return normalizeDB({ oripas: starterOripas(), records: [] });
 }
 
 function save(){
@@ -3158,6 +3196,24 @@ function armLiveStart(o){
   }
 
   o.liveStartedAt = Date.now();                       // これから始める
+  /* **前の晩の出演をここで畳む。**同じオリパを何晩かに分けて出す運用があるので、
+     畳まないと前の晩の最後に立っていた人の区間が今夜まで続き、昼間ずっと
+     出演していたことになる（運用者の報告 2026-08-25）。
+     前の動きが途切れた時刻に「全員退席」を 1 つ置くだけで、隙間は無人になる。 */
+  closeOutStints(o, lastAct);
+}
+
+/**
+ * 前の配信の出演区間を、**その配信が止まった時刻で畳む。**
+ * すでに無人で終わっているなら何もしない。
+ */
+function closeOutStints(o, lastAct){
+  const ss = stintsOf(o);
+  const last = ss.length ? ss[ss.length - 1] : null;
+  if(!last || !(last.castIds || []).length) return null;
+  const at = Math.max(Number(lastAct) || 0, Number(last.at) || 0) + 1;
+  if(at >= Date.now()) return null;                 // 畳む先が「いま」なら意味が無い
+  return setCastsNow(o, [], at);
 }
 
 function claimLive(o){
@@ -3350,6 +3406,21 @@ function saveSyncConf(){
   try{ localStorage.setItem(SYNC_KEY, JSON.stringify(syncConf)); }catch(_){}
 }
 const syncOn = () => !!(syncConf.url && syncConf.room && syncConf.token);
+
+/**
+ * **同期に繋がりうる版か。**いま繋がっているかではない。
+ *
+ * 配布版は入口（ID とパスワード）を通れば必ず繋がるので、通す前でも
+ * 「繋がる版」として扱う。立ち上げの順は
+ *   `DB = loadDB()` → `loadSyncConf()`
+ * なので、`syncOn()` は**手元にデータが無い端末では必ず false**になる。
+ * 初めて開いた端末で見本を作るかどうかは、そこで決めてはいけない。
+ */
+function syncCapable(){
+  if(syncOn()) return true;
+  const d = window.__SYNC_DEFAULTS;
+  return !!(d && d.url && d.room && d.key);
+}
 
 /** 消したものの控え。相手の端末へ「消した」を伝えるまで持っておく */
 function graves(){
@@ -4400,6 +4471,46 @@ function stintSpans(o, from, to){
   return out;
 }
 
+/**
+ * 出演時間を**配信の窓の中に収める。**
+ *
+ * 区間は「切り替わった瞬間」しか持たず、次の区間（無ければ窓の終わり）まで続く。
+ * その窓（`stintSpans` の `start`／`end`）は**取りこぼしを出さないために広い側へ倒して**
+ * あり、落札も区間も切り落とさない。時間の割り当てにはそれで困らなかったが、
+ * **出演時間としてはそのまま数えてはいけない**。実際に膨らんだ経路が 3 つある
+ * （運用者の報告 2026-08-25：「シオンの出演時間が不自然に多く計算されている」）：
+ *
+ *  ① **締めた日付が配信より後**。`applyClose` は締め日を「その日の正午」として
+ *     扱うので、22:00〜02:00 の回を夕方に締めると窓の終わりが当日 12:00 になり、
+ *     最後に立っていた人が **10 時間** 抱える。
+ *  ② **同じオリパを何晩かに分けて出す**（`armLiveStart` が想定している運用）。
+ *     前の晩の最後の区間が、翌晩の最初の区間まで＝**昼間ずっと**続く。
+ *  ③ **複製したオリパ**。`duplicateOripa` が排出も落札も消しているのに
+ *     `stints` だけ引き継いでいた。前の晩の顔ぶれが最初から立っている。
+ *
+ * ①②③ は入口でも塞ぐが（下の 2 つとオリパの複製）、**すでに焼き込まれた記録は
+ * 直らない**。だから数えるほうでも切る。切るのは**時間だけ**で、売上と損益の
+ * 割り当ては触らない（落札の時刻で決まっていて、窓の外に落札は無い）。
+ * いまのボーナスは売上按分なので、金額は 1 円も動かない。
+ *
+ * ⚠ **窓の始まり は「開始」と「1 口目」の早いほう。**開始（`liveStartedAt`）は
+ * 席を取り直すと「いま」に戻ることがあり、そこで切ると**すでに押した出演が
+ * 丸ごと 0 分になる**（2026-08-21 に一度やっている）。早いほうを採れば、
+ * 取り直しても手前の実績は残る。
+ */
+/** 0 でない値のうち小さいほう。両方 0 なら 0 */
+const earliest = (a, b) => (a > 0 && b > 0) ? Math.min(a, b) : (a > 0 ? a : (b > 0 ? b : 0));
+
+function clipSpanMs(s, from, to){
+  const raw = Math.max(0, Number(s && s.ms) || 0);
+  const a = Number(from) || 0, b = Number(to) || 0;
+  if(!(b > a)) return raw;                       // 窓が取れないデータは触らない
+  const at = Number(s && s.at) || 0, end = Number(s && s.to) || 0;
+  if(!(end > at)) return raw;                    // 区間の形が無いものも触らない
+  const 重なり = Math.max(0, Math.min(end, b) - Math.max(at, a));
+  return Math.min(raw, 重なり);                   // 減らす方向にしか動かさない
+}
+
 /* ------------------------------------------------------------
    落札 1 件ごとの損益
 
@@ -4453,10 +4564,22 @@ function lotLedger(o){
 function castSpans(o, from, to){
   const start = Number(from) || Number(o && o.liveStartedAt) || 0;
   const end   = Number(to) || (o && o.closedAt) || Date.now();
+  /* 出演時間の窓。**落札が動いていた範囲**で、`stintSpans` の広い窓とは別物。
+     締めたオリパは最後の落札まで、配信中は「いま」まで（立っている人は増える）。 */
+  const acts = lotLedger(o);
+  const lastAct = acts.length ? acts[acts.length - 1].at : 0;
+  const winFrom = earliest(Number(o && o.liveStartedAt) || 0, acts.length ? acts[0].at : 0);
+  /* 配信中の画面はこのまま「いま」まで数える（立っている人の時間は増えていく）。
+     **記録に焼くときは最後の落札で止める**——そちらは `stintsForRecord` で切る。
+     締めた時刻（＝締め日の正午）まで伸ばすと、配信より後ろの何時間かを
+     最後に立っていた人が抱えるため（上の ①）。 */
+  const winTo = (o && o.closedAt) ? lastAct : Math.max(lastAct, Date.now());
   const spans = stintSpans(o, start, end).map(s => ({
     ...s, revenue: 0, profit: 0, lots: 0,
-    // 出演時間からは人が押した一時停止を引く（paceOf と同じ勘定）
-    ms: Math.max(0, (s.to - s.at) - pausedBetween(o, s.at, s.to))
+    // 出演時間からは人が押した一時停止を引く（paceOf と同じ勘定）。そのうえで窓で切る
+    ms: clipSpanMs({ at: s.at, to: s.to,
+                     ms: Math.max(0, (s.to - s.at) - pausedBetween(o, s.at, s.to)) },
+                   winFrom, winTo)
   }));
   let loose = 0, looseLots = 0;
   for(const e of lotLedger(o)){
@@ -4565,12 +4688,23 @@ function castPayOf(o, from, to){
   return { ...cs, pay: bonusFromSpans(cs.spans, cs.total) };
 }
 
-/** 記録に焼き込む形。**金額まで固める**ので、あとから出演者だけ直せる */
+/**
+ * 記録に焼き込む形。**金額まで固める**ので、あとから出演者だけ直せる。
+ *
+ * ⚠ **出演時間は最後の落札で止める。**締めるのは配信の何時間もあとになることが
+ * あり（締め日は「その日の正午」として入る）、そのままだと最後に立っていた人が
+ * 配信の外の時間まで抱える（`clipSpanMs` の ①）。締めた時点では `o.closedAt` は
+ * まだ入っていないので、ここで切らないと誰も切らない。
+ */
 function stintsForRecord(o, from, to){
+  const acts = lotLedger(o);
+  const lastAct = acts.length ? acts[acts.length - 1].at : 0;
+  const winFrom = earliest(Number(o && o.liveStartedAt) || 0, acts.length ? acts[0].at : 0);
   return castSpans(o, from, to).spans.map(s => ({
     at: s.at, to: s.to, castIds: s.castIds.slice(),
     revenue: Math.round(s.revenue), profit: Math.round(s.profit),
-    lots: s.lots, ms: s.ms
+    lots: s.lots,
+    ms: clipSpanMs({ at: s.at, to: s.to, ms: s.ms }, winFrom, lastAct)
   }));
 }
 
@@ -4578,8 +4712,32 @@ function stintsForRecord(o, from, to){
  * 記録からボーナスを出す。**焼き込んだ区間だけを見る。**
  * オリパを消していても、別の夜に使い回していても、記録の金額は動かない。
  */
+/** 記録の窓（配信の開始〜最終落札）。取れない古い記録は null */
+function recordWindow(r){
+  // 開始と 1 口目の**早いほう**。開始は席を取り直すと「いま」に戻ることがある
+  const from = earliest(Number(r && r.startedAt) || 0, Number(r && r.firstLotAt) || 0);
+  const to   = Number(r && r.lastAt) || 0;
+  return (from > 0 && to > from) ? { from, to } : null;
+}
+
+/**
+ * 記録の出演区間。**出演時間を配信の窓で切ってから返す。**
+ * 画面もボーナスもここを通す（生の `r.stints` を直接読まない）。
+ * 記録そのものは書き換えない——焼き込んだ数字を後から動かすと、
+ * 一度出した支払いの裏が取れなくなる。
+ */
+function recordStints(r){
+  const ss = (r && Array.isArray(r.stints)) ? r.stints : [];
+  const w = recordWindow(r);
+  if(!w) return ss;
+  return ss.map(s => {
+    const m = clipSpanMs(s, w.from, w.to);
+    return m === (Number(s.ms) || 0) ? s : { ...s, ms: m };
+  });
+}
+
 function recordPay(r){
-  const spans = (r && Array.isArray(r.stints)) ? r.stints : [];
+  const spans = recordStints(r);
   /* 分ける元は**記録の現金損益**。焼き込んだ区間ごとの損益ではない。
      区間から使うのは**売れた額（revenue）**だけなので（運用者の指示 2026-08-24）、
      あとから出演者を直しても、売上が変わらないかぎり総額は動かない。 */
@@ -5005,7 +5163,7 @@ const ACT_CARD_MAX = 1;
      0 煽り材料（目玉・完売予測）
  */
 const ACT_RANK = {
-  stop: 3,
+  stop: 3, salvage: 3,
   idle: 2, "idle-hold": 2,
   cut: 1, slow: 1, gmv: 1,
   tops: 0, eta: 0,
@@ -5154,8 +5312,27 @@ function actionCards(c){
     });
   }
 
+  /* 1.5 回収。**下振れて目玉が抜けきった回**は、続ける／終わるの二択ではなく
+     「いくらまで下げれば、いくら戻るか」の話になる（運用者の指示 2026-08-24）。
+     終わりどきと同じ重さで出す（同じ優先度なので、金額の大きいほうが勝つ）。 */
+  const sv = dec && dec.salvage;
+  if(sv) add({
+    key: "salvage", tone: sv.worth ? "is-warn" : "is-bad",
+    score: Math.abs(Math.round(sv.recover)),
+    title: `${sv.why}回`,
+    num: sv.worth ? `${yen(sv.p)} まで下げて回収` : "回収できる余地は無い",
+    body: sv.worth
+      ? `いまの ${yen(c.price)} では止まっている。${yen(sv.p)}（${pct(sv.off, 0)} オフ）なら`
+        + ` 今夜 ${sv.sold} 口 動く読みで、いま解体するより ${yen(Math.round(sv.recover))} 多く戻る。`
+        + `下げ幅の上限は外してある。競って平均 ${yen(Math.round(sv.bid))} で落ちる読みで、`
+        + `中身の原価 ${yen(Math.round(sv.costLine))} は上回る。`
+      : `競った平均が中身の原価 ${yen(Math.round(sv.costLine))} を割らないところまで下げても、`
+        + `いま解体した ${syen(Math.round(dec.stop))} から増えない。終了して在庫に戻す。`,
+    act: sv.worth ? "price" : "",
+  });
+
   // 2. 終わりどき
-  if(dec && dec.verdict === "stop") add({
+  if(dec && dec.verdict === "stop" && !sv) add({
     key: "stop", tone: "is-bad", score: Math.abs(Math.round(dec.gain)),
     title: dec.dead ? "もう回らない" : "ここで終了したほうが得",
     num: "解体して組み直す",
@@ -5353,6 +5530,18 @@ function simFromHere(c, p, topMult, minReturn, trials){
   let neg = 0;
   const arr = rest.slice();
 
+  /* ---- 続けるか解体するかの「確率」----
+     比べる相手は**いま解体した場合の手元**＝1 口も売らなかった場合の式そのもの
+     （売れ残りは原価のまま在庫に戻るので、別枠で評価しない）。
+     運用者の指示 2026-08-25：「参考価格まで下げて続けたとして、さらに赤字が
+     拡大する確率と、続けてハズレが減って参考金額が上がり利益が乗る確率を
+     それぞれ表示して判断できるようにしたい」。
+     下振れ・中央・上振れ（分位）は**どこに着地するか**しか言わないので、
+     「解体より悪くなる目がどれくらいあるか」は別に数える。
+     1 円の差は誤差なので、どちらにも数えない（0 口しか動かない読みがここに入る）。 */
+  const stopCash = c.revenue * (1 - feeRate) - c.costDrawn;
+  let worse = 0, better = 0;
+
   for(let t = 0; t < T; t++){
     let k = 0, costMore = 0, mktMore = 0, revMore = 0;
     if(!thinNow && !overNow){
@@ -5389,6 +5578,7 @@ function simFromHere(c, p, topMult, minReturn, trials){
     more.push(k); cash.push(cash_);
     mar.push(rev > 0 ? cash_ / rev : 0);
     if(cash_ < 0) neg++;
+    if(cash_ < stopCash - 1) worse++; else if(cash_ > stopCash + 1) better++;
   }
 
   const mean = a => a.length ? a.reduce((n, v) => n + v, 0) / a.length : 0;
@@ -5403,7 +5593,11 @@ function simFromHere(c, p, topMult, minReturn, trials){
     moreMed: quantile(more, 0.5), moreP10: quantile(more, 0.1), moreP90: quantile(more, 0.9),
     cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashP90: quantile(cash, 0.9),
     marMed: quantile(mar, 0.5), marP10: quantile(mar, 0.1), marP90: quantile(mar, 0.9),
-    cashNegRate: neg / T
+    cashNegRate: neg / T,
+    /* いま解体した場合と比べて、続けたほうが悪くなる／良くなる目の割合。
+       残りは「変わらない」（1 円差、または 1 口も動かない読み）。 */
+    stopCash, worseRate: worse / T, betterRate: better / T,
+    sameRate: (T - worse - better) / T
   };
 }
 
@@ -5541,12 +5735,60 @@ function decideNow(c){
      上限を超えるとき（原価より安くしか売れない局面）は 1 点に潰す。**そこで
      打ち切らずにエンジンに判断させる**（競り上がる読みがあるので、原価ちょうどでも
      続けたほうが得なことがある）。 */
+  /* ---- 回収局面（下振れて目玉が抜けきった回）----
+
+     **いまの値段ではもう回らない**状態のこと。序盤に目玉が抜かれつくすと、
+     残っているのは薄い口だけになり、現行価格では 1 口も動かない読みになる。
+     ここで普段の床（下げ幅 15%・損益分岐）を掛けたままにすると、
+     **どの値段でも動かない**という答えしか出ず、いくらまで下げれば
+     いくら戻るのかが分からない（運用者の指示 2026-08-24：
+     「序盤に目玉が抜かれつくしてもいくらまで下げるべきか出して最大で回収できる
+     金額を出せる計算式にも直してほしい。下限 15% はその場合外して計算を出す
+     ようにして OK」）。
+
+     外すのは 2 つ：
+       ・**下げ幅の上限（15%）** … 運用者の指示どおり
+       ・**損益分岐（`pBE`）** … これは「完売前提でこの回の元が取れる線」で、
+         **すでに払った原価まで含んだ額**（＝取り返せない金）。回収の判断に
+         持ち込むと、悪い回ほど床が高く上がって身動きが取れなくなる。
+
+     外さないのは **残り 1 口の中身の原価（`evCost`）**。売れ残ったカードは
+     そのまま次のオリパに使えるので、これを下回る値段で出すのは
+     **在庫を割って捨てている**のと同じ（8/20 に確立した前提）。
+
+     ⚠ ただしその線は**提示額ではなく「競って落ちる平均」に引く。**
+     オークションなので、提示 ¥1,200 の口が平均 ¥3,600 で落ちることがある。
+     提示額のほうに原価の線を引くと、**競り上がるぶんを丸ごと取りこぼす**。
+     8/24 の検査では、原価 ¥2,500 を提示額の底にしたせいで「回収の余地なし」と
+     出ていた回が、実際には ¥1,200 提示・平均 ¥3,600 落札で ¥55,000 多く
+     戻る読みだった。だから底は
+       **その値段で競った平均（`bidMean`）が中身の原価を下回らないところ**
+     に置く。探索の下端はそれより下（原価 ÷ 競り上がりの上限）まで広げ、
+     条件を満たさない候補はそもそも採らない。 */
+  const nowPrice0 = Math.max(10, Math.round(Number(c.price) || 0));
+  const nowSim0 = simAtPrice(c, nowPrice0, topMult, minReturn);
+  const salvage = !!(nowSim0 && (nowSim0.overNow || nowSim0.thinNow));
+
   /* さらに**下げ幅そのものに上限**を置く（運用者の指示 2026-08-19）。
      現行価格から `MAX_OFF` を超えて下げる提案はしない。原価や損益分岐から見て
-     まだ下げられる局面でも、配信の値付けとしては下げすぎになるため。 */
+     まだ下げられる局面でも、配信の値付けとしては下げすぎになるため。
+     ⚠ 回収局面では外す（上の注記）。 */
   const capFloor = Math.round((c.price || 0) * (1 - MAX_OFF));
-  let floor = Math.max(10, Math.round(Math.max(
-    Number(c.evCost) || 0, Number(c.pBE) || 0, capFloor)));
+  /* ただし**実績までならいつでも下りられる。**下げ幅の上限は「配信で一気に
+     下げすぎない」ための線であって、**場がすでにそこまで落ちている**日には
+     意味を持たない。直近の落札が 15% 下より安いなら、そこまで枠を開ける
+     （運用者の指摘 2026-08-24：現行 ¥17,650 の 15% 下＝¥15,000 を、直近が
+     もっと安く落ちているのに「続けるなら ¥15,000」と出していた）。
+     追いつくのは値下げではなく、**すでに動いた相場に合わせているだけ**。 */
+  const seen = recentSeen(c.o);
+  const cut = seen > 0 ? Math.min(capFloor, Math.round(seen)) : capFloor;
+  /** 中身の原価。回収局面では**落札の平均**がこれを下回る値段を採らない */
+  const costLine = Math.round(Number(c.evCost) || 0);
+  let floor = salvage
+    // 競り上がりを見込んだぶんだけ下端を広げる。採否は下の `probe` で決める
+    ? Math.max(10, Math.round(costLine / (BID_CAP > 1 ? BID_CAP : 1)))
+    : Math.max(10, Math.round(Math.max(
+        costLine, Number(c.pBE) || 0, cut)));
   // 現行価格は超えない。原価のほうが高い局面でも、配信中に値上げはしない
   if(c.price > 0) floor = Math.min(floor, Math.round(c.price));
 
@@ -5561,11 +5803,31 @@ function decideNow(c){
   const top0 = Math.max(hi, lo, Math.round(Number(c.price) || 0));
   /* **実際に売れている額より高い提案はしない**（運用者の指摘 2026-08-20）。
      現行 ¥9,000・直近の落札 ¥8,000 のときに ¥8,900 を勧めても、その値では
-     誰も買っていない。天井を実績（直近 5 件の中央値）まで下ろす。
-     下限（`lo`＝下げ幅 15% の線）は割らない。実績が無いうちは今までどおり。
+     誰も買っていない。天井を実績（`recentSeen`＝直近 5 件の中央値と、
+     直近の落札の低いほう）まで下ろす。実績が無いうちは今までどおり。
      競り上がって実績が現行を超えている日は、天井は現行のままになる。 */
-  const seen = recentMid(c.o);
   const top = seen > 0 ? Math.max(lo, Math.min(top0, Math.round(seen))) : top0;
+
+  /* ---- 回収局面の探索範囲 ----
+     解体条件（目玉切れ・薄い）は**価格の崖**になっている。目玉の線は「単価 × 倍率」
+     なので、単価を下げると残っている札が目玉に入り直して、ある一点から急に動き出す。
+     床を原価まで落とすと範囲が一気に広がるので、9 点の刻みでは**崖のすぐ下**を
+     跨いでしまう（8/24 の検査では ¥833 と ¥1,729 を見て、答えの ¥1,200 を素通り
+     していた）。そこで**まだ動く上限**を二分探索で先に出し、そこから下だけを刻む。
+     価格を下げると解体条件はどちらも緩むだけなので、「動く／動かない」は単調。 */
+  const aliveAt = q => {
+    const r = simAtPrice(c, Math.max(10, Math.round(q)), topMult, minReturn);
+    return !!(r && r.moreMean >= 1);
+  };
+  let gridTop = top;
+  if(salvage && !aliveAt(top) && aliveAt(lo)){
+    let a = lo, z = top;
+    for(let i = 0; i < 16 && z - a > 1; i++){
+      const mid = Math.round((a + z) / 2);
+      if(aliveAt(mid)) a = mid; else z = mid;
+    }
+    gridTop = Math.max(lo, a);
+  }
 
   /* ---- GMV を数に入れる ----
      比べるのは**今夜さばける口数まで**の利益額（運用者の指示 2026-08-19：
@@ -5598,22 +5860,31 @@ function decideNow(c){
 
   // 粗く振ってから、いちばん良かったところの周りを細かく見る
   const tried = [];
+  /** 回収局面の底：**競って落ちる平均**が中身の原価を割る値段は採らない */
+  const bidOK = r => !salvage || !(r.moreMean > 0) || r.bidMean >= costLine;
   const probe = p => {
     const k = Math.max(10, Math.round(p));
     if(k > top || tried.some(t => t.p === k)) return;
     const r = simAtPrice(c, k, topMult, minReturn);
-    if(r) tried.push({ p: k, ev: tonight(r, r.cashMean), r });
+    if(r && bidOK(r)) tried.push({ p: k, ev: tonight(r, r.cashMean), r });
   };
   const STEPS = 9;
-  for(let i = 0; i < STEPS; i++) probe(lo + (top - lo) * i / (STEPS - 1));
+  for(let i = 0; i < STEPS; i++) probe(lo + (gridTop - lo) * i / (STEPS - 1));
   probe(c.price);                       // 「そのまま続ける」は必ず候補に入れる
 
   let best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
   if(!best) return { verdict: "stop", stop, best: null, gain: 0, hi };
 
-  const step = (top - lo) / (STEPS - 1);
+  const step = (gridTop - lo) / (STEPS - 1);
   for(const d of [-0.5, -0.25, 0.25, 0.5]) probe(best.p + step * d);
   best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
+  /* 回収局面は床が一気に下がるので、9 点の刻みが粗くなる（現行 ¥17,000 に対し
+     床が ¥1,500 なら 1 目盛り ¥1,900）。**山の頂上を跨いだまま**答えを出さない
+     よう、もう一段細かく見る。試算は価格ごとに使い回されるので安い。 */
+  if(salvage){
+    for(const d of [-0.375, -0.25, -0.125, 0.125, 0.25, 0.375]) probe(best.p + step * d);
+    best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
+  }
 
   // 出す価格は必ずキリのいい額にする。配信で口に出す数字なので ¥2,088 では使えない。
   // 丸めたぶん期待値は少し動くが、動いたあとの数字をそのまま表示するので画面の中では辻褄が合う。
@@ -5624,8 +5895,17 @@ function decideNow(c){
      （そのまま `lo` にすると ¥4,250 のような口に出せない額になる）。
      現行価格は超えない（配信中に値上げはしない）。 */
   if(rounded < lo) rounded = Math.min(c.price || Infinity, roundPriceUp(lo)) || lo;
+  /* 回収局面の底は「競った平均 ≥ 中身の原価」なので、**丸めた拍子に割る**ことがある。
+     割ったら 1 段上げる（提示を上げれば競り上がりの天井も上がる）。 */
+  if(salvage) for(let i = 0; i < 6; i++){
+    const t = simAtPrice(c, rounded, topMult, minReturn);
+    if(!t || bidOK(t)) break;
+    const up = roundPriceUp(rounded + 1);
+    if(!(up > rounded) || up > top) break;
+    rounded = up;
+  }
   const rr = simAtPrice(c, rounded, topMult, minReturn);
-  if(rr) best = { p: rounded, ev: tonight(rr, rr.cashMean), r: rr };
+  if(rr && bidOK(rr)) best = { p: rounded, ev: tonight(rr, rr.cashMean), r: rr };
 
   /* 案ごとの数字をひとまとめにする。画面と行動カードはここの数字で話す。
        mid    … 今夜の利益額（中央値ベース）
@@ -5705,7 +5985,35 @@ function decideNow(c){
     }
   }
 
-  return { verdict, stop, best, gain, hi, lo, top, seen, dead, revive,
+  /* 下限が何で決まったか。画面はここを見て「なぜここで止まるのか」を出す。
+     下げ幅の上限が効いているのか、原価・損益分岐で止まっているのかで
+     言うことが変わる。 */
+  const cutBound = !salvage && cut >= Math.max(Number(c.evCost) || 0,
+                                              isFinite(c.pBE) ? Number(c.pBE) || 0 : 0) - 1;
+
+  /* ---- 回収の答え ----
+     「いくらまで下げるべきか」と「そこまで下げたら最大でいくら戻るか」を
+     まとめて返す。`recover` は**いま解体するのと比べて余計に戻る額**で、
+     これがマイナスなら下げても意味が無い（＝終了したほうが手元は多い）。 */
+  const svPrice = bestPlan ? bestPlan.p : Math.round(best.p);
+  const svCash  = bestPlan ? bestPlan.mid : best.ev;
+  const salvagePlan = salvage ? {
+    p: svPrice,
+    cash: svCash,                       // その値段で回収しきったときの着地
+    recover: svCash - stop,             // いま解体するより余計に戻る額
+    sold: bestPlan ? bestPlan.sold : 0,
+    gmv: bestPlan ? bestPlan.gmv : 0,
+    off: c.price > 0 ? 1 - svPrice / c.price : 0,
+    floor: lo,                          // 探した下端
+    costLine,                           // 底の線＝残り1口の中身の原価
+    bid: best.r ? Math.round(best.r.bidMean) : 0,   // その値段で競った平均
+    worth: !dead && svCash > stop,      // 下げる価値があるか
+    why: [nowSim0 && nowSim0.overNow ? "目玉が出尽くした" : "",
+          nowSim0 && nowSim0.thinNow ? "残りが薄すぎる" : ""].filter(Boolean).join("・"),
+  } : null;
+
+  return { verdict, stop, best, gain, hi, lo, top, seen, cut, capFloor, cutBound,
+           salvage: salvagePlan, dead, revive,
            stay, cutGain, plan: bestPlan, hoursLeft,
            elast: pm ? pm.elast : 0, elastMeasured: !!(pm && pm.measured) };
 }
@@ -6249,7 +6557,7 @@ function renderDataNotice(){
       if(!await ask("退避データは残したまま、新しく始めますか？", { okLabel: "新しく始める" })) return;
       dataState = "ok";
       brokenRaw = null;
-      DB = normalizeDB({ oripas: [sampleOripa()], records: [] });
+      DB = normalizeDB({ oripas: starterOripas(), records: [] });
       S = null;
       go("list");
     });
@@ -7529,7 +7837,11 @@ function renderReplayCasts(){
   if(mode !== "replay" || !r){ box.hidden = true; return; }
   box.hidden = false;
 
-  const spans = ensureRecordStints(r);
+  /* ⚠ **切ったほうを読む。**生の `r.stints` には配信より後ろの時間が
+     焼き込まれていることがある（`clipSpanMs` の注記）。
+     `ensureRecordStints` は区間を持たない古い記録に足すために先に通す。 */
+  ensureRecordStints(r);
+  const spans = recordStints(r);
   const pay = recordPay(r);
   const tb = $("replayCastTable").querySelector("tbody");
   tb.innerHTML = "";
@@ -8729,11 +9041,45 @@ let priceAdj = 0, priceAdjKey = "";
  * **実際にいくらで売れているか。**直近 5 件（排出まで済んだぶん）の中央値。
  * 提案の下限と上限は、どちらもこの実績から引く。0 なら実績が無い。
  */
-function recentMid(o){
+/**
+ * 直近 n 件の「出た」落札の単価（古い順）。
+ *
+ * 落札の `price` は**1 口あたり**（合計は `lotTotal`）なので、販売単価と
+ * そのまま比べられる。0 円と、二重に立ったぶん（`dupOf`）は数えない。
+ * 以前は 0 円を外す前に 5 件を切っていたので、訂正のぶんだけ窓が痩せていた。
+ */
+function recentLotPrices(o, n){
   const done = lotDrawn(o);
-  const ps = (o.lots || []).filter(l => (done.get(l.id) || 0) > 0).slice(-5)
-    .map(l => Number(l.price) || 0).filter(v => v > 0).sort((a, b) => a - b);
+  const ps = ((o && o.lots) || [])
+    .filter(l => !l.dupOf && (done.get(l.id) || 0) > 0)
+    .map(l => Number(l.price) || 0)
+    .filter(v => v > 0);
+  return ps.slice(-Math.max(1, Math.round(n) || 5));
+}
+
+/** 直近 5 件の落札の中央値。単発の高値・安値に振り回されない「場の中心」 */
+function recentMid(o){
+  const ps = recentLotPrices(o, 5).sort((a, b) => a - b);
   return ps.length ? ps[Math.floor(ps.length / 2)] : 0;
+}
+
+/**
+ * **いま実際に買われている額。**値付けの天井も下限もここから引く。
+ *
+ * 中央値だけで見ると、**下がり続けている場に遅れて残る**。
+ * ¥20,000→18,000→15,000→13,000→12,000 と落ちてきた場の中央は ¥15,000 で、
+ * 直近の落札 ¥12,000 より 3,000 円高い。その ¥15,000 を「続けるなら」として
+ * 出していた（運用者の指摘 2026-08-24：「直近更に低い金額で落札されていて、
+ * 直近よりも更に利益率が低下しているのに直近の落札額より上回った金額に
+ * なっている場合がある」）。**直近の落札を上回らない**ところまで下ろす。
+ *
+ * 競り上がっている場（直近が中央より上）では中央のまま＝上へは引っぱられない。
+ * 単発の高値で天井が跳ね上がると、その値では続かない額を勧めることになる。
+ */
+function recentSeen(o){
+  const ps = recentLotPrices(o, 5);
+  if(!ps.length) return 0;
+  return Math.min(recentMid(o), ps[ps.length - 1]);
 }
 
 /**
@@ -8742,11 +9088,15 @@ function recentMid(o){
  * 計算だけで価格を出すと、目玉が出きった直後などに**いま買われている額より
  * ずっと安い数字**が出ることがある。実際にその値で売れている以上、そこまで
  * 下げる理由は無い（下げれば下げたぶんだけ取りこぼす）。
- * 直近の落札の中央値の 7 割を下限に置く。
+ * 直近の落札（`recentSeen`）の 7 割を下限に置く。
+ *
+ * ⚠ ここは**中央値ではなく `recentSeen`** から引く。中央値から引くと、
+ * 下がり相場では 7 割の線そのものが直近の落札より高くなり、エンジンが
+ * 出した額を実績より上へ押し戻していた（2026-08-24）。
  */
 function recentFloor(o){
-  const mid = recentMid(o);
-  return mid > 0 ? roundPrice(mid * 0.7) : 0;
+  const seen = recentSeen(o);
+  return seen > 0 ? roundPrice(seen * 0.7) : 0;
 }
 
 /** 解体前提の損益分岐・目標利益率ライン。届かないときは Infinity。
@@ -8758,6 +9108,54 @@ function liveBreakup(c){
   return cache.bk || null;
 }
 
+
+/**
+ * **続けるか、解体するか**を確率で出す 1 行。
+ *
+ * 運用者の指示 2026-08-25：
+ *   「直近の値段から参考価格まで下げて続けたとして、さらに赤字が拡大する確率と、
+ *     続けてハズレが減って参考金額が上がり利益が乗る確率をそれぞれ表示して
+ *     判断できるようにしたい」
+ *
+ * 下振れ・中央・上振れは**どこに着地するか**しか言わない。「悪くなる目が
+ * どれくらいあるか」は別の数字なので、そのすぐ下に並べる。
+ * 比べる相手は **いま解体した場合の手元**（＝1 口も売らなかった場合と同じ額）で、
+ * 画面の「いま終われば ¥X」と同じもの。試算 1,000 回のうち何回そこを
+ * 下回った／上回ったかを、そのまま割合にしている。
+ *
+ * ⚠ **語は手元の符号で変える。**すでに赤字の回で「減る」と書くと、
+ * どこから減るのか読めない。赤字なら「赤字が広がる」「赤字が縮む」。
+ */
+function oddsRow(dec, b, price){
+  if(!b || !(b.trials > 0)) return "";
+  const 悪い = Math.max(0, Number(b.worseRate) || 0);
+  const 良い = Math.max(0, Number(b.betterRate) || 0);
+  const 同じ = Math.max(0, Number(b.sameRate) || 0);
+  const 赤字率 = Math.max(0, Number(b.cashNegRate) || 0);
+  const 黒字率 = 1 - 赤字率;
+  const 出す = [];
+  if(dec.stop < 0){
+    /* すでに赤字。**戻れるのか**がいちばん知りたいことなので、
+       「良くなる」を「縮むだけ」と「黒字に戻る」に割る。
+       `stop < 0` なので、黒字で終わる目はすべて「良くなる」目に入っている。 */
+    出す.push(["bad", 悪い, "赤字が広がる"]);
+    出す.push(["warn", Math.max(0, 良い - 黒字率), "赤字は縮む"]);
+    出す.push(["good", 黒字率, "黒字に戻る"]);
+  }else{
+    /* いまは黒字。**赤字に落ちる目があるか**が判断の分かれ目。
+       `stop >= 0` なので、赤字で終わる目はすべて「悪くなる」目に入っている。 */
+    出す.push(["bad", 赤字率, "赤字に落ちる"]);
+    出す.push(["warn", Math.max(0, 悪い - 赤字率), "いまより減る"]);
+    出す.push(["good", 良い, "利益が乗る"]);
+  }
+  if(同じ >= 0.005) 出す.push(["flat", 同じ, "変わらない"]);
+  return `<div class="odds">
+    <span class="k">${yen(price)} で続けたら
+      <span class="sub">いま解体（${syen(Math.round(dec.stop))}）と比べて・試算 ${b.trials} 回</span></span>
+    ${出す.filter(([, v]) => v >= 0.005)
+        .map(([cls, v, 語]) => `<span class="p ${cls}"><b>${pct(v, 0)}</b>${語}</span>`).join("")}
+  </div>`;
+}
 
 function renderPrice(c){
   const a = auctionSummary(S);
@@ -8803,9 +9201,21 @@ function renderPrice(c){
   // ここが判断の本体。続けるのと止めるのを同じ物差しで比べる
   const dec = c.left > 0 ? decideNow(c) : null;
   const raw = dec && dec.best ? dec.best.p : 0;
-  // **いま買われている額より大きく下げない。**下げたぶんだけ取りこぼす
-  const floor = raw > 0 ? recentFloor(S) : 0;
-  const base = raw > 0 ? Math.max(raw, floor) : 0;
+  /* **いま買われている額より大きく下げない。**下げたぶんだけ取りこぼす。
+     ⚠ ただし**回収局面では引かない。**直近の落札はまさに「その値段では
+     もう動かない」ことを示している額なので、その 7 割を床にすると
+     エンジンが探した回収の額（原価まで見た額）を押し戻してしまう。
+     実際 ¥5,900 の答えが ¥7,000 に戻され、**画面と行動カードで違う額**が
+     出ていた（2026-08-24）。 */
+  const floor = raw > 0 && !(dec && dec.salvage) ? recentFloor(S) : 0;
+  const seen = raw > 0 ? Math.round(recentSeen(S)) : 0;
+  /* ⚠ 下限で押し上げるときも、**直近の落札は超えない。**
+     ここを見ていなかったので、下がり相場ではエンジンが出した額を
+     下限が実績より上へ押し戻していた（2026-08-24）。
+     エンジン自身が実績より上を出しているとき（原価・損益分岐が実績より
+     高い局面）は、その額を尊重する＝ここでは下げない。 */
+  let base = raw > 0 ? Math.max(raw, floor) : 0;
+  if(base > 0 && seen > 0) base = Math.min(base, Math.max(raw, seen));
   // 提案そのものが動いたら、手で足したぶんは捨てる
   const key = `${S.id}|${base}`;
   if(priceAdjKey !== key){ priceAdjKey = key; priceAdj = 0; }
@@ -8813,7 +9223,8 @@ function renderPrice(c){
   decidedPrice = goPrice;                    // 「この価格に変更」が押す価格
   const stepBox = $("priceStep");
   // もう回らないときは押せる価格が無いので、刻みごと消す（参考線は文章で出す）
-  if(stepBox) stepBox.hidden = !(goPrice > 0) || mode === "watch" || !!(dec && dec.dead);
+  if(stepBox) stepBox.hidden = !(goPrice > 0) || mode === "watch" || !!(dec && dec.dead)
+    || !!(dec && dec.salvage && !dec.salvage.worth);
 
   let cls = "", msg = "";
   if(sold_out){
@@ -8836,25 +9247,55 @@ function renderPrice(c){
   }else{
     const go = dec.verdict === "go";
     const even = dec.verdict === "even";
-    cls = go ? "is-good" : even ? "" : "is-bad";
+    /* 回収は「良い判断」ではない。**悪い回を悪いなりに畳む**ので緑にしない。
+       余地が無ければ解体と同じ赤。 */
+    cls = dec.salvage ? (dec.salvage.worth ? "" : "is-bad")
+        : go ? "is-good" : even ? "" : "is-bad";
     const b = dec.best.r;
 
-    $("recLabel").textContent = go ? "続ける" : even ? "どちらでも大差ない" : "解体する";
-    $("recPrice").textContent = (go || even) && !dec.dead ? yen(goPrice) : "終了してOK";
+    /* 回収局面は「続ける」ではない。**もう回らない回から、いくら引き出せるか**の話
+       なので札を分ける（運用者の指示 2026-08-24）。 */
+    const sv = dec.salvage;
+    $("recLabel").textContent = sv
+      ? (sv.worth ? "回収する" : "解体する")
+      : go ? "続ける" : even ? "どちらでも大差ない" : "解体する";
+    $("recPrice").textContent = sv
+      ? (sv.worth ? yen(goPrice) : "終了してOK")
+      : (go || even) && !dec.dead ? yen(goPrice) : "終了してOK";
     const diff = c.price - goPrice;
     const adj = priceAdj ? `／手動で ${priceAdj > 0 ? "+" : ""}${yen(priceAdj)}` : "";
-    const held = floor > raw ? `／直近の落札に合わせて据え置き` : "";
-    // 下げ幅が上限に張り付いているときは、そう言う（「なぜここで止まるのか」を隠さない）
-    const capped = diff > 0 && diff >= Math.round(c.price * MAX_OFF) - 1
+    const held = base > raw ? `／直近の落札に合わせて据え置き` : "";
+    /* 下げ幅が上限に張り付いているときは、そう言う（「なぜここで止まるのか」を
+       隠さない）。**実績に追いついて止まっているとき**は 15% の線ではないので
+       言わない（下の `seenCap` がその理由を出す）。 */
+    const capped = diff > 0 && dec.cutBound && goPrice <= dec.lo + 1
+      && dec.cut >= Math.round(c.price * (1 - MAX_OFF)) - 1
       ? `／下げ幅は ${pct(MAX_OFF, 0)} まで` : "";
-    // 実績より上を出さないために天井を下ろしたときは、その理由を出す
-    const seenCap = dec.seen > 0 && dec.top < Math.round(c.price) && goPrice >= dec.top - 1
-      ? `／直近 5 件の落札（中央 ${yen(Math.round(dec.seen))}）より上は出さない` : "";
-    $("recDelta").textContent = ((go || even)
+    /* 実績より上を出さないために天井を下ろしたときは、その理由を出す。
+       **天井が実績まで下りているときだけ**言う。原価や損益分岐で止まっていて
+       実績より上に居るのに「実績より上は出さない」と出していた（2026-08-24）。 */
+    const seenAt = Math.round(Number(dec.seen) || 0);
+    const seenCap = seenAt > 0 && seenAt < Math.round(c.price)
+      && dec.top <= seenAt + 1 && goPrice >= dec.top - 1
+      ? `／直近の落札（${yen(seenAt)}）より上は出さない` : "";
+    /* 逆に、原価・損益分岐が実績より上にあって**そこまで下りられない**ときは、
+       そう言う。黙って実績より高い額を出すと「その値では売れていない」ことが
+       隠れる。下げ幅の上限では起きない（実績までは開けてある）ので、
+       ここに出るのは中身の原価が場に追い越された局面だけ。 */
+    const lo = Math.round(Number(dec.lo) || 0);
+    const 割れない線 = isFinite(c.pBE) && c.pBE > 0 && lo >= Math.round(c.pBE) - 1
+      ? "損益分岐" : "残り1口の原価";
+    const overSeen = seenAt > 0 && goPrice > seenAt && !seenCap
+      ? `／直近の落札 ${yen(seenAt)} より上だが、${割れない線} ${yen(lo)} は割れない` : "";
+    /* 回収局面では下げ幅の上限も損益分岐も外して探している。**外したと言う。**
+       黙って 15% より下の額を出すと、決めた線を破ったように見える。 */
+    const svNote = sv && sv.worth && diff > 0
+      ? `／${sv.why}回。下げ幅の上限は外してある` : "";
+    $("recDelta").textContent = ((go || even || (sv && sv.worth))
       ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
          : diff < 0 ? `現行から ${yen(-diff)} 上げ`
          : "現行価格のまま（下げる理由なし）")
-      : `残りを在庫に戻す`) + held + capped + seenCap + adj;
+      : `残りを在庫に戻す`) + held + capped + seenCap + overSeen + svNote + adj;
 
     // **続けた場合の振れ幅を出す。**「いま解体」は現時点での利益と同じ額に
     // なるので別枠にしない（解体したカードは原価のまま在庫に戻るため）。
@@ -8874,6 +9315,7 @@ function renderPrice(c){
         <span class="k">上振れ<span class="sub">良いほう1割</span></span>
         <span class="v">${syen(Math.round(b.cashP90))}</span>
       </div>
+      ${oddsRow(dec, b, goPrice)}
       <div class="foot">
         いま終われば <b>${syen(Math.round(dec.stop))}</b>。
         ${yen(goPrice)} で出して あと <b>${b.moreMed} 口</b> さばける読み
@@ -8893,7 +9335,34 @@ function renderPrice(c){
         + ` ${dec.stay.sold} → ${dec.plan.sold} 口に増えるぶん、`
         + `<b>${yen(Math.round(dec.cutGain))}</b> 利益額が高い。`
       : "";
-    if(go){
+    if(sv){
+      /* ---- 回収 ----
+         いくらまで下げるべきか、そこで最大いくら戻るか、底はどこか。
+         3 つを 1 文で言い切る（運用者の指示 2026-08-24）。 */
+      const 原価 = yen(Math.round(sv.costLine));
+      if(sv.worth){
+        msg = `<b>${sv.why}。</b>いまの ${yen(c.price)} では止まっているので、`
+            + `<b>回収に切り替える</b>。<b>${yen(goPrice)}</b>（${pct(sv.off, 0)} オフ）まで下げれば`
+            + ` 今夜 <b>${sv.sold} 口</b> 動く読みで、着地は <b>${syen(Math.round(sv.cash))}</b>。`
+            + `いま解体（${syen(Math.round(dec.stop))}）より <b>${yen(Math.round(sv.recover))}</b> 多く戻る。`
+            + `下げ幅の上限（${pct(MAX_OFF, 0)}）と損益分岐は外して探した。`
+            /* 底は**提示額ではなく落札の平均**に引いてある。ここを言わずに
+               「原価 ¥2,500 の中身を ¥1,200 で出す」とだけ見えると、
+               在庫を捨てているように読める（実際は競り上がって上回る）。 */
+            + `底は<b>競って落ちる平均が中身の原価 ${原価} を割らないところ</b>で、`
+            + `この値段なら平均 <b>${yen(Math.round(sv.bid))}</b> で落ちる読み。`;
+        if(b.cashP10 < dec.stop)
+          msg += `ただし<b>下振れると ${yen(Math.round(dec.stop - b.cashP10))} 減る</b>目もある。`;
+      }else{
+        const 差 = Math.round(sv.recover);
+        msg = `<b>${sv.why}。</b>底（競った平均が中身の原価 ${原価} を割らない線）まで下げても、`
+            + `着地は <b>${syen(Math.round(sv.cash))}</b> で、いま解体した `
+            + `<b>${syen(Math.round(dec.stop))}</b> `
+            + (差 < 0 ? `を <b>${yen(-差)}</b> 下回る。` : `から増えない。`)
+            + `下げ幅の上限も損益分岐も外して探した結果なので、<b>回収できる余地は無い</b>。`
+            + `終了して残り ${c.left} 口ぶんのカードを在庫に戻す。`;
+      }
+    }else if(go){
       msg = `${yen(goPrice)} で続けるほうが、いま終わるより中央で <b>${yen(d)}</b> 得。`
           + vsStay
           + `この価格なら還元率 ${pct(goPrice > 0 ? c.evMkt / goPrice : 0, 0)} で買い手も動く。`;
@@ -8941,7 +9410,8 @@ function renderPrice(c){
   $("recMsg").innerHTML = msg;
   // もう回らないと言っているのに、押せる価格が残っていると紛らわしい
   $("btnApply").disabled = sold_out || goPrice <= 0 || goPrice === c.price
-    || !!(dec && dec.dead);
+    || !!(dec && dec.dead)
+    || !!(dec && dec.salvage && !dec.salvage.worth);
 
   renderTops(c);
   renderPulse(c, dec);
@@ -10009,7 +10479,12 @@ function duplicateOripa(src, suffix, openIt){
   copy.lots = [];
   copy.closedAt = 0;
   copy.liveStartedAt = 0;      // 複製は別の配信。開始時刻は座ったときに入る
+  /* 出演区間も引き継がない。**前の晩の顔ぶれが最初から立っている**ことになり、
+     その人が「前の晩の終わり〜今夜の最初の交代」を丸ごと抱える
+     （運用者の報告 2026-08-25：出演時間が不自然に多い）。 */
+  copy.stints = [];
   copy.live = null;
+  copy.liveKick = null;
   copy.rev = 0;                // 別の id の新しいもの。版は 1 から数え直す
   copy.createdAt = copy.updatedAt = Date.now();
   DB.oripas.push(copy);
