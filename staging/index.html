@@ -1294,7 +1294,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='2170305 (08/24 22:01)';</script>
+<script>window.__BUILD='14d98ab (08/24 22:36)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1754,7 +1754,7 @@ window.__SYNC_DEFAULTS = {
     <section class="panel" id="replayCastPanel" hidden>
       <header>
         <h2>出演を直す</h2>
-        <span class="hint">直せるのは出演者だけ。時刻と金額は動かない。分け前は配信の合計損益を実働で按分したもの</span>
+        <span class="hint">直せるのは出演者だけ。時刻と金額は動かない。分け前は配信の合計損益を、その区間で売れた額で按分したもの</span>
       </header>
       <div class="body">
         <div class="scroll-x">
@@ -4186,7 +4186,7 @@ function auctionSummary(o){
 
      ・利益の 5% を積み、損の 5% を引く（相殺する）
      ・元になるのは**現金損益**（売上 − 手数料 − 排出原価）
-     ・**その配信の合計損益を、出演時間で按分する**（運用者の指示 2026-08-23）
+     ・**その配信の合計損益を、その区間で売れた額で按分する**（運用者の指示 2026-08-24）
      ・2 名出演の区間は **2.5% ずつ**（人数で割ってから率をかける）
      ・区間は**落札の時刻**で切る。開封の時刻ではない
      ・0 止めは**月の合計**でかける。翌月に持ち越さない
@@ -4196,19 +4196,31 @@ function auctionSummary(o){
    ⚠ **キャストは消せない。**休止だけ。過去の記録から名前が消えると
    支払った額の裏が取れなくなる（運用者の指示 2026-08-21）。
 
-   ■ 按分の仕方を変えた（2026-08-23）
-   前は**その区間で出た損益**をその区間の出演者に付けていた。運用者の指示：
-   「その配信内で発生した合計損益を出演したキャストの時間で分配」。
+   ■ 按分の仕方を 2 度変えている
 
-   区間ごとに付けると、**当たりが出た時間に居たかどうか**で取り分が決まる。
-   どのカードが出るかはキャストに動かせないので、運の当たり外れがそのまま
-   報酬になっていた。時間で按分すれば、同じ配信に同じだけ出た人は同じ額になる。
+   ① 8/23：**区間の損益** → **出演時間**
+      区間ごとに付けると、当たりが出た時間に居たかどうかで取り分が決まる。
+      どのカードが出るかはキャストに動かせないので、運がそのまま報酬になっていた。
 
-     ひとりぶん ＝ 配信の合計損益 × （その区間の実働 ÷ 配信全体の実働）÷ 人数
+   ② 8/24：**出演時間** → **その区間で売れた額**（いまここ）
+      運用者の指示：「売れた金額で分配率を決め、割ることにしたい」。
+      時間は**拘束時間への対価**、売上は**成果への対価**。どちらが正しいという
+      話ではなく、経営の判断で後者を採った。
 
-   ⚠ **割る時間は無人の時間も含めた全体**。含めないと、押し忘れた時間のぶんまで
-   出演者に配られる。無人ぶんは今までどおり「キャスト未登録ぶん」に出す。
-   ⚠ 実働からは**人が押した一時停止を引いてある**（`castSpans` が `ms` を作る所）。
+      ⚠ **①で外した「区間の損益」に戻ったのではない。**損益は
+      「どのカードが出たか」＝キャストに動かせない運。売上は
+      「どれだけ売ったか」＝**本人の働き**。別のものを見ている。
+
+     ひとりぶん ＝ 配信の合計損益 × （その区間の売上 ÷ 配信全体の売上）÷ 人数
+
+   ⚠ **割る売上は無人の時間のぶんも含めた全体**。含めないと、押し忘れた時間の
+   損益まで出演者に配られる。無人ぶんは今までどおり「キャスト未登録ぶん」に出す。
+   ⚠ **損の回も同じ規則で割る**（運用者の指示 2026-08-24）。規則を 1 本にする。
+      その回だけ見ると「売った人ほど損を被る」形になるが、0 止めは**月の合計**で
+      かかるので、黒字の回と相殺される。
+   ⚠ 売れた額が**全体で 0 円**の回は按分しようがないので、**出演時間で割る**
+      （そこも 0 なら誰にも付けない）。区間ごとの売上 0 は 0 円のままでよい
+      （運用者の指示 2026-08-24）。
    ============================================================ */
 
 /** ボーナス率。2 名なら人数で割るので実質 2.5% ずつになる */
@@ -4422,16 +4434,22 @@ function castSpans(o, from, to){
   const activeMs = spans.reduce((n, s) => n + Math.max(0, Number(s.ms) || 0), 0);
   const noneMs = spans.filter(s => !(s.castIds || []).length)
                       .reduce((n, s) => n + Math.max(0, Number(s.ms) || 0), 0);
-  /* 無人の時間ぶん。実働が 1 ミリも無いなら誰にも配りようが無いので全部ここ。 */
-  const nobody = activeMs > 0 ? total * (noneMs / activeMs) : total;
-  return { spans, loose, looseLots, nobody, total, activeMs, noneMs,
+  // 按分の重み＝売れた額。全体が 0 円のときだけ実働に逃げる（`bonusFromSpans` と同じ規則）
+  const allRev = spans.reduce((n, s) => n + Math.max(0, Number(s.revenue) || 0), 0);
+  const noneRev = spans.filter(s => !(s.castIds || []).length)
+                       .reduce((n, s) => n + Math.max(0, Number(s.revenue) || 0), 0);
+  /* 無人のぶん。売上でも実働でも測れないなら、誰にも配りようが無いので全部ここ。 */
+  const nobody = allRev > 0 ? total * (noneRev / allRev)
+               : activeMs > 0 ? total * (noneMs / activeMs)
+               : total;
+  return { spans, loose, looseLots, nobody, total, activeMs, noneMs, allRev, noneRev,
            unassigned: loose + nobody };   // 「キャスト未登録ぶん」として出す額
 }
 
 /* ------------------------------------------------------------
    ボーナス
 
-   区間のひとりぶん ＝ 配信の合計損益 × (区間の実働 ÷ 全体の実働) ÷ 人数
+   区間のひとりぶん ＝ 配信の合計損益 × (区間の売上 ÷ 全体の売上) ÷ 人数
    その回のボーナス ＝ trunc( Σ(ひとりぶん) × 5% )
 
    ⚠ **切り捨ては 0 の方向**（`Math.trunc`）。利益も損も額が小さくなる側に
@@ -4458,11 +4476,16 @@ const castBonusOf = profit => Math.trunc((Number(profit) || 0) * CAST_RATE);
  * 区間の並びから、キャストごとの取り分（切り捨て前）を出す。
  *
  * `total` は**その配信で出た合計損益**。区間ごとの損益は使わない
- * （運用者の指示 2026-08-23。どのカードが出るかはキャストに動かせないので、
- * 運の当たり外れを報酬に持ち込まない）。
+ * （8/23 の指示。どのカードが出るかはキャストに動かせないので、運を報酬にしない）。
  *
- * ⚠ **割る時間は無人の時間も含めた全体。**出演者ぶんだけで割ると、
+ * **重みは「その区間で売れた額」**（運用者の指示 2026-08-24）。
+ * ⚠ これは 8/23 に外した「区間の損益で割る」とは別物。損益は**運**、
+ * 売上は**本人の働き**。
+ *
+ * ⚠ **割る売上は無人の時間のぶんも含めた全体。**出演者ぶんだけで割ると、
  * 押し忘れた時間の損益まで出演者に配られてしまう。
+ * ⚠ **全体の売上が 0 円**なら按分しようがないので**実働で割る**。
+ * そこも 0 なら誰にも付けない（未登録ぶんへ回る）。
  *
  * `profit` は按分した取り分（ボーナスの元）。`revenue` / `lots` / `ms` は
  * **その人が出ていた時間に実際に起きたこと**で、按分しない。
@@ -4472,20 +4495,26 @@ const castBonusOf = profit => Math.trunc((Number(profit) || 0) * CAST_RATE);
 function bonusFromSpans(spans, total){
   const list = spans || [];
   const P = Number(total) || 0;
-  const D = list.reduce((n, s) => n + Math.max(0, Number(s.ms) || 0), 0);
+  const rev = s => Math.max(0, Number(s.revenue) || 0);
+  const ms  = s => Math.max(0, Number(s.ms) || 0);
+  const R = list.reduce((n, s) => n + rev(s), 0);
+  const D = list.reduce((n, s) => n + ms(s), 0);
+  /* 売上で割る。1 円も売れていない回だけ実働に逃げる。
+     ⚠ 区間ごとの売上 0 は 0 円のままでよい（運用者の指示 2026-08-24）。 */
+  const 重み = R > 0 ? rev : (D > 0 ? ms : null);
+  const 全体 = R > 0 ? R : D;
   const by = new Map();
-  // 実働がまったく無いなら按分できない。誰にも付けない（未登録ぶんへ回る）
-  if(!(D > 0)) return [];
+  if(!重み) return [];          // 売上も実働も無い＝按分できない
   for(const s of list){
     const n = (s.castIds || []).length;
-    const ms = Math.max(0, Number(s.ms) || 0);
-    if(!n || !ms) continue;
-    const share = P * (ms / D) / n;
+    const w = 重み(s);
+    if(!n || !w) continue;
+    const share = P * (w / 全体) / n;
     for(const id of s.castIds){
       const e = by.get(String(id)) || { castId: String(id), profit: 0, ms: 0, lots: 0, revenue: 0 };
       e.profit  += share;              // 按分した取り分
       e.revenue += s.revenue / n;      // その時間に実際に売れた額（按分しない）
-      e.ms      += ms;
+      e.ms      += ms(s);
       e.lots    += s.lots;
       by.set(String(id), e);
     }
@@ -4514,9 +4543,9 @@ function stintsForRecord(o, from, to){
  */
 function recordPay(r){
   const spans = (r && Array.isArray(r.stints)) ? r.stints : [];
-  /* 分ける元は**記録の現金損益**。焼き込んだ区間ごとの損益ではない
-     （運用者の指示 2026-08-23）。区間から使うのは**実働（ms）**だけなので、
-     あとから出演者を直しても、時間が変わらないかぎり総額は動かない。 */
+  /* 分ける元は**記録の現金損益**。焼き込んだ区間ごとの損益ではない。
+     区間から使うのは**売れた額（revenue）**だけなので（運用者の指示 2026-08-24）、
+     あとから出演者を直しても、売上が変わらないかぎり総額は動かない。 */
   const total = Number(r && r.profit) || 0;
   const pay = bonusFromSpans(spans, total);
   const named = pay.reduce((n, p) => n + p.profit, 0);
@@ -7150,9 +7179,9 @@ function renderCastScreen(){
       + `（出演を立てていない時間のぶん。損益 ${syen(t.unassigned)} の 5%。`
       + `記録を開いて「出演を直す」で割り当てられる）`);
   /* 分け方を必ず書く。数字の出どころが分からないと、キャストに説明できない */
-  note.push(`ボーナスは「配信の合計損益を実働で按分した額」の 5%。`
+  note.push(`ボーナスは「配信の合計損益を、その区間で売れた額で按分した額」の 5%。`
     + `2 名で出た区間は 2.5% ずつ。`
-    + `どのカードが出るかはキャストに動かせないので、区間ごとの当たり外れでは分けない。`
+    + `どのカードが出たか（＝運）では分けない。分けるのは売った額。`
     + `月の合計がマイナスなら 0 円で、翌月には持ち越さない。`);
   $("castNote").textContent = note.join("　");
 
@@ -7430,12 +7459,16 @@ function renderReplayCasts(){
   const tb = $("replayCastTable").querySelector("tbody");
   tb.innerHTML = "";
 
-  /* 区間ごとのボーナスも**時間按分**で出す（運用者の指示 2026-08-23）。
+  /* 区間ごとのボーナスも**売上按分**で出す（運用者の指示 2026-08-24）。
      区間の損益からは作らない。ここだけ古い出し方が残ると、上の表と
-     下の「この回のボーナス」で額が合わなくなる。 */
+     下の「この回のボーナス」で額が合わなくなる。
+     売上が全体で 0 円の回だけ実働に逃げる（`bonusFromSpans` と同じ規則）。 */
+  const 全体売上 = spans.reduce((n, x) => n + Math.max(0, Number(x.revenue) || 0), 0);
   const 全体ms = spans.reduce((n, x) => n + Math.max(0, Number(x.ms) || 0), 0);
   const 配信の損益 = Number(r.profit) || 0;
-  const 按分 = s => 全体ms > 0 ? 配信の損益 * (Math.max(0, Number(s.ms) || 0) / 全体ms) : 0;
+  const 按分 = s => 全体売上 > 0
+    ? 配信の損益 * (Math.max(0, Number(s.revenue) || 0) / 全体売上)
+    : 全体ms > 0 ? 配信の損益 * (Math.max(0, Number(s.ms) || 0) / 全体ms) : 0;
 
   spans.forEach((s, i) => {
     const n = (s.castIds || []).length;
@@ -7447,8 +7480,10 @@ function renderReplayCasts(){
         `<td class="n">${fmtClock(s.at)} 〜 ${fmtClock(s.to)}</td>`
       + `<td class="l">${esc(who)}</td>`
       + `<td class="n">${s.lots || 0}</td>`
+      /* 按分の根拠は**売上の割合**。実働も出すが、割合は売上のほうを出す */
       + `<td class="n">${s.ms ? fmtDur(s.ms) : "—"}`
-        + `${全体ms > 0 ? `<br><span class="hint">${pct((s.ms || 0) / 全体ms, 0)}</span>` : ""}</td>`
+        + `<br><span class="hint">売上 ${全体売上 > 0
+            ? pct(Math.max(0, Number(s.revenue) || 0) / 全体売上, 0) : "—"}</span></td>`
       /* 按分した取り分。**その区間で出た損益ではない。**見出しも
          「分け前」にしてある（時間で分けた額であることを字面で示す） */
       + `<td class="n ${按分(s) >= 0 ? "pos" : "neg"}">${syen(Math.round(按分(s)))}</td>`
