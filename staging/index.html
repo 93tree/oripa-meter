@@ -1312,7 +1312,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='8dc5ce3 (08/25 03:08)';</script>
+<script>window.__BUILD='3227422 (08/25 03:17)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1772,14 +1772,14 @@ window.__SYNC_DEFAULTS = {
     <section class="panel" id="replayCastPanel" hidden>
       <header>
         <h2>出演を直す</h2>
-        <span class="hint">直せるのは出演者だけ。時刻と金額は動かない。分け前は配信の合計損益を、その区間で売れた額で按分したもの</span>
+        <span class="hint">直せるのは出演者だけ。時刻と金額は動かない。利益は配信の合計損益を、その区間で売れた額で按分したもの（その時間に出た損益ではない）</span>
       </header>
       <div class="body">
         <div class="scroll-x">
           <table class="tbl" id="replayCastTable">
             <thead>
               <tr><th>時間</th><th class="l">出演</th><th>落札</th>
-                  <th>実働</th><th>分け前</th><th>ボーナス</th><th></th></tr>
+                  <th>実働</th><th>利益</th><th>獲得ボーナス</th><th></th></tr>
             </thead>
             <tbody></tbody>
           </table>
@@ -1810,7 +1810,7 @@ window.__SYNC_DEFAULTS = {
           <table class="tbl" id="castTable">
             <thead>
               <tr><th class="l">名前</th><th>回数</th><th>出演時間</th>
-                  <th>売上</th><th>分け前</th><th>ボーナス</th><th></th></tr>
+                  <th>売上</th><th>利益</th><th>獲得ボーナス</th><th></th></tr>
             </thead>
             <tbody></tbody>
           </table>
@@ -1830,7 +1830,7 @@ window.__SYNC_DEFAULTS = {
           <table class="tbl" id="castDetailTable">
             <thead>
               <tr><th>配信日</th><th class="l">オリパ</th><th>出演時間</th>
-                  <th>落札</th><th>分け前</th><th>ボーナス</th></tr>
+                  <th>落札</th><th>利益</th><th>獲得ボーナス</th></tr>
             </thead>
             <tbody></tbody>
           </table>
@@ -4690,7 +4690,8 @@ const castBonusOf = profit => Math.trunc((Number(profit) || 0) * CAST_RATE);
  * `profit` は按分した取り分（ボーナスの元）。`revenue` / `lots` / `ms` は
  * **その人が出ていた時間に実際に起きたこと**で、按分しない。
  * 混ぜると「この売上からこの損益は出てこない」と読めてしまうが、
- * 前者は実績、後者は分け前という別の数字なので、画面ではそう書き分ける。
+ * 前者は実績、後者は按分した取り分という別の数字なので、画面ではそう書き分ける
+ * （列は「売上」と「利益」。以前は後者を「分け前」と呼んでいた）。
  */
 function bonusFromSpans(spans, total){
   const list = spans || [];
@@ -7603,11 +7604,11 @@ function renderCastScreen(){
   if(t.rows.length) note.push(`ボーナスの合計 ${yen(t.payable)}`);
   if(t.unassigned)
     // ⚠ 上の表の「ボーナス」列と同じ手取りで出す。損益は括弧に添える
-    note.push(`⚠ 未登録ぶんのボーナス ${syen(castBonusOf(t.unassigned))}`
+    note.push(`⚠ 未登録ぶんの獲得ボーナス ${syen(castBonusOf(t.unassigned))}`
       + `（出演を立てていない時間のぶん。損益 ${syen(t.unassigned)} の 5%。`
       + `記録を開いて「出演を直す」で割り当てられる）`);
   /* 分け方を必ず書く。数字の出どころが分からないと、キャストに説明できない */
-  note.push(`ボーナスは「配信の合計損益を、その区間で売れた額で按分した額」の 5%。`
+  note.push(`獲得ボーナスは「配信の合計損益を、その区間で売れた額で按分した額（＝利益の列）」の 5%。`
     + `2 名で出た区間は 2.5% ずつ。`
     + `どのカードが出たか（＝運）では分けない。分けるのは売った額。`
     + `月の合計がマイナスなら 0 円で、翌月には持ち越さない。`);
@@ -7916,8 +7917,9 @@ function renderReplayCasts(){
       + `<td class="n">${s.ms ? fmtDur(s.ms) : "—"}`
         + `<br><span class="hint">売上 ${全体売上 > 0
             ? pct(Math.max(0, Number(s.revenue) || 0) / 全体売上, 0) : "—"}</span></td>`
-      /* 按分した取り分。**その区間で出た損益ではない。**見出しも
-         「分け前」にしてある（時間で分けた額であることを字面で示す） */
+      /* 按分した取り分。**その区間で出た損益ではない。**
+         見出しは「利益」（運用者の指示 2026-08-25。以前は「分け前」）。
+         按分であることは表の説明文と下の注記で明示する。 */
       + `<td class="n ${按分(s) >= 0 ? "pos" : "neg"}">${syen(Math.round(按分(s)))}</td>`
       + `<td class="n">${n ? `${syen(one)}${n > 1 ? " ずつ" : ""}` : "—"}</td>`
       + `<td class="n"><button type="button" class="btn" data-stint="${i}">選ぶ</button></td>`;
@@ -7926,13 +7928,14 @@ function renderReplayCasts(){
 
   const note = [];
   if(pay.unassigned)
-    // ⚠ 下に並ぶ「この回のボーナス」と同じ手取りで出す（損益は括弧に添える）
-    note.push(`⚠ 未登録ぶんのボーナス ${syen(castBonusOf(pay.unassigned))}`
-      + `（損益 ${syen(pay.unassigned)}）が誰にも付いていない。`
+    // ⚠ 下に並ぶ「この回の獲得ボーナス」と同じ手取りで出す（利益は括弧に添える）
+    note.push(`⚠ 未登録ぶんの獲得ボーナス ${syen(castBonusOf(pay.unassigned))}`
+      + `（利益 ${syen(pay.unassigned)}）が誰にも付いていない。`
       + `上の行から出演者を入れれば実績になる。`);
   if(pay.pay.length)
-    note.push("この回のボーナス：" + pay.pay.map(p => `${castName(p.castId)} ${syen(p.yen)}`).join("　"));
-  note.push("直せるのは出演者だけ。時刻と金額は動かない。");
+    note.push("この回の獲得ボーナス：" + pay.pay.map(p => `${castName(p.castId)} ${syen(p.yen)}`).join("　"));
+  note.push("直せるのは出演者だけ。時刻と金額は動かない。"
+    + "利益は配信の合計損益を、その区間で売れた額で按分した額（その時間に出た損益ではない）。");
   $("replayCastNote").textContent = note.join(" ");
 
   $("replayCastTable").querySelectorAll("[data-stint]").forEach(b =>
@@ -8182,7 +8185,7 @@ function renderCastBar(c){
        いるときの行と桁が 20 倍違って読めない（運用者の指示 2026-08-22）。
        もとの損益は下の行に添えて、どこから来た数字かを消さない。 */
     $("castList").innerHTML = `<div class="castone is-none">`
-      + `<span class="t">未登録ぶんのボーナス</span>`
+      + `<span class="t">未登録ぶんの獲得ボーナス</span>`
       + `<span class="n">${un ? syen(castBonusOf(un)) : "—"}</span>`
       + `<span class="s">${un ? `損益 ${syen(un)} の 5%・誰にも付かない`
                               : "この時間の損益は誰にも付かない"}</span></div>`;
@@ -8198,14 +8201,16 @@ function renderCastBar(c){
       return `<div class="castone${live ? "" : " is-none"}">`
         + `<span class="t">${esc(castName(id))}${live ? "" : "（退席）"}</span>`
         + `<span class="n ${yen > 0 ? "pos" : yen < 0 ? "neg" : ""}">${syen(yen)}</span>`
-        /* ⚠ **「損益」と書かない。**この額はその人の時間で按分した分け前で、
-           その時間に出た損益ではない（運用者の指示 2026-08-23）。 */
-        + `<span class="s">${p ? `${fmtDur(p.ms)}・${p.lots} 件・分け前 ${syen(Math.round(p.profit))}`
+        /* ⚠ **「損益」と書かない。**この額は按分した取り分で、その時間に出た
+           損益ではない（運用者の指示 2026-08-23）。
+           呼び方は「分け前」→「利益」に変えた（運用者の指示 2026-08-25）。
+           **中身は変えていない**ので、按分であることは表の説明文で明示してある。 */
+        + `<span class="s">${p ? `${fmtDur(p.ms)}・${p.lots} 件・利益 ${syen(Math.round(p.profit))}`
                               : "まだ実績なし"}</span>`
         + `</div>`;
     }).join("")
     // 押し忘れぶんがあるなら必ず添える。**上の行と同じ手取りの土俵で**出す
-    + (un ? `<div class="castone is-none"><span class="t">未登録ぶんのボーナス</span>`
+    + (un ? `<div class="castone is-none"><span class="t">未登録ぶんの獲得ボーナス</span>`
           + `<span class="n">${syen(castBonusOf(un))}</span>`
           + `<span class="s">損益 ${syen(un)} の 5%・誰にも付いていない</span></div>` : "");
   }
