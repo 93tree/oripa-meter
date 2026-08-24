@@ -261,12 +261,42 @@ main{ max-width:1180px; margin:0 auto; padding:18px 16px 60px; }
 /* 提案とキャストを 1:2 で並べる（運用者の指示 2026-08-21）。
    提案は 1 枚だけになったので、残りをキャストに使う。
    狭い画面では縦に積む。配信中はタブレットで見ることがある */
-.castrow{ display:grid; grid-template-columns:1fr 2fr; gap:10px; align-items:start; }
+/* 提案 ／ 最終落札からの経過 ／ キャスト。真ん中は中身のぶんだけ */
+.castrow{ display:grid; grid-template-columns:1fr auto 2fr; gap:10px; align-items:start; }
 @media (max-width:900px){ .castrow{ grid-template-columns:1fr; } }
 /* 片方しか出ていないときは、残ったほうが全幅を使う */
 .castrow > section[hidden]{ display:none; }
-.castrow:has(> .actcards[hidden]){ grid-template-columns:1fr; }
-.castrow:has(> .castbar[hidden]){ grid-template-columns:1fr; }
+.castrow:has(> .actcards[hidden]){ grid-template-columns:auto 2fr; }
+.castrow:has(> .castbar[hidden]){ grid-template-columns:1fr auto; }
+.castrow:has(> .idleboard[hidden]){ grid-template-columns:1fr 2fr; }
+.castrow:has(> .actcards[hidden]):has(> .idleboard[hidden]){ grid-template-columns:1fr; }
+.castrow:has(> .castbar[hidden]):has(> .idleboard[hidden]){ grid-template-columns:1fr; }
+@media (max-width:900px){
+  .castrow:has(> .actcards[hidden]),
+  .castrow:has(> .castbar[hidden]),
+  .castrow:has(> .idleboard[hidden]){ grid-template-columns:1fr; }
+}
+
+/* ---- 最終落札からの経過 ----
+   配信中いちばん見たいのは「いま止まっているか」なので、数字を大きく出す。
+   10 分を超えたら赤（運用者の指示 2026-08-24）。 */
+.idleboard{
+  border:1px solid var(--line); border-radius:11px;
+  background:var(--surface); padding:11px 14px 12px;
+  text-align:center; min-width:132px;
+}
+.idleboard .label{ display:block; font-size:10px; letter-spacing:.1em; color:var(--ink-3); }
+.idleboard .v{
+  display:block; font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:30px; font-weight:600; line-height:1.15; margin-top:2px; letter-spacing:-.03em;
+}
+.idleboard .v .u{ font-size:14px; font-weight:600; margin-left:2px; letter-spacing:0; }
+.idleboard .sub{ display:block; font-size:10.5px; color:var(--ink-3); margin-top:2px; }
+/* 10 分超え。**文字を赤にする**（枠と地も薄く染めて、視界の端でも気づける） */
+.idleboard.is-late{ border-color:var(--bad); background:color-mix(in srgb, var(--bad) 7%, var(--surface)); }
+.idleboard.is-late .v,
+.idleboard.is-late .label,
+.idleboard.is-late .sub{ color:var(--bad); }
 
 .castbar{
   border:1px solid var(--line); border-radius:11px;
@@ -1264,7 +1294,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='f80ce23 (08/24 21:27)';</script>
+<script>window.__BUILD='2170305 (08/24 21:34)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1526,6 +1556,14 @@ window.__SYNC_DEFAULTS = {
           <span class="hint" id="actsSub"></span>
         </div>
         <div class="actlist" id="actList"></div>
+      </section>
+
+      <!-- 最終落札からの経過。10 分を超えたら赤（運用者の指示 2026-08-24）。
+           カンペとキャストのあいだに挟む -->
+      <section class="idleboard" id="idleBoard" hidden>
+        <span class="label">最終落札から</span>
+        <b class="v" id="idleBoardNum">—</b>
+        <span class="sub" id="idleBoardSub"></span>
       </section>
 
       <section class="castbar" id="castBar" hidden>
@@ -6253,6 +6291,10 @@ function renderBody(){
      renderReplayCasts() は記録を映しているときしか走らないため、
      これが無いと配信中も古い記録の表が出たまま残る（2026-08-21 に見つけた）。 */
   $("replayCastPanel").hidden = mode !== "replay";
+  /* 同じ理由で、最終落札のボードもここで面倒を見る。#castRow の中にあり、
+     renderIdleBoard() は配信画面を描くときしか走らないので、
+     これが無いと一覧へ戻ったあとも hidden が立たないまま残る */
+  renderIdleBoard();
 
   const inList = mode === "list";
   $("titleText").textContent = inList ? "配信オリパAI支援" : (S.name || "配信オリパAI支援");
@@ -7603,6 +7645,7 @@ function renderLive(c){
 
   renderTodo(c);        // 取りこぼしは軽い。押した瞬間に減るので遅らせない
   renderCastBar(c);     // キャストも軽い。押した手応えは先に返す
+  renderIdleBoard();    // 最終落札からの経過
   renderInbox(c);
   renderLotBar(c);
   renderPrizes(c);
@@ -7792,6 +7835,63 @@ async function pickCast(exclude){
     return null;
   }
   return await pickOne("誰が出るか", list.map(c => ({ value: String(c.id), label: c.name })));
+}
+
+/* ============================================================
+   最終落札からの経過
+
+   運用者の指示（2026-08-24）：「カンペとキャストボーナスの間に
+   最終落札から XX 分経過というボードを入れて、10 分を超えると赤く」。
+
+   ⚠ **数えるのは「落札」であって「排出」ではない。**カンペの
+   「動いていない」は排出（`paceOf().lastAt`）で数えているが、こちらは
+   落札の時刻。**先に立つのは落札**なので、こちらのほうが早く反応する
+   （8/24 の配信では 落札 20:53 ／ 排出 20:55 で 2 分ちがった）。
+   ============================================================ */
+
+/** 最終落札の時刻。1 件も無ければ 0 */
+function lastLotAt(o){
+  let t = 0;
+  for(const l of (o && o.lots) || []) t = Math.max(t, Number(l.at) || 0);
+  return t;
+}
+
+function renderIdleBoard(){
+  const box = $("idleBoard");
+  if(!box) return;
+  // 配信・ブリッジ・記録の 3 つで出す。一覧や編集では出さない
+  const on = (mode === "live" || mode === "watch" || mode === "replay") && !!S;
+  if(!on){ box.hidden = true; return; }
+
+  const at = lastLotAt(S);
+  /* 締めた回は「いまから何分」に意味が無い。最後の落札の時刻だけ出す。
+     ここを時計で進めると、記録を開いているだけで数字が増えていく。 */
+  const 締め = !!S.closedAt || mode === "replay";
+  box.hidden = false;
+
+  if(!at){
+    box.className = "idleboard";
+    $("idleBoardNum").textContent = "—";
+    $("idleBoardSub").textContent = "まだ落札なし";
+    return;
+  }
+  if(締め){
+    box.className = "idleboard";
+    $("idleBoardNum").textContent = fmtClock(at);
+    $("idleBoardSub").textContent = "最後の落札";
+    return;
+  }
+
+  const ms = Math.max(0, Date.now() - at);
+  const 分 = Math.floor(ms / 60000);
+  // 10 分を**超えたら**赤（ちょうど 10 分は赤にしない。IDLE_LINE_MS と同じ線）
+  const late = ms > IDLE_LINE_MS;
+  box.className = "idleboard" + (late ? " is-late" : "");
+  // 単位は小さく添える。数字を大きく見せたいので間を空けない
+  $("idleBoardNum").innerHTML = `${分}<span class="u">分</span>`;
+  $("idleBoardSub").textContent = late
+    ? `${fmtClock(at)} から動いていない`
+    : `${fmtClock(at)} に落札`;
 }
 function resetLotDraft(){
   lotDraft = { price: "", buyer: "", mode: lotDraft.mode };
@@ -8954,6 +9054,7 @@ function startClock(){
     if(mode !== "live" && mode !== "watch"){ clearInterval(clockTimer); clockTimer = null; return; }
     if(S) renderClock(compute(S));
     renderPauseUi();          // 覆いの「何分止めているか」も一緒に進める
+    renderIdleBoard();        // 最終落札からの経過も進める（売れなくても増える）
   }, 30 * 1000);
 }
 
