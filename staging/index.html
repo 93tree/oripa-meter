@@ -1294,7 +1294,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='6543a01 (08/25 00:17)';</script>
+<script>window.__BUILD='8b438c4 (08/25 02:04)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -5051,7 +5051,7 @@ const ACT_CARD_MAX = 1;
      0 煽り材料（目玉・完売予測）
  */
 const ACT_RANK = {
-  stop: 3,
+  stop: 3, salvage: 3,
   idle: 2, "idle-hold": 2,
   cut: 1, slow: 1, gmv: 1,
   tops: 0, eta: 0,
@@ -5200,8 +5200,27 @@ function actionCards(c){
     });
   }
 
+  /* 1.5 回収。**下振れて目玉が抜けきった回**は、続ける／終わるの二択ではなく
+     「いくらまで下げれば、いくら戻るか」の話になる（運用者の指示 2026-08-24）。
+     終わりどきと同じ重さで出す（同じ優先度なので、金額の大きいほうが勝つ）。 */
+  const sv = dec && dec.salvage;
+  if(sv) add({
+    key: "salvage", tone: sv.worth ? "is-warn" : "is-bad",
+    score: Math.abs(Math.round(sv.recover)),
+    title: `${sv.why}回`,
+    num: sv.worth ? `${yen(sv.p)} まで下げて回収` : "回収できる余地は無い",
+    body: sv.worth
+      ? `いまの ${yen(c.price)} では止まっている。${yen(sv.p)}（${pct(sv.off, 0)} オフ）なら`
+        + ` 今夜 ${sv.sold} 口 動く読みで、いま解体するより ${yen(Math.round(sv.recover))} 多く戻る。`
+        + `下げ幅の上限は外してある。競って平均 ${yen(Math.round(sv.bid))} で落ちる読みで、`
+        + `中身の原価 ${yen(Math.round(sv.costLine))} は上回る。`
+      : `競った平均が中身の原価 ${yen(Math.round(sv.costLine))} を割らないところまで下げても、`
+        + `いま解体した ${syen(Math.round(dec.stop))} から増えない。終了して在庫に戻す。`,
+    act: sv.worth ? "price" : "",
+  });
+
   // 2. 終わりどき
-  if(dec && dec.verdict === "stop") add({
+  if(dec && dec.verdict === "stop" && !sv) add({
     key: "stop", tone: "is-bad", score: Math.abs(Math.round(dec.gain)),
     title: dec.dead ? "もう回らない" : "ここで終了したほうが得",
     num: "解体して組み直す",
@@ -5587,9 +5606,44 @@ function decideNow(c){
      上限を超えるとき（原価より安くしか売れない局面）は 1 点に潰す。**そこで
      打ち切らずにエンジンに判断させる**（競り上がる読みがあるので、原価ちょうどでも
      続けたほうが得なことがある）。 */
+  /* ---- 回収局面（下振れて目玉が抜けきった回）----
+
+     **いまの値段ではもう回らない**状態のこと。序盤に目玉が抜かれつくすと、
+     残っているのは薄い口だけになり、現行価格では 1 口も動かない読みになる。
+     ここで普段の床（下げ幅 15%・損益分岐）を掛けたままにすると、
+     **どの値段でも動かない**という答えしか出ず、いくらまで下げれば
+     いくら戻るのかが分からない（運用者の指示 2026-08-24：
+     「序盤に目玉が抜かれつくしてもいくらまで下げるべきか出して最大で回収できる
+     金額を出せる計算式にも直してほしい。下限 15% はその場合外して計算を出す
+     ようにして OK」）。
+
+     外すのは 2 つ：
+       ・**下げ幅の上限（15%）** … 運用者の指示どおり
+       ・**損益分岐（`pBE`）** … これは「完売前提でこの回の元が取れる線」で、
+         **すでに払った原価まで含んだ額**（＝取り返せない金）。回収の判断に
+         持ち込むと、悪い回ほど床が高く上がって身動きが取れなくなる。
+
+     外さないのは **残り 1 口の中身の原価（`evCost`）**。売れ残ったカードは
+     そのまま次のオリパに使えるので、これを下回る値段で出すのは
+     **在庫を割って捨てている**のと同じ（8/20 に確立した前提）。
+
+     ⚠ ただしその線は**提示額ではなく「競って落ちる平均」に引く。**
+     オークションなので、提示 ¥1,200 の口が平均 ¥3,600 で落ちることがある。
+     提示額のほうに原価の線を引くと、**競り上がるぶんを丸ごと取りこぼす**。
+     8/24 の検査では、原価 ¥2,500 を提示額の底にしたせいで「回収の余地なし」と
+     出ていた回が、実際には ¥1,200 提示・平均 ¥3,600 落札で ¥55,000 多く
+     戻る読みだった。だから底は
+       **その値段で競った平均（`bidMean`）が中身の原価を下回らないところ**
+     に置く。探索の下端はそれより下（原価 ÷ 競り上がりの上限）まで広げ、
+     条件を満たさない候補はそもそも採らない。 */
+  const nowPrice0 = Math.max(10, Math.round(Number(c.price) || 0));
+  const nowSim0 = simAtPrice(c, nowPrice0, topMult, minReturn);
+  const salvage = !!(nowSim0 && (nowSim0.overNow || nowSim0.thinNow));
+
   /* さらに**下げ幅そのものに上限**を置く（運用者の指示 2026-08-19）。
      現行価格から `MAX_OFF` を超えて下げる提案はしない。原価や損益分岐から見て
-     まだ下げられる局面でも、配信の値付けとしては下げすぎになるため。 */
+     まだ下げられる局面でも、配信の値付けとしては下げすぎになるため。
+     ⚠ 回収局面では外す（上の注記）。 */
   const capFloor = Math.round((c.price || 0) * (1 - MAX_OFF));
   /* ただし**実績までならいつでも下りられる。**下げ幅の上限は「配信で一気に
      下げすぎない」ための線であって、**場がすでにそこまで落ちている**日には
@@ -5599,8 +5653,13 @@ function decideNow(c){
      追いつくのは値下げではなく、**すでに動いた相場に合わせているだけ**。 */
   const seen = recentSeen(c.o);
   const cut = seen > 0 ? Math.min(capFloor, Math.round(seen)) : capFloor;
-  let floor = Math.max(10, Math.round(Math.max(
-    Number(c.evCost) || 0, Number(c.pBE) || 0, cut)));
+  /** 中身の原価。回収局面では**落札の平均**がこれを下回る値段を採らない */
+  const costLine = Math.round(Number(c.evCost) || 0);
+  let floor = salvage
+    // 競り上がりを見込んだぶんだけ下端を広げる。採否は下の `probe` で決める
+    ? Math.max(10, Math.round(costLine / (BID_CAP > 1 ? BID_CAP : 1)))
+    : Math.max(10, Math.round(Math.max(
+        costLine, Number(c.pBE) || 0, cut)));
   // 現行価格は超えない。原価のほうが高い局面でも、配信中に値上げはしない
   if(c.price > 0) floor = Math.min(floor, Math.round(c.price));
 
@@ -5619,6 +5678,27 @@ function decideNow(c){
      直近の落札の低いほう）まで下ろす。実績が無いうちは今までどおり。
      競り上がって実績が現行を超えている日は、天井は現行のままになる。 */
   const top = seen > 0 ? Math.max(lo, Math.min(top0, Math.round(seen))) : top0;
+
+  /* ---- 回収局面の探索範囲 ----
+     解体条件（目玉切れ・薄い）は**価格の崖**になっている。目玉の線は「単価 × 倍率」
+     なので、単価を下げると残っている札が目玉に入り直して、ある一点から急に動き出す。
+     床を原価まで落とすと範囲が一気に広がるので、9 点の刻みでは**崖のすぐ下**を
+     跨いでしまう（8/24 の検査では ¥833 と ¥1,729 を見て、答えの ¥1,200 を素通り
+     していた）。そこで**まだ動く上限**を二分探索で先に出し、そこから下だけを刻む。
+     価格を下げると解体条件はどちらも緩むだけなので、「動く／動かない」は単調。 */
+  const aliveAt = q => {
+    const r = simAtPrice(c, Math.max(10, Math.round(q)), topMult, minReturn);
+    return !!(r && r.moreMean >= 1);
+  };
+  let gridTop = top;
+  if(salvage && !aliveAt(top) && aliveAt(lo)){
+    let a = lo, z = top;
+    for(let i = 0; i < 16 && z - a > 1; i++){
+      const mid = Math.round((a + z) / 2);
+      if(aliveAt(mid)) a = mid; else z = mid;
+    }
+    gridTop = Math.max(lo, a);
+  }
 
   /* ---- GMV を数に入れる ----
      比べるのは**今夜さばける口数まで**の利益額（運用者の指示 2026-08-19：
@@ -5651,22 +5731,31 @@ function decideNow(c){
 
   // 粗く振ってから、いちばん良かったところの周りを細かく見る
   const tried = [];
+  /** 回収局面の底：**競って落ちる平均**が中身の原価を割る値段は採らない */
+  const bidOK = r => !salvage || !(r.moreMean > 0) || r.bidMean >= costLine;
   const probe = p => {
     const k = Math.max(10, Math.round(p));
     if(k > top || tried.some(t => t.p === k)) return;
     const r = simAtPrice(c, k, topMult, minReturn);
-    if(r) tried.push({ p: k, ev: tonight(r, r.cashMean), r });
+    if(r && bidOK(r)) tried.push({ p: k, ev: tonight(r, r.cashMean), r });
   };
   const STEPS = 9;
-  for(let i = 0; i < STEPS; i++) probe(lo + (top - lo) * i / (STEPS - 1));
+  for(let i = 0; i < STEPS; i++) probe(lo + (gridTop - lo) * i / (STEPS - 1));
   probe(c.price);                       // 「そのまま続ける」は必ず候補に入れる
 
   let best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
   if(!best) return { verdict: "stop", stop, best: null, gain: 0, hi };
 
-  const step = (top - lo) / (STEPS - 1);
+  const step = (gridTop - lo) / (STEPS - 1);
   for(const d of [-0.5, -0.25, 0.25, 0.5]) probe(best.p + step * d);
   best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
+  /* 回収局面は床が一気に下がるので、9 点の刻みが粗くなる（現行 ¥17,000 に対し
+     床が ¥1,500 なら 1 目盛り ¥1,900）。**山の頂上を跨いだまま**答えを出さない
+     よう、もう一段細かく見る。試算は価格ごとに使い回されるので安い。 */
+  if(salvage){
+    for(const d of [-0.375, -0.25, -0.125, 0.125, 0.25, 0.375]) probe(best.p + step * d);
+    best = tried.reduce((a, b) => (b.ev > a.ev ? b : a), tried[0]);
+  }
 
   // 出す価格は必ずキリのいい額にする。配信で口に出す数字なので ¥2,088 では使えない。
   // 丸めたぶん期待値は少し動くが、動いたあとの数字をそのまま表示するので画面の中では辻褄が合う。
@@ -5677,8 +5766,17 @@ function decideNow(c){
      （そのまま `lo` にすると ¥4,250 のような口に出せない額になる）。
      現行価格は超えない（配信中に値上げはしない）。 */
   if(rounded < lo) rounded = Math.min(c.price || Infinity, roundPriceUp(lo)) || lo;
+  /* 回収局面の底は「競った平均 ≥ 中身の原価」なので、**丸めた拍子に割る**ことがある。
+     割ったら 1 段上げる（提示を上げれば競り上がりの天井も上がる）。 */
+  if(salvage) for(let i = 0; i < 6; i++){
+    const t = simAtPrice(c, rounded, topMult, minReturn);
+    if(!t || bidOK(t)) break;
+    const up = roundPriceUp(rounded + 1);
+    if(!(up > rounded) || up > top) break;
+    rounded = up;
+  }
   const rr = simAtPrice(c, rounded, topMult, minReturn);
-  if(rr) best = { p: rounded, ev: tonight(rr, rr.cashMean), r: rr };
+  if(rr && bidOK(rr)) best = { p: rounded, ev: tonight(rr, rr.cashMean), r: rr };
 
   /* 案ごとの数字をひとまとめにする。画面と行動カードはここの数字で話す。
        mid    … 今夜の利益額（中央値ベース）
@@ -5761,10 +5859,32 @@ function decideNow(c){
   /* 下限が何で決まったか。画面はここを見て「なぜここで止まるのか」を出す。
      下げ幅の上限が効いているのか、原価・損益分岐で止まっているのかで
      言うことが変わる。 */
-  const cutBound = cut >= Math.max(Number(c.evCost) || 0,
-                                   isFinite(c.pBE) ? Number(c.pBE) || 0 : 0) - 1;
+  const cutBound = !salvage && cut >= Math.max(Number(c.evCost) || 0,
+                                              isFinite(c.pBE) ? Number(c.pBE) || 0 : 0) - 1;
 
-  return { verdict, stop, best, gain, hi, lo, top, seen, cut, capFloor, cutBound, dead, revive,
+  /* ---- 回収の答え ----
+     「いくらまで下げるべきか」と「そこまで下げたら最大でいくら戻るか」を
+     まとめて返す。`recover` は**いま解体するのと比べて余計に戻る額**で、
+     これがマイナスなら下げても意味が無い（＝終了したほうが手元は多い）。 */
+  const svPrice = bestPlan ? bestPlan.p : Math.round(best.p);
+  const svCash  = bestPlan ? bestPlan.mid : best.ev;
+  const salvagePlan = salvage ? {
+    p: svPrice,
+    cash: svCash,                       // その値段で回収しきったときの着地
+    recover: svCash - stop,             // いま解体するより余計に戻る額
+    sold: bestPlan ? bestPlan.sold : 0,
+    gmv: bestPlan ? bestPlan.gmv : 0,
+    off: c.price > 0 ? 1 - svPrice / c.price : 0,
+    floor: lo,                          // 探した下端
+    costLine,                           // 底の線＝残り1口の中身の原価
+    bid: best.r ? Math.round(best.r.bidMean) : 0,   // その値段で競った平均
+    worth: !dead && svCash > stop,      // 下げる価値があるか
+    why: [nowSim0 && nowSim0.overNow ? "目玉が出尽くした" : "",
+          nowSim0 && nowSim0.thinNow ? "残りが薄すぎる" : ""].filter(Boolean).join("・"),
+  } : null;
+
+  return { verdict, stop, best, gain, hi, lo, top, seen, cut, capFloor, cutBound,
+           salvage: salvagePlan, dead, revive,
            stay, cutGain, plan: bestPlan, hoursLeft,
            elast: pm ? pm.elast : 0, elastMeasured: !!(pm && pm.measured) };
 }
@@ -8900,8 +9020,13 @@ function renderPrice(c){
   // ここが判断の本体。続けるのと止めるのを同じ物差しで比べる
   const dec = c.left > 0 ? decideNow(c) : null;
   const raw = dec && dec.best ? dec.best.p : 0;
-  // **いま買われている額より大きく下げない。**下げたぶんだけ取りこぼす
-  const floor = raw > 0 ? recentFloor(S) : 0;
+  /* **いま買われている額より大きく下げない。**下げたぶんだけ取りこぼす。
+     ⚠ ただし**回収局面では引かない。**直近の落札はまさに「その値段では
+     もう動かない」ことを示している額なので、その 7 割を床にすると
+     エンジンが探した回収の額（原価まで見た額）を押し戻してしまう。
+     実際 ¥5,900 の答えが ¥7,000 に戻され、**画面と行動カードで違う額**が
+     出ていた（2026-08-24）。 */
+  const floor = raw > 0 && !(dec && dec.salvage) ? recentFloor(S) : 0;
   const seen = raw > 0 ? Math.round(recentSeen(S)) : 0;
   /* ⚠ 下限で押し上げるときも、**直近の落札は超えない。**
      ここを見ていなかったので、下がり相場ではエンジンが出した額を
@@ -8917,7 +9042,8 @@ function renderPrice(c){
   decidedPrice = goPrice;                    // 「この価格に変更」が押す価格
   const stepBox = $("priceStep");
   // もう回らないときは押せる価格が無いので、刻みごと消す（参考線は文章で出す）
-  if(stepBox) stepBox.hidden = !(goPrice > 0) || mode === "watch" || !!(dec && dec.dead);
+  if(stepBox) stepBox.hidden = !(goPrice > 0) || mode === "watch" || !!(dec && dec.dead)
+    || !!(dec && dec.salvage && !dec.salvage.worth);
 
   let cls = "", msg = "";
   if(sold_out){
@@ -8940,11 +9066,21 @@ function renderPrice(c){
   }else{
     const go = dec.verdict === "go";
     const even = dec.verdict === "even";
-    cls = go ? "is-good" : even ? "" : "is-bad";
+    /* 回収は「良い判断」ではない。**悪い回を悪いなりに畳む**ので緑にしない。
+       余地が無ければ解体と同じ赤。 */
+    cls = dec.salvage ? (dec.salvage.worth ? "" : "is-bad")
+        : go ? "is-good" : even ? "" : "is-bad";
     const b = dec.best.r;
 
-    $("recLabel").textContent = go ? "続ける" : even ? "どちらでも大差ない" : "解体する";
-    $("recPrice").textContent = (go || even) && !dec.dead ? yen(goPrice) : "終了してOK";
+    /* 回収局面は「続ける」ではない。**もう回らない回から、いくら引き出せるか**の話
+       なので札を分ける（運用者の指示 2026-08-24）。 */
+    const sv = dec.salvage;
+    $("recLabel").textContent = sv
+      ? (sv.worth ? "回収する" : "解体する")
+      : go ? "続ける" : even ? "どちらでも大差ない" : "解体する";
+    $("recPrice").textContent = sv
+      ? (sv.worth ? yen(goPrice) : "終了してOK")
+      : (go || even) && !dec.dead ? yen(goPrice) : "終了してOK";
     const diff = c.price - goPrice;
     const adj = priceAdj ? `／手動で ${priceAdj > 0 ? "+" : ""}${yen(priceAdj)}` : "";
     const held = base > raw ? `／直近の落札に合わせて据え置き` : "";
@@ -8970,11 +9106,15 @@ function renderPrice(c){
       ? "損益分岐" : "残り1口の原価";
     const overSeen = seenAt > 0 && goPrice > seenAt && !seenCap
       ? `／直近の落札 ${yen(seenAt)} より上だが、${割れない線} ${yen(lo)} は割れない` : "";
-    $("recDelta").textContent = ((go || even)
+    /* 回収局面では下げ幅の上限も損益分岐も外して探している。**外したと言う。**
+       黙って 15% より下の額を出すと、決めた線を破ったように見える。 */
+    const svNote = sv && sv.worth && diff > 0
+      ? `／${sv.why}回。下げ幅の上限は外してある` : "";
+    $("recDelta").textContent = ((go || even || (sv && sv.worth))
       ? (diff > 0 ? `現行から ${yen(diff)} 引き（${pct(diff / c.price, 0)} オフ）`
          : diff < 0 ? `現行から ${yen(-diff)} 上げ`
          : "現行価格のまま（下げる理由なし）")
-      : `残りを在庫に戻す`) + held + capped + seenCap + overSeen + adj;
+      : `残りを在庫に戻す`) + held + capped + seenCap + overSeen + svNote + adj;
 
     // **続けた場合の振れ幅を出す。**「いま解体」は現時点での利益と同じ額に
     // なるので別枠にしない（解体したカードは原価のまま在庫に戻るため）。
@@ -9013,7 +9153,34 @@ function renderPrice(c){
         + ` ${dec.stay.sold} → ${dec.plan.sold} 口に増えるぶん、`
         + `<b>${yen(Math.round(dec.cutGain))}</b> 利益額が高い。`
       : "";
-    if(go){
+    if(sv){
+      /* ---- 回収 ----
+         いくらまで下げるべきか、そこで最大いくら戻るか、底はどこか。
+         3 つを 1 文で言い切る（運用者の指示 2026-08-24）。 */
+      const 原価 = yen(Math.round(sv.costLine));
+      if(sv.worth){
+        msg = `<b>${sv.why}。</b>いまの ${yen(c.price)} では止まっているので、`
+            + `<b>回収に切り替える</b>。<b>${yen(goPrice)}</b>（${pct(sv.off, 0)} オフ）まで下げれば`
+            + ` 今夜 <b>${sv.sold} 口</b> 動く読みで、着地は <b>${syen(Math.round(sv.cash))}</b>。`
+            + `いま解体（${syen(Math.round(dec.stop))}）より <b>${yen(Math.round(sv.recover))}</b> 多く戻る。`
+            + `下げ幅の上限（${pct(MAX_OFF, 0)}）と損益分岐は外して探した。`
+            /* 底は**提示額ではなく落札の平均**に引いてある。ここを言わずに
+               「原価 ¥2,500 の中身を ¥1,200 で出す」とだけ見えると、
+               在庫を捨てているように読める（実際は競り上がって上回る）。 */
+            + `底は<b>競って落ちる平均が中身の原価 ${原価} を割らないところ</b>で、`
+            + `この値段なら平均 <b>${yen(Math.round(sv.bid))}</b> で落ちる読み。`;
+        if(b.cashP10 < dec.stop)
+          msg += `ただし<b>下振れると ${yen(Math.round(dec.stop - b.cashP10))} 減る</b>目もある。`;
+      }else{
+        const 差 = Math.round(sv.recover);
+        msg = `<b>${sv.why}。</b>底（競った平均が中身の原価 ${原価} を割らない線）まで下げても、`
+            + `着地は <b>${syen(Math.round(sv.cash))}</b> で、いま解体した `
+            + `<b>${syen(Math.round(dec.stop))}</b> `
+            + (差 < 0 ? `を <b>${yen(-差)}</b> 下回る。` : `から増えない。`)
+            + `下げ幅の上限も損益分岐も外して探した結果なので、<b>回収できる余地は無い</b>。`
+            + `終了して残り ${c.left} 口ぶんのカードを在庫に戻す。`;
+      }
+    }else if(go){
       msg = `${yen(goPrice)} で続けるほうが、いま終わるより中央で <b>${yen(d)}</b> 得。`
           + vsStay
           + `この価格なら還元率 ${pct(goPrice > 0 ? c.evMkt / goPrice : 0, 0)} で買い手も動く。`;
@@ -9061,7 +9228,8 @@ function renderPrice(c){
   $("recMsg").innerHTML = msg;
   // もう回らないと言っているのに、押せる価格が残っていると紛らわしい
   $("btnApply").disabled = sold_out || goPrice <= 0 || goPrice === c.price
-    || !!(dec && dec.dead);
+    || !!(dec && dec.dead)
+    || !!(dec && dec.salvage && !dec.salvage.worth);
 
   renderTops(c);
   renderPulse(c, dec);
