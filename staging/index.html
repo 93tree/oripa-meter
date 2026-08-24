@@ -506,6 +506,24 @@ tr.is-off td{ opacity:.55; }
 .cmp > div.win .v{ color:var(--gold-ink); }
 .cmp.three{ grid-template-columns:repeat(3,minmax(0,1fr)); }
 .cmp.three .k .sub{ display:block; font-weight:400; letter-spacing:0; font-size:10.5px; margin-top:1px; }
+/* ---- 続けた場合の確率（下振れ・中央・上振れのすぐ下）----
+   分位は「どこに着地するか」しか言わない。**悪くなる目がどれだけあるか**は
+   別の数字なので、同じ枠の中で 1 段下に並べる（運用者の指示 2026-08-25）。 */
+.cmp.three .odds{
+  grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 14px;
+  padding:10px 14px; background:var(--surface-2);
+}
+.cmp.three .odds .k{ flex:1 1 100%; }
+.cmp.three .odds .k .sub{ display:block; font-weight:400; letter-spacing:0; font-size:10.5px; margin-top:1px; }
+.cmp.three .odds .p{ font-size:12px; color:var(--ink-2); white-space:nowrap; }
+.cmp.three .odds .p b{
+  font-family:var(--font-num); font-variant-numeric:tabular-nums;
+  font-size:17px; font-weight:700; letter-spacing:-.02em; margin-right:5px;
+}
+.cmp.three .odds .bad b{ color:var(--bad); }
+.cmp.three .odds .warn b{ color:var(--gold-ink); }
+.cmp.three .odds .good b{ color:var(--good); }
+.cmp.three .odds .flat b{ color:var(--ink-3); }
 .cmp.three .foot{
   grid-column:1/-1; font-size:11.5px; color:var(--ink-3);
   padding:9px 14px; background:var(--surface);
@@ -1294,7 +1312,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='8b438c4 (08/25 02:04)';</script>
+<script>window.__BUILD='b4bfab7 (08/25 02:35)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -3189,6 +3207,24 @@ function armLiveStart(o){
   }
 
   o.liveStartedAt = Date.now();                       // これから始める
+  /* **前の晩の出演をここで畳む。**同じオリパを何晩かに分けて出す運用があるので、
+     畳まないと前の晩の最後に立っていた人の区間が今夜まで続き、昼間ずっと
+     出演していたことになる（運用者の報告 2026-08-25）。
+     前の動きが途切れた時刻に「全員退席」を 1 つ置くだけで、隙間は無人になる。 */
+  closeOutStints(o, lastAct);
+}
+
+/**
+ * 前の配信の出演区間を、**その配信が止まった時刻で畳む。**
+ * すでに無人で終わっているなら何もしない。
+ */
+function closeOutStints(o, lastAct){
+  const ss = stintsOf(o);
+  const last = ss.length ? ss[ss.length - 1] : null;
+  if(!last || !(last.castIds || []).length) return null;
+  const at = Math.max(Number(lastAct) || 0, Number(last.at) || 0) + 1;
+  if(at >= Date.now()) return null;                 // 畳む先が「いま」なら意味が無い
+  return setCastsNow(o, [], at);
 }
 
 function claimLive(o){
@@ -4446,6 +4482,46 @@ function stintSpans(o, from, to){
   return out;
 }
 
+/**
+ * 出演時間を**配信の窓の中に収める。**
+ *
+ * 区間は「切り替わった瞬間」しか持たず、次の区間（無ければ窓の終わり）まで続く。
+ * その窓（`stintSpans` の `start`／`end`）は**取りこぼしを出さないために広い側へ倒して**
+ * あり、落札も区間も切り落とさない。時間の割り当てにはそれで困らなかったが、
+ * **出演時間としてはそのまま数えてはいけない**。実際に膨らんだ経路が 3 つある
+ * （運用者の報告 2026-08-25：「シオンの出演時間が不自然に多く計算されている」）：
+ *
+ *  ① **締めた日付が配信より後**。`applyClose` は締め日を「その日の正午」として
+ *     扱うので、22:00〜02:00 の回を夕方に締めると窓の終わりが当日 12:00 になり、
+ *     最後に立っていた人が **10 時間** 抱える。
+ *  ② **同じオリパを何晩かに分けて出す**（`armLiveStart` が想定している運用）。
+ *     前の晩の最後の区間が、翌晩の最初の区間まで＝**昼間ずっと**続く。
+ *  ③ **複製したオリパ**。`duplicateOripa` が排出も落札も消しているのに
+ *     `stints` だけ引き継いでいた。前の晩の顔ぶれが最初から立っている。
+ *
+ * ①②③ は入口でも塞ぐが（下の 2 つとオリパの複製）、**すでに焼き込まれた記録は
+ * 直らない**。だから数えるほうでも切る。切るのは**時間だけ**で、売上と損益の
+ * 割り当ては触らない（落札の時刻で決まっていて、窓の外に落札は無い）。
+ * いまのボーナスは売上按分なので、金額は 1 円も動かない。
+ *
+ * ⚠ **窓の始まり は「開始」と「1 口目」の早いほう。**開始（`liveStartedAt`）は
+ * 席を取り直すと「いま」に戻ることがあり、そこで切ると**すでに押した出演が
+ * 丸ごと 0 分になる**（2026-08-21 に一度やっている）。早いほうを採れば、
+ * 取り直しても手前の実績は残る。
+ */
+/** 0 でない値のうち小さいほう。両方 0 なら 0 */
+const earliest = (a, b) => (a > 0 && b > 0) ? Math.min(a, b) : (a > 0 ? a : (b > 0 ? b : 0));
+
+function clipSpanMs(s, from, to){
+  const raw = Math.max(0, Number(s && s.ms) || 0);
+  const a = Number(from) || 0, b = Number(to) || 0;
+  if(!(b > a)) return raw;                       // 窓が取れないデータは触らない
+  const at = Number(s && s.at) || 0, end = Number(s && s.to) || 0;
+  if(!(end > at)) return raw;                    // 区間の形が無いものも触らない
+  const 重なり = Math.max(0, Math.min(end, b) - Math.max(at, a));
+  return Math.min(raw, 重なり);                   // 減らす方向にしか動かさない
+}
+
 /* ------------------------------------------------------------
    落札 1 件ごとの損益
 
@@ -4499,10 +4575,22 @@ function lotLedger(o){
 function castSpans(o, from, to){
   const start = Number(from) || Number(o && o.liveStartedAt) || 0;
   const end   = Number(to) || (o && o.closedAt) || Date.now();
+  /* 出演時間の窓。**落札が動いていた範囲**で、`stintSpans` の広い窓とは別物。
+     締めたオリパは最後の落札まで、配信中は「いま」まで（立っている人は増える）。 */
+  const acts = lotLedger(o);
+  const lastAct = acts.length ? acts[acts.length - 1].at : 0;
+  const winFrom = earliest(Number(o && o.liveStartedAt) || 0, acts.length ? acts[0].at : 0);
+  /* 配信中の画面はこのまま「いま」まで数える（立っている人の時間は増えていく）。
+     **記録に焼くときは最後の落札で止める**——そちらは `stintsForRecord` で切る。
+     締めた時刻（＝締め日の正午）まで伸ばすと、配信より後ろの何時間かを
+     最後に立っていた人が抱えるため（上の ①）。 */
+  const winTo = (o && o.closedAt) ? lastAct : Math.max(lastAct, Date.now());
   const spans = stintSpans(o, start, end).map(s => ({
     ...s, revenue: 0, profit: 0, lots: 0,
-    // 出演時間からは人が押した一時停止を引く（paceOf と同じ勘定）
-    ms: Math.max(0, (s.to - s.at) - pausedBetween(o, s.at, s.to))
+    // 出演時間からは人が押した一時停止を引く（paceOf と同じ勘定）。そのうえで窓で切る
+    ms: clipSpanMs({ at: s.at, to: s.to,
+                     ms: Math.max(0, (s.to - s.at) - pausedBetween(o, s.at, s.to)) },
+                   winFrom, winTo)
   }));
   let loose = 0, looseLots = 0;
   for(const e of lotLedger(o)){
@@ -4611,12 +4699,23 @@ function castPayOf(o, from, to){
   return { ...cs, pay: bonusFromSpans(cs.spans, cs.total) };
 }
 
-/** 記録に焼き込む形。**金額まで固める**ので、あとから出演者だけ直せる */
+/**
+ * 記録に焼き込む形。**金額まで固める**ので、あとから出演者だけ直せる。
+ *
+ * ⚠ **出演時間は最後の落札で止める。**締めるのは配信の何時間もあとになることが
+ * あり（締め日は「その日の正午」として入る）、そのままだと最後に立っていた人が
+ * 配信の外の時間まで抱える（`clipSpanMs` の ①）。締めた時点では `o.closedAt` は
+ * まだ入っていないので、ここで切らないと誰も切らない。
+ */
 function stintsForRecord(o, from, to){
+  const acts = lotLedger(o);
+  const lastAct = acts.length ? acts[acts.length - 1].at : 0;
+  const winFrom = earliest(Number(o && o.liveStartedAt) || 0, acts.length ? acts[0].at : 0);
   return castSpans(o, from, to).spans.map(s => ({
     at: s.at, to: s.to, castIds: s.castIds.slice(),
     revenue: Math.round(s.revenue), profit: Math.round(s.profit),
-    lots: s.lots, ms: s.ms
+    lots: s.lots,
+    ms: clipSpanMs({ at: s.at, to: s.to, ms: s.ms }, winFrom, lastAct)
   }));
 }
 
@@ -4624,8 +4723,32 @@ function stintsForRecord(o, from, to){
  * 記録からボーナスを出す。**焼き込んだ区間だけを見る。**
  * オリパを消していても、別の夜に使い回していても、記録の金額は動かない。
  */
+/** 記録の窓（配信の開始〜最終落札）。取れない古い記録は null */
+function recordWindow(r){
+  // 開始と 1 口目の**早いほう**。開始は席を取り直すと「いま」に戻ることがある
+  const from = earliest(Number(r && r.startedAt) || 0, Number(r && r.firstLotAt) || 0);
+  const to   = Number(r && r.lastAt) || 0;
+  return (from > 0 && to > from) ? { from, to } : null;
+}
+
+/**
+ * 記録の出演区間。**出演時間を配信の窓で切ってから返す。**
+ * 画面もボーナスもここを通す（生の `r.stints` を直接読まない）。
+ * 記録そのものは書き換えない——焼き込んだ数字を後から動かすと、
+ * 一度出した支払いの裏が取れなくなる。
+ */
+function recordStints(r){
+  const ss = (r && Array.isArray(r.stints)) ? r.stints : [];
+  const w = recordWindow(r);
+  if(!w) return ss;
+  return ss.map(s => {
+    const m = clipSpanMs(s, w.from, w.to);
+    return m === (Number(s.ms) || 0) ? s : { ...s, ms: m };
+  });
+}
+
 function recordPay(r){
-  const spans = (r && Array.isArray(r.stints)) ? r.stints : [];
+  const spans = recordStints(r);
   /* 分ける元は**記録の現金損益**。焼き込んだ区間ごとの損益ではない。
      区間から使うのは**売れた額（revenue）**だけなので（運用者の指示 2026-08-24）、
      あとから出演者を直しても、売上が変わらないかぎり総額は動かない。 */
@@ -5418,6 +5541,18 @@ function simFromHere(c, p, topMult, minReturn, trials){
   let neg = 0;
   const arr = rest.slice();
 
+  /* ---- 続けるか解体するかの「確率」----
+     比べる相手は**いま解体した場合の手元**＝1 口も売らなかった場合の式そのもの
+     （売れ残りは原価のまま在庫に戻るので、別枠で評価しない）。
+     運用者の指示 2026-08-25：「参考価格まで下げて続けたとして、さらに赤字が
+     拡大する確率と、続けてハズレが減って参考金額が上がり利益が乗る確率を
+     それぞれ表示して判断できるようにしたい」。
+     下振れ・中央・上振れ（分位）は**どこに着地するか**しか言わないので、
+     「解体より悪くなる目がどれくらいあるか」は別に数える。
+     1 円の差は誤差なので、どちらにも数えない（0 口しか動かない読みがここに入る）。 */
+  const stopCash = c.revenue * (1 - feeRate) - c.costDrawn;
+  let worse = 0, better = 0;
+
   for(let t = 0; t < T; t++){
     let k = 0, costMore = 0, mktMore = 0, revMore = 0;
     if(!thinNow && !overNow){
@@ -5454,6 +5589,7 @@ function simFromHere(c, p, topMult, minReturn, trials){
     more.push(k); cash.push(cash_);
     mar.push(rev > 0 ? cash_ / rev : 0);
     if(cash_ < 0) neg++;
+    if(cash_ < stopCash - 1) worse++; else if(cash_ > stopCash + 1) better++;
   }
 
   const mean = a => a.length ? a.reduce((n, v) => n + v, 0) / a.length : 0;
@@ -5468,7 +5604,11 @@ function simFromHere(c, p, topMult, minReturn, trials){
     moreMed: quantile(more, 0.5), moreP10: quantile(more, 0.1), moreP90: quantile(more, 0.9),
     cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashP90: quantile(cash, 0.9),
     marMed: quantile(mar, 0.5), marP10: quantile(mar, 0.1), marP90: quantile(mar, 0.9),
-    cashNegRate: neg / T
+    cashNegRate: neg / T,
+    /* いま解体した場合と比べて、続けたほうが悪くなる／良くなる目の割合。
+       残りは「変わらない」（1 円差、または 1 口も動かない読み）。 */
+    stopCash, worseRate: worse / T, betterRate: better / T,
+    sameRate: (T - worse - better) / T
   };
 }
 
@@ -7708,7 +7848,11 @@ function renderReplayCasts(){
   if(mode !== "replay" || !r){ box.hidden = true; return; }
   box.hidden = false;
 
-  const spans = ensureRecordStints(r);
+  /* ⚠ **切ったほうを読む。**生の `r.stints` には配信より後ろの時間が
+     焼き込まれていることがある（`clipSpanMs` の注記）。
+     `ensureRecordStints` は区間を持たない古い記録に足すために先に通す。 */
+  ensureRecordStints(r);
+  const spans = recordStints(r);
   const pay = recordPay(r);
   const tb = $("replayCastTable").querySelector("tbody");
   tb.innerHTML = "";
@@ -8976,6 +9120,54 @@ function liveBreakup(c){
 }
 
 
+/**
+ * **続けるか、解体するか**を確率で出す 1 行。
+ *
+ * 運用者の指示 2026-08-25：
+ *   「直近の値段から参考価格まで下げて続けたとして、さらに赤字が拡大する確率と、
+ *     続けてハズレが減って参考金額が上がり利益が乗る確率をそれぞれ表示して
+ *     判断できるようにしたい」
+ *
+ * 下振れ・中央・上振れは**どこに着地するか**しか言わない。「悪くなる目が
+ * どれくらいあるか」は別の数字なので、そのすぐ下に並べる。
+ * 比べる相手は **いま解体した場合の手元**（＝1 口も売らなかった場合と同じ額）で、
+ * 画面の「いま終われば ¥X」と同じもの。試算 1,000 回のうち何回そこを
+ * 下回った／上回ったかを、そのまま割合にしている。
+ *
+ * ⚠ **語は手元の符号で変える。**すでに赤字の回で「減る」と書くと、
+ * どこから減るのか読めない。赤字なら「赤字が広がる」「赤字が縮む」。
+ */
+function oddsRow(dec, b, price){
+  if(!b || !(b.trials > 0)) return "";
+  const 悪い = Math.max(0, Number(b.worseRate) || 0);
+  const 良い = Math.max(0, Number(b.betterRate) || 0);
+  const 同じ = Math.max(0, Number(b.sameRate) || 0);
+  const 赤字率 = Math.max(0, Number(b.cashNegRate) || 0);
+  const 黒字率 = 1 - 赤字率;
+  const 出す = [];
+  if(dec.stop < 0){
+    /* すでに赤字。**戻れるのか**がいちばん知りたいことなので、
+       「良くなる」を「縮むだけ」と「黒字に戻る」に割る。
+       `stop < 0` なので、黒字で終わる目はすべて「良くなる」目に入っている。 */
+    出す.push(["bad", 悪い, "赤字が広がる"]);
+    出す.push(["warn", Math.max(0, 良い - 黒字率), "赤字は縮む"]);
+    出す.push(["good", 黒字率, "黒字に戻る"]);
+  }else{
+    /* いまは黒字。**赤字に落ちる目があるか**が判断の分かれ目。
+       `stop >= 0` なので、赤字で終わる目はすべて「悪くなる」目に入っている。 */
+    出す.push(["bad", 赤字率, "赤字に落ちる"]);
+    出す.push(["warn", Math.max(0, 悪い - 赤字率), "いまより減る"]);
+    出す.push(["good", 良い, "利益が乗る"]);
+  }
+  if(同じ >= 0.005) 出す.push(["flat", 同じ, "変わらない"]);
+  return `<div class="odds">
+    <span class="k">${yen(price)} で続けたら
+      <span class="sub">いま解体（${syen(Math.round(dec.stop))}）と比べて・試算 ${b.trials} 回</span></span>
+    ${出す.filter(([, v]) => v >= 0.005)
+        .map(([cls, v, 語]) => `<span class="p ${cls}"><b>${pct(v, 0)}</b>${語}</span>`).join("")}
+  </div>`;
+}
+
 function renderPrice(c){
   const a = auctionSummary(S);
   $("priceNow").textContent = `販売単価 ${yen(c.price)}`
@@ -9134,6 +9326,7 @@ function renderPrice(c){
         <span class="k">上振れ<span class="sub">良いほう1割</span></span>
         <span class="v">${syen(Math.round(b.cashP90))}</span>
       </div>
+      ${oddsRow(dec, b, goPrice)}
       <div class="foot">
         いま終われば <b>${syen(Math.round(dec.stop))}</b>。
         ${yen(goPrice)} で出して あと <b>${b.moreMed} 口</b> さばける読み
@@ -10297,7 +10490,12 @@ function duplicateOripa(src, suffix, openIt){
   copy.lots = [];
   copy.closedAt = 0;
   copy.liveStartedAt = 0;      // 複製は別の配信。開始時刻は座ったときに入る
+  /* 出演区間も引き継がない。**前の晩の顔ぶれが最初から立っている**ことになり、
+     その人が「前の晩の終わり〜今夜の最初の交代」を丸ごと抱える
+     （運用者の報告 2026-08-25：出演時間が不自然に多い）。 */
+  copy.stints = [];
   copy.live = null;
+  copy.liveKick = null;
   copy.rev = 0;                // 別の id の新しいもの。版は 1 から数え直す
   copy.createdAt = copy.updatedAt = Date.now();
   DB.oripas.push(copy);
