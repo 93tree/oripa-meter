@@ -1312,7 +1312,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='05c5d8c (08/25 02:52)';</script>
+<script>window.__BUILD='8dc5ce3 (08/25 03:08)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -4519,7 +4519,34 @@ function clipSpanMs(s, from, to){
   const at = Number(s && s.at) || 0, end = Number(s && s.to) || 0;
   if(!(end > at)) return raw;                    // 区間の形が無いものも触らない
   const 重なり = Math.max(0, Math.min(end, b) - Math.max(at, a));
+  /* ⚠ **落札があった区間は 0 にしない。**そこで売れている以上、その時間は
+     確かに配信中だった。窓のほうが間違っている（下の `activeFrom` の注記）。 */
+  if(重なり <= 0 && spanActive(s)) return raw;
   return Math.min(raw, 重なり);                   // 減らす方向にしか動かさない
+}
+
+/** その区間で何か売れたか。落札があれば「配信中だった」ことの証拠になる */
+const spanActive = s =>
+  (Number(s && s.lots) || 0) > 0 || (Number(s && s.revenue) || 0) > 0;
+
+/**
+ * 落札があった区間のうち、いちばん早い始まり。**窓はここまで広げる。**
+ *
+ * ⚠ 記録が持っている `startedAt` / `firstLotAt` は**排出（カードを押した時刻）**
+ * から来ているが、区間への割り当ては**落札（競り落ちた時刻）**で決まる。
+ * 落札してからカードを押すまでが空くと、この 2 つは何時間もずれる。
+ * 実データ（2026-08-24 の回）では 落札 20:38 開始・初排出 22:40 で、
+ * 排出だけで窓を作ると **20:38〜22:39 の 92 分＝¥96,000 ぶんの出演が消えた**
+ * （モナが 68 分 → 0 分になった）。落札のあった区間は必ず窓に入れる。
+ */
+function activeFrom(spans){
+  let t = 0;
+  for(const s of spans || []){
+    if(!spanActive(s)) continue;
+    const at = Number(s.at) || 0;
+    if(at > 0 && (!t || at < t)) t = at;
+  }
+  return t;
 }
 
 /* ------------------------------------------------------------
@@ -4587,10 +4614,8 @@ function castSpans(o, from, to){
   const winTo = (o && o.closedAt) ? lastAct : Math.max(lastAct, Date.now());
   const spans = stintSpans(o, start, end).map(s => ({
     ...s, revenue: 0, profit: 0, lots: 0,
-    // 出演時間からは人が押した一時停止を引く（paceOf と同じ勘定）。そのうえで窓で切る
-    ms: clipSpanMs({ at: s.at, to: s.to,
-                     ms: Math.max(0, (s.to - s.at) - pausedBetween(o, s.at, s.to)) },
-                   winFrom, winTo)
+    // 出演時間からは人が押した一時停止を引く（paceOf と同じ勘定）。窓で切るのは**後**
+    ms: Math.max(0, (s.to - s.at) - pausedBetween(o, s.at, s.to))
   }));
   let loose = 0, looseLots = 0;
   for(const e of lotLedger(o)){
@@ -4598,6 +4623,10 @@ function castSpans(o, from, to){
     if(s){ s.revenue += e.revenue; s.profit += e.profit; s.lots++; }
     else { loose += e.profit; looseLots++; }
   }
+  /* 窓で切るのは**落札を振り分けたあと**。「落札があった区間は 0 にしない」の
+     判定に件数が要るので、先に切ると使えない（`clipSpanMs` の注記）。 */
+  for(const s of spans) s.ms = clipSpanMs(s, winFrom, winTo);
+
   /* 分ける元は**この配信で出た合計損益**。区間ごとの当たり外れは持ち込まない。
      `loose` はどの区間にも入らなかった落札（別の夜のぶん）なので、
      分ける元には入れず、そのまま未登録ぶんへ回す。 */
@@ -4715,7 +4744,7 @@ function stintsForRecord(o, from, to){
     at: s.at, to: s.to, castIds: s.castIds.slice(),
     revenue: Math.round(s.revenue), profit: Math.round(s.profit),
     lots: s.lots,
-    ms: clipSpanMs({ at: s.at, to: s.to, ms: s.ms }, winFrom, lastAct)
+    ms: clipSpanMs(s, winFrom, lastAct)
   }));
 }
 
@@ -4725,8 +4754,13 @@ function stintsForRecord(o, from, to){
  */
 /** 記録の窓（配信の開始〜最終落札）。取れない古い記録は null */
 function recordWindow(r){
-  // 開始と 1 口目の**早いほう**。開始は席を取り直すと「いま」に戻ることがある
-  const from = earliest(Number(r && r.startedAt) || 0, Number(r && r.firstLotAt) || 0);
+  /* 開始と 1 口目の**早いほう**。開始は席を取り直すと「いま」に戻ることがある。
+     さらに**落札のあった区間**まで広げる（`activeFrom` の注記）。
+     終わりは最終排出のまま。落札はカードを押す前に立つので、
+     排出の最後より後ろに落札は無い。 */
+  const from = earliest(
+    earliest(Number(r && r.startedAt) || 0, Number(r && r.firstLotAt) || 0),
+    activeFrom((r && r.stints) || []));
   const to   = Number(r && r.lastAt) || 0;
   return (from > 0 && to > from) ? { from, to } : null;
 }
