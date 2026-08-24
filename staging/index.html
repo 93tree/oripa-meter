@@ -1264,7 +1264,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='72b96b8 (08/24 20:29)';</script>
+<script>window.__BUILD='c6a8440 (08/24 20:58)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2573,6 +2573,9 @@ function normalizeOrder(x){
    支払われないまま流れた落札をいつまでも出しておくと、受信箱がゴミで埋まる。
    消えても記録は残っているので、あとから入金されれば入金済みとして出直す。 */
 const UNPAID_TTL = 60 * 60 * 1000;
+/* 迷子の注文を引き受ける幅。**配信開始からこの範囲に届いたものだけ。**
+   商品 ID の入れ忘れはその日のうちに効けばよい（運用者の指示 2026-08-24：当日のみ）。 */
+const ORPHAN_TAKE_MS = 24 * 60 * 60 * 1000;
 
 /** そのオリパ宛の注文を、状態ごとに分ける。
     **売上になるのは pending（入金確認済み）だけ。**waiting は見せるだけで押せない。 */
@@ -2587,8 +2590,21 @@ function ordersFor(o){
   // 絞らないと、2 つ配信しているときに同じ注文が両方に出て二重に立つ。
   const host = orphanHost();
   const takesOrphans = !!host && String(host.id) === String(o.id);
+  /* ⚠ **迷子は「当日のもの」だけ引き受ける**（運用者の指示 2026-08-24）。
+     `isOrphanOrder` は「その商品IDを使っているオリパが 1 つも無いか」しか見ないので、
+     **引退した出品は永久に迷子**になる。期限が無かったため、8/24 の配信の受信箱に
+     **8/4〜8/20 の 62 件（¥320,566）**が並んでいた。うち 49 件はアプリを使い始める
+     前（いちばん古いオリパは 8/14）の配信のもので、突き合わせようがない。
+
+     商品 ID の入れ忘れはその日のうちに効けばよいので、当日で足りる。
+     線を越えたぶんは受信箱に出さず、件数だけ知らせる（`staleOrphans`）。 */
+  const orphanOK = x => {
+    if(!isOrphanOrder(x)) return false;
+    const base = Number(o.liveStartedAt) || Date.now();
+    return Math.abs((Number(x.at) || 0) - base) <= ORPHAN_TAKE_MS;
+  };
   const mine = DB.orders
-    .filter(x => (pid && String(x.productId || "") === pid) || (takesOrphans && isOrphanOrder(x)))
+    .filter(x => (pid && String(x.productId || "") === pid) || (takesOrphans && orphanOK(x)))
     .sort((a, b) => a.at - b.at);
   const fresh = x => Date.now() - (x.at || 0) < UNPAID_TTL;
 
@@ -2618,6 +2634,22 @@ function ordersFor(o){
 
 /** いま取り込める落札（入金済み・未処理） */
 function pendingOrders(o){ return ordersFor(o).pending; }
+
+/**
+ * 期限の外にある迷子の注文。**受信箱には出さないが、黙って隠さない。**
+ *
+ * 隠すだけにすると「入金があるのにどこにも出ない」になる。件数と金額を
+ * 一覧に出して、消すか結びつけるかを人が決められるようにしておく。
+ */
+function staleOrphans(){
+  const used = new Set(
+    (DB.oripas || []).flatMap(o => (o.lots || []).map(l => String(l.orderId || ""))).filter(Boolean));
+  const host = orphanHost();
+  const base = host && Number(host.liveStartedAt) ? Number(host.liveStartedAt) : Date.now();
+  return (DB.orders || []).filter(x =>
+    isOrphanOrder(x) && !used.has(String(x.id)) && x.paid && !x.cancelled
+    && Math.abs((Number(x.at) || 0) - base) > ORPHAN_TAKE_MS);
+}
 
 /* ------------------------------------------------------------
    溜まった注文を自動で落とす
@@ -6474,14 +6506,24 @@ async function fixDupesFlow(){
 
 function renderOrderNotice(){
   const el = $("orderNotice");
-  const per = DB.oripas.map(o => ({ o, ...ordersFor(o) }));
+  /* ⚠ **締めた回は数えない。**`takeOrder` は `S.closedAt` があると受け付けない
+     ので、締めた回の受信箱に出しても**押せない数字**でしかない。
+     8/24 の時点で「配信前に届いていた 80 件」のうち 68 件が、8/20 に締めた回に
+     8/15 の注文が残っているだけのものだった（運用者の指摘 2026-08-24）。
+     取り消しの知らせ（`troubleOrders`）は締めた回でも要るので、別に出している。 */
+  const per = DB.oripas.filter(o => !o.closedAt).map(o => ({ o, ...ordersFor(o) }));
   const ready  = per.filter(x => x.pending.length);
   const wait   = per.reduce((n, x) => n + x.waiting.length, 0);
   const older  = per.reduce((n, x) => n + x.earlier.length, 0);
   const bad    = troubleOrders();
   const orphans = orphanOrders().length;
+  /* 期限の外にある迷子。**受信箱には出さないが、黙って隠さない。**
+     隠すだけだと「入金があるのにどこにも出ない」になる（2026-08-24）。 */
+  const stale  = staleOrphans();
 
-  if(!ready.length && !wait && !older && !bad.length && !orphans){ el.innerHTML = ""; return; }
+  if(!ready.length && !wait && !older && !bad.length && !orphans && !stale.length){
+    el.innerHTML = ""; return;
+  }
 
   const out = [];
 
@@ -6522,11 +6564,25 @@ function renderOrderNotice(){
             + `配信画面をひらくと取り込める。`
           : "")
       + (wait ? ` 入金待ちが ${wait} 件（入金が確認できると押せるようになる）。` : "")
-      + (older ? ` 配信前に届いていた注文が ${older} 件（自動では立たない。`
+      /* ⚠ **「配信前」と書かない。**配信していない時間に届いた、と読めてしまう
+         （運用者の指摘 2026-08-24）。実際は「**この配信が始まるより前**に届いた」で、
+         中身は過去の配信ぶんであることが多い。 */
+      + (older ? ` この配信が始まる前に届いた注文が ${older} 件`
+          + `（過去の配信ぶんのことが多い。自動では立たない。`
           + `配信画面の受信箱から選んで取り込む）。` : "")
       + (orphans
           ? ` どのオリパにも結びつかない注文が ${orphans} 件ある`
             + `（編集画面の「TikTok Shop の商品 ID」に候補が出る。押すと結びつく）。`
+          : "")
+      /* 当日より外の迷子。件数と金額と時期を出す。**受信箱には混ぜない**が、
+         入金があるものを黙って消してもいない、と分かるようにしておく。 */
+      + (stale.length
+          ? `<br><span class="hint">ほかに、<b>日をまたいだ</b>古い注文が ${stale.length} 件`
+            + `（${yen(stale.reduce((n, x) => n + (Number(x.price) || 0) * Math.max(1, Number(x.qty) || 1), 0))}`
+            + `・${fmtDate(Math.min(...stale.map(x => Number(x.at) || 0)))} 〜`
+            + `${fmtDate(Math.max(...stale.map(x => Number(x.at) || 0)))}）。`
+            + `過去の配信ぶんなので受信箱には出していない。`
+            + `下の一覧で中身を見て、要らなければ消せる。</span>`
           : "")
       + `</span><span>${lines}`
       + (orphans ? `<button type="button" class="btn" id="btnDropUnlinked">`
@@ -7700,11 +7756,13 @@ function renderInbox(c){
         + trouble.map(x => line(x, watch ? ""
             : `<button type="button" class="btn" data-void="${esc(x.id)}">この落札を取り消す</button>`)).join("")
       : "")
-    // 配信前から溜まっていたぶん。**自動では立たない。**古い注文が次々と
-    // 落札になるのを防ぐため、人が選んで押す欄に分けてある
+    /* この配信が始まるより前に届いたぶん。**自動では立たない。**古い注文が
+       次々と落札になるのを防ぐため、人が選んで押す欄に分けてある。
+       ⚠ 見出しに「配信前」と書かない。**配信していない時間に届いた**と
+       読めてしまう（運用者の指摘 2026-08-24）。中身は過去の配信ぶんが多い。 */
     + (earlier.length
-      ? `<div class="head is-wait">配信前に届いた注文 ${earlier.length} 件`
-        + `<span class="sub">この配信より前のぶん。入金は確認できている。`
+      ? `<div class="head is-wait">この配信が始まる前に届いた注文 ${earlier.length} 件`
+        + `<span class="sub">過去の配信ぶんのことが多い。入金は確認できている。`
         + `自動では立たないので、この配信で出すものだけ押す</span>`
         // 出すつもりが無いなら 1 件ずつ消さずに済むようにする
         + (watch ? "" : `<button type="button" class="btn skip" data-dropearlier="1">`
@@ -7735,7 +7793,7 @@ function renderInbox(c){
   });
   box.querySelectorAll("[data-dropearlier]").forEach(btn => {
     btn.addEventListener("click", () => dropOrders(ordersFor(S).earlier,
-      `「${S.name || "無題のオリパ"}」に配信前から届いていた注文`));
+      `「${S.name || "無題のオリパ"}」の配信が始まる前に届いた注文`));
   });
 }
 
@@ -10008,8 +10066,8 @@ async function linkShopId(pid){
   render();
   say(`商品 ID を結びつけた。\n`
     + (g ? `この商品の注文 ${g.n} 件がこのオリパのものになる。\n\n` : "\n")
-    + `配信前から溜まっていたぶんは自動では立たない。受信箱の`
-    + `「配信前に届いた注文」から、必要なものだけ押して取り込む。`);
+    + `この配信より前に届いていたぶんは自動では立たない。受信箱の`
+    + `「この配信が始まる前に届いた注文」から、必要なものだけ押して取り込む。`);
 }
 
 /* 「複数商品をまとめて1口」の操作 */
