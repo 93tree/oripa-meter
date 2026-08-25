@@ -1305,7 +1305,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='3227422 (08/25 05:07)';</script>
+<script>window.__BUILD='f868ebd (08/25 13:31)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -2746,14 +2746,31 @@ const ORDER_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
 /* それでも溜まったときの上限。超えたぶんは古い順に、同じ規則で落とす。 */
 const ORDER_MAX = 400;
 
-/** その注文を落としてよいか。理由が無ければ null */
-function droppableOrder(x, used, old){
+/**
+ * その注文を落としてよいか。理由が無ければ null。
+ * `orphan` はどのオリパの商品 ID にも当たらないもの（＝結びつけようが無い）。
+ */
+function droppableOrder(x, used, old, orphan){
   if(!x) return null;
   const taken = used.has(String(x.id));
   if(taken && !x.cancelled) return old ? "取り込み済み" : null;
   if(taken) return null;                       // 取り消し＋取り込み済み＝知らせる必要がある
   if(x.cancelled) return old ? "取り消し済み" : null;
   if(!x.paid) return old ? "未入金のまま古い" : null;
+  /* 入金済みで未取り込みは**基本的に絶対残す**。売上になる可能性があるものを
+     こちらの都合で消さない。
+
+     ⚠ ただし**古くて、どのオリパにも結びつかない**ものは別
+     （運用者の報告 2026-08-25：「どのオリパにも結びつかない注文が 14 件ある。
+     また出てきたから調べろ」）。その商品 ID を使っているオリパが 1 つも無い＝
+     引退した出品なので、**押しても結びつく先が無い**。残しても編集画面の候補に
+     並び続けるだけで、運用者にできることが無い。
+
+     実際に出ていたのは 8/7〜8/8 の注文で、いちばん古いオリパ（8/14）より前。
+     TikTok が購入の 2〜3 週間後に `COMPLETED` を投げてくるので、**消しても
+     次の決済確定でまた生まれる**。入口（Worker）も塞いだが、既に降ったぶんと
+     取りこぼしはここで片付く。 */
+  if(orphan) return old ? "結びつく先が無いまま古い" : null;
   return null;                                 // 入金済みで未取り込み＝絶対に残す
 }
 
@@ -2768,10 +2785,13 @@ function pruneOrders(){
   const used = new Set(
     DB.oripas.flatMap(o => (o.lots || []).map(l => String(l.orderId || ""))).filter(Boolean));
   const line = Date.now() - ORDER_KEEP_MS;
+  // 商品 ID の一覧は 1 回だけ作る（注文 1 件ごとに作ると O(注文×オリパ) になる）
+  const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
+  const orphan = x => !x.productId || !known.has(String(x.productId));
 
   const drop = [];
   for(const x of list){
-    const why = droppableOrder(x, used, (Number(x.at) || 0) < line);
+    const why = droppableOrder(x, used, (Number(x.at) || 0) < line, orphan(x));
     if(why) drop.push(x);
   }
   /* 上限を超えているぶんは、古い順にもう一段落とす（時間の線を無視する）。
@@ -2782,7 +2802,7 @@ function pruneOrders(){
       .slice().sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
     for(const x of rest){
       if(list.length - drop.length <= ORDER_MAX) break;
-      if(droppableOrder(x, used, true)) drop.push(x);
+      if(droppableOrder(x, used, true, orphan(x))) drop.push(x);
     }
   }
   if(!drop.length) return 0;
