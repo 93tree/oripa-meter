@@ -1243,6 +1243,67 @@ details.explain dd{ margin:0; color:var(--ink-3); font-family:var(--font-num); f
   *{ animation:none !important; transition:none !important; }
 }
 
+/* ============================================================
+   多段オリパ（段の登録と、配信中の番号盤）
+
+   ⚠ 段を持たない回では出ない。シンプル型の見た目は 1 か所も変わらない。
+   ============================================================ */
+
+/* ---- 配信中の番号盤 ---- */
+#stageBoard{
+  border:1px solid var(--line); border-radius:12px;
+  background:var(--surface-2); padding:12px; margin-bottom:10px;
+}
+.stagetop{
+  background:var(--gold-bg); color:var(--gold-ink); font-weight:700;
+  border-radius:8px; padding:8px 12px; margin-bottom:10px;
+}
+.stagehead{ display:flex; align-items:baseline; gap:10px; margin-bottom:8px; }
+.stagehead b{ font-size:1.15rem; }
+.stagerest{ margin-left:auto; color:var(--ink-2); font-variant-numeric:tabular-nums; }
+.stagewin{
+  margin-left:8px; background:var(--gold-bg); color:var(--gold-ink);
+  border-radius:6px; padding:1px 8px; font-weight:700;
+}
+
+/* 番号。**押しやすさを優先**して大きく取る。配信中に外すと客を待たせる */
+.nos{ display:flex; flex-wrap:wrap; gap:6px; }
+.no{
+  min-width:46px; height:46px; padding:0 6px;
+  border:1px solid var(--line-2); border-radius:8px;
+  background:var(--surface); color:var(--ink);
+  font-size:1.1rem; font-weight:700; font-variant-numeric:tabular-nums;
+  cursor:pointer;
+}
+.no:hover:not(:disabled){ border-color:var(--gold); }
+.no.is-sel{ background:var(--gold); border-color:var(--gold); color:#fff; }
+/* 引かれた番号は**消さずに残して灰にする**。消すと並びが詰まって、
+   客が言った番号を探しにくくなる */
+.no.is-used{ opacity:.28; text-decoration:line-through; cursor:not-allowed; }
+.no:disabled:not(.is-used){ opacity:.5; cursor:not-allowed; }
+
+.stagebar{ display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.btn.big{ font-size:1.05rem; font-weight:700; padding:12px 22px; }
+.btn.big.win{  background:var(--good); border-color:var(--good); color:#fff; }
+.btn.big.lose{ background:var(--flat); border-color:var(--flat); color:#fff; }
+.btn.big:disabled{ opacity:.4; }
+#stageWhy{ color:var(--bad); font-weight:600; }
+
+/* ---- 編集画面の段 ---- */
+.stagebox{ margin-top:18px; border-top:1px solid var(--line); padding-top:14px; }
+.stagehead2{ display:flex; align-items:center; gap:12px; margin-bottom:8px; }
+.stagehead2 h3{ margin:0; font-size:1rem; }
+.stagehead2 .btn{ margin-left:auto; }
+.stagetbl input{ width:100%; }
+
+/* 賞品のタグ（目玉／あたり／はずれ）。当たり枚数を数える元 */
+.tiersel{ width:100%; font-size:.85rem; padding:3px 4px; }
+.tiersel.is-top{  color:var(--gold-ink); background:var(--gold-bg); font-weight:700; }
+.tiersel.is-win{  color:var(--good);     background:var(--good-bg); font-weight:700; }
+.tiersel.is-lose{ color:var(--ink-3); }
+/* 相場から引いた下書きの印。手で直すと消える */
+.autodot{ color:var(--ink-3); font-size:1.1rem; line-height:0; margin-left:2px; }
+
 /* ---- 配布版の入口 ---- */
 body.locked > header, body.locked > main { display:none; }
 .gate{
@@ -1305,7 +1366,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='fcb3aed (08/25 23:01)';</script>
+<script>window.__BUILD='9e24ea5 (08/26 04:57)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -1618,6 +1679,10 @@ window.__SYNC_DEFAULTS = {
         <div class="body">
           <div class="inbox" id="inbox" hidden></div>
           <div id="lotBar"></div>
+          <!-- 多段オリパの番号盤。段を持たない回では出ない（renderStageBoard）。
+               カードの手前に置く。現実の手順が 番号を選ぶ → 開ける →
+               あたり/はずれ → 賞品、の順なので、画面もその順に並べる -->
+          <div id="stageBoard" hidden></div>
           <div class="prizes" id="prizeList"></div>
           <div class="drawbar">
             <button type="button" class="btn" id="btnUndo">← 1 件取り消し</button>
@@ -2010,7 +2075,10 @@ window.__SYNC_DEFAULTS = {
               （編集画面の相場欄が破線＋灰色なら自動）。</li>
             <li>この 1 つの数字で<b>還元率・目玉の判定・ハズレ枠の線・「AIの提案」が
               言う相場</b>が動く。低すぎると判断が「もっと下げろ」に寄る。</li>
-            <li><b>ハズレ枠は自動</b>（相場が販売単価の 20% 以下）。印を付ける操作はない。
+            <li><b>タグ（目玉／あたり／はずれ）は取り込み時に相場から下書きされる。</b>
+              ⚠ 下書きは当て推量なので、<b>手で直すこと</b>。一度直したタグは
+              単価を変えても相場を入れ直しても<b>二度と上書きされない</b>。
+              残りの当たり枚数はこのタグで数える。
               まとめ排出はこの印とは無関係で、残りが 5 口以上の行に出る。</li>
           </ul>
         </details>
@@ -2132,7 +2200,7 @@ window.__SYNC_DEFAULTS = {
                 <th style="width:12%">相場</th>
                 <th style="width:9%">口数</th>
                 <th style="width:20%">備考</th>
-                <th style="width:7%">ハズレ</th>
+                <th style="width:9%">タグ</th>
                 <th style="width:7%">排出済</th>
                 <th></th>
               </tr>
@@ -2165,12 +2233,16 @@ window.__SYNC_DEFAULTS = {
       <div class="body">
         <div class="fields">
           <div class="field">
-            <label for="simTopMult">目玉の基準（販売単価の何倍以上）</label>
+            <label for="simTopMult">目玉の線（販売単価の何倍以上）</label>
             <input type="number" id="simTopMult" min="1" step="0.5" value="5">
           </div>
           <div class="field">
             <label for="simMinReturn">解体する残り還元率（%を下回ったら）</label>
             <input type="number" id="simMinReturn" min="0" max="200" step="5" value="50">
+          </div>
+          <div class="field">
+            <label for="simMinHit">目玉切れでも続けるあたりの濃さ（%）</label>
+            <input type="number" id="simMinHit" min="0" max="300" step="10" value="100">
           </div>
         </div>
 
@@ -2204,6 +2276,27 @@ window.__SYNC_DEFAULTS = {
           <b>金額と落札者が配信画面へ自動で届く</b>（同期の設定が要る）。
           押すのは出たカードだけになる。
         </p>
+
+        <!-- 多段オリパの段。空のままならシンプル型で、いままでどおり動く -->
+        <div class="stagebox">
+          <div class="stagehead2">
+            <h3>段（多段オリパのとき）</h3>
+            <button type="button" class="btn" id="btnAddStage">段を足す</button>
+          </div>
+          <table class="tbl stagetbl">
+            <thead><tr>
+              <th>名前</th><th style="width:7em">枚数</th><th style="width:7em">あたり</th>
+              <th style="width:5em">引かれた</th><th style="width:3em"></th>
+            </tr></thead>
+            <tbody id="stageRows"></tbody>
+          </table>
+          <p class="hint" id="stageNote" style="margin:8px 0 0"></p>
+          <p class="hint" style="margin:6px 0 0">
+            あたり券は<b>原価ゼロの通過券</b>なので、賞品には入れない。
+            賞品に入れるのは<b>最終到達物だけ</b>（残念賞と目玉）。
+            段は配信中でも足せる。
+          </p>
+        </div>
 
 
       </div>
@@ -2376,7 +2469,10 @@ function blankOripa(name){
   return {
     id: newId(), name: name || "新しいオリパ",
     price: 0, targetMargin: 0.30, targetReturn: 0.80,
-    prizes: [], events: [], lots: [], totalSlots: 0, createdAt: t, updatedAt: t
+    prizes: [], events: [], lots: [], totalSlots: 0, createdAt: t, updatedAt: t,
+    /* 多段オリパ。空ならシンプル型（今までどおり）。
+       ⚠ passes は口数にも金額にも影響しない（09d-stages.js の注記） */
+    stages: [], passes: []
   };
 }
 
@@ -2413,7 +2509,7 @@ function starterOripas(){
 function normalizeOripa(o){
   const t = Date.now();
   // 相場の埋め直し → ハズレ判定 の順。ハズレは相場を見るので順番が要る
-  return markLosers(syncMarket({
+  return markTiers(syncMarket({
     ...o,                       // 知らないフィールドも捨てずに持ち越す
     id: o.id || newId(),
     name: String(o.name || "無題のオリパ"),
@@ -2425,16 +2521,43 @@ function normalizeOripa(o){
     // 解体の条件。編集画面のシミュレーションと配信中の値下げ判断が同じ前提を使う
     simTopMult: Math.max(0, Number(o.simTopMult ?? 5)),
     simMinReturn: clamp(Number(o.simMinReturn ?? 0.50), 0, 2),
+    /* 目玉が出尽くしても、あたりがこの濃さで残っていれば続ける
+       （運用者の指示 2026-08-26）。1＝最初と同じ濃さ。詳しくは 10-breakup-sim.js */
+    simMinHit: clamp(Number(o.simMinHit ?? 1), 0, 5),
     // 相場想定。CSV に相場の列が無いオリパは 原価 × この倍率 を相場として使う
     marketMult: Number(o.marketMult) > 0 ? Number(o.marketMult) : 1,
     // TikTok Shop の商品 ID。落札の自動取り込みで、注文とオリパを結ぶ鍵
     shopProductId: String(o.shopProductId || "").trim(),
+    /* 多段オリパの段。空ならシンプル型で、今までと何も変わらない。
+       ⚠ **口数にも金額にも効かない。**あたり券は原価ゼロの通過券なので、
+       排出として立てない（09d-stages.js の注記）。 */
+    stages: (Array.isArray(o.stages) ? o.stages : []).map(st => ({
+      id: st.id || newId(),
+      name: String(st.name || ""),
+      slots: Math.max(0, Math.round(Number(st.slots) || 0)),
+      // あたり枚数は枚数を超えない。超えると確率が 1 を上回る
+      wins: clamp(Math.round(Number(st.wins) || 0), 0, Math.max(0, Math.round(Number(st.slots) || 0))),
+    })),
+    passes: (Array.isArray(o.passes) ? o.passes : []).map(p => ({
+      id: p.id || newId(),
+      stageId: String(p.stageId || ""),
+      no: Math.max(0, Math.round(Number(p.no) || 0)),
+      win: !!p.win,
+      at: Number(p.at) || 0,
+      // どの賞品に行き着いたか。「何番から何が出たか」を後から読むための印
+      prizeId: String(p.prizeId || ""),
+    })),
     prizes: (Array.isArray(o.prizes) ? o.prizes : []).map(p => ({
       id: p.id, name: String(p.name || ""),
       cost: Math.max(0, Number(p.cost) || 0),
       market: Math.max(0, Number(p.market) || 0),
       count: Math.max(0, Math.round(Number(p.count) || 0)),
       note: String(p.note || ""), normal: !!p.normal,
+      /* 賞品のタグ（目玉 / あたり / はずれ）。当たり枚数を数える元。
+         ⚠ tierAuto が false なら**手で直したもの**なので二度と上書きしない
+         （02-market.js の markTiers）。 */
+      tier: TIERS.includes(p.tier) ? p.tier : "",
+      tierAuto: p.tierAuto === undefined ? true : !!p.tierAuto,
       // 相場が原価と同額（＝倍率1.0で取り込んだ跡）か未設定なら「自動」とみなす。
       // 実売相場をわざわざ原価ちょうどで入れることは無いので、この判定で拾える。
       marketAuto: p.marketAuto === undefined
@@ -2540,13 +2663,72 @@ function syncMarket(o){
   return o;
 }
 
-/** ハズレ枠かどうかは印を付けてもらうのではなく、単価との比で決める。
-    印を人手で維持させると必ず付け忘れる（実際 83 口の行が付いていなかった）。 */
-function markLosers(o){
-  const line = (Number(o.price) || 0) * LOSER_RATIO;
-  for(const p of o.prizes) p.normal = line > 0 && mktOf(p) <= line;
+/* ============================================================
+   賞品のタグ（目玉 / あたり / はずれ）
+
+   運用者の指示 2026-08-26：
+     「価格を下回るとすべてアドではないという事になるので、オリパの商品ごとに
+      あたり・はずれのタグを持たせたい」
+     「今後は残りの当たりの枚数などを気にするようにしたい、これはすべての
+      計算式に当てはめたい」
+
+   これまで「当たり」は 3 つの別々の基準が**相場から自動で**決めていた。
+     アド     … 相場 > その口で払った額
+     目玉     … 相場 ≥ 単価 × 5
+     ハズレ枠 … 相場 ≤ 単価 × 0.2（編集画面に印を出すだけで、計算には無関係）
+   どれも単価に張り付いているので、単価が高いと何も当たりにならず、値下げ
+   すると枚数が勝手に動く。**枚数は卓の性質**であって値段の関数ではない。
+
+   ⚠ **手で直したタグは二度と上書きしない。**`tierAuto` が false になり、
+   単価を変えても相場を入れ直しても動かない。以前の `normal` は読み込むたびに
+   相場から引き直していたので、手で付けても消えていた（そこが直したかった点）。
+   ============================================================ */
+
+const TIERS = ["top", "win", "lose"];
+
+/** 取り込み直後の下書き。**相場から引くだけの当て推量**なので、手で直す前提 */
+function autoTier(o, p){
+  const price = Number(o.price) || 0;
+  if(price <= 0) return "lose";                 // 単価が無いうちは決めようがない
+  const m = mktOf(p);
+  const topLine = price * (Number(o.simTopMult ?? 5) || 0);
+  if(topLine > 0 && m >= topLine) return "top";
+  // ⚠ 線は**単価そのもの**。客が得をするかどうかがいちばん素直な区切り
+  return m >= price ? "win" : "lose";
+}
+
+/** 自動のぶんだけタグを引き直す。手で直したものには触らない */
+function markTiers(o){
+  for(const p of o.prizes){
+    if(p.tierAuto !== false || !TIERS.includes(p.tier)) p.tier = autoTier(o, p);
+    // 昔の印。編集画面の表示がまだ見ているので、タグに合わせて残しておく
+    p.normal = p.tier === "lose";
+  }
   return o;
 }
+
+/** その賞品は客から見て「当たり」か（目玉も当たりのうち）*/
+const isHit = p => p && (p.tier === "top" || p.tier === "win");
+/** 目玉か */
+const isTop = p => !!p && p.tier === "top";
+
+/**
+ * **買い手から見て目玉か。**タグが付いているか、いまの単価から見て目玉級か。
+ *
+ * ⚠ **解体の判定だけはこちらを使う。**タグは卓の設計（運用者が決めるもの）で
+ * 値段では動かない。それはそれで正しいが、そればかりだと**値下げで卓が
+ * 生き返る道が消える**。相場 ¥6,000 のカードが 60 口残っている卓は、
+ * ¥8,000 では誰も買わないが ¥1,200 なら全部さばける——これが回収局面
+ * （運用者の指示 2026-08-24）。目玉タグだけで判定すると「どの値段でも
+ * 動かない」と答えてしまい、実際には戻る数十万円を捨てることになる。
+ *
+ * だから **タグ（設計）か 単価 × 倍率（買い手の目線）のどちらかで目玉なら目玉**。
+ * 値上げしても**タグのぶんは残る**ので、単価に張り付いて 0 枚になる、という
+ * 元の不具合には戻らない。枚数を数えるほう（当たり・目玉の残り）は
+ * **タグだけ**で数える。
+ */
+const isTopAt = (p, price, mult) => isTop(p) ||
+  (price > 0 && mult > 0 && mktOf(p) >= price * mult);
 
 /** lots が無かった頃のイベントを、1口ずつの即決として拾い直す */
 function backfillLots(o){
@@ -3952,10 +4134,15 @@ function csvToPrizes(text, opts){
   const prizes = out.map(o => ({
     id: uid++, name: o.name, cost: o.cost, market: o.market,
     count: o.count, note: o.note || "", normal: NORMAL_RE.test(o.name), items: [],
+    tier: NORMAL_RE.test(o.name) ? "lose" : "",
+    tierAuto: !NORMAL_RE.test(o.name),
     // CSV に相場の列が無ければ、相場は 原価 × 相場想定倍率 で埋める
     marketAuto: idx.market == null
   }));
-  // ハズレ枠は取り込み時ではなく markLosers() が単価との比で決めるので、ここでは触らない
+  /* タグ（目玉/あたり/はずれ）は取り込み時ではなく markTiers() が決める。
+     ただし**名前にハズレと書いてあるものは、そこで決め打ちにする**。
+     相場から引いた下書きより人が付けた名前のほうが確かなので、手で直した
+     ものと同じ扱い（tierAuto: false）にして二度と上書きしない。 */
   const slots = prizes.reduce((n, p) => n + p.count, 0);
   const cost  = prizes.reduce((n, p) => n + costOf(p) * p.count, 0);
   return { prizes, slots, cost, hasMarket: idx.market != null };
@@ -4088,6 +4275,26 @@ function compute(o){
   };
   const adoLeft = adoLeftAt(price);
 
+  /* ── 当たり枚数（タグ基準）──────────────────────────────
+     運用者の指示 2026-08-26：「今後は残りの当たりの枚数などを気にするように
+     したい、これはすべての計算式に当てはめたい」。
+
+     ⚠ **アドと違って単価に張り付かない。**アドは「相場 > その口で払った額」
+     なので、単価が高いと何も当たりにならず、値下げすると枚数が勝手に動く。
+     枚数は卓の性質であって値段の関数ではない。タグは人が決める。
+
+     当たり ＝ 目玉 ＋ あたり（客から見ればどちらも当たり）。
+     目玉だけを別に数えるのは、解体の判断がそこを見るため。 */
+  let topLeft = 0, winLeft = 0, topDone = 0, winDone = 0;
+  for(const p of o.prizes){
+    const got  = drawnBy.get(p.id) || 0;
+    const rest = Math.max(0, (p.count | 0) - got);
+    if(isTop(p)){ topLeft += rest; topDone += got; }
+    else if(isHit(p)){ winLeft += rest; winDone += got; }
+  }
+  const hitLeft = topLeft + winLeft;
+  const hitDone = topDone + winDone;
+
   const baseEvMkt  = N > 0 ? mktTotal / N : 0;
   const heat       = (baseEvMkt > 0 && left > 0) ? evMkt / baseEvMkt : 1;
   const returnLeft = price > 0 ? evMkt / price : 0;
@@ -4130,6 +4337,9 @@ function compute(o){
        ので、値下げの効き目をアド率で測れる。 */
     adoDone, adoYen, adoDoneRate: sold > 0 ? adoDone / sold : 0,
     adoLeft, adoLeftRate: left > 0 ? adoLeft / left : 0, adoLeftAt,
+    /* 当たり枚数（タグ基準）。アドと違い単価に張り付かない */
+    topLeft, winLeft, hitLeft, topDone, winDone, hitDone,
+    hitLeftRate: left > 0 ? hitLeft / left : 0,
     returnLeft, returnAll, finalRev, finalProfit, finalMargin,
     pBE, pTarget, pBuyer, pFloor, rec, tm, state, verdict, drawnBy
   };
@@ -5087,6 +5297,185 @@ function rebuildRecord(o){
   return { before: Math.round(Number(old.revenue) || 0), after: Math.round(fresh.revenue) };
 }
 /* ============================================================
+   多段オリパの器
+
+   要件は docs/oripa-panel-requirements.md の 2〜5 章。
+
+   ■ 多段とは
+   1 回の購入で客がパックを何度か選ぶ形。段ごとに「あたり券」か「はずれ券」で、
+   はずれた時点で残念賞を渡して終わり。あたりを規定回数通すと目玉が確定する。
+   番号は**段ごとに 1 から振り直す**。段数もあたり枚数も回によって変わる。
+
+   ■ ⚠ ここがいちばん大事：口数と金額に触らない
+
+   いまのエンジンは「1 口 = 1 排出」で固まっている（`sold` ＝排出の件数、
+   残り口数 ＝総口数 − 排出件数）。多段を素直に入れると 1 人買っただけで
+   口数が 3 減り、還元率も崩れる。
+
+   だからイベントを 2 種類に分ける。
+
+     排出（既存 `events`）… 原価を持つ。最終到達物だけ。口数を消化する
+     通過（新規 `passes`）… 原価ゼロ。段・番号・あたり/はずれだけ。口数に触らない
+
+   あたり券は**原価ゼロの通過券**なので、記録上これを排出として立てない。
+   運用者は以前から最終到達物だけを 1 口 1 排出で入れており、**過去の
+   原価・還元率・損益はすべて正しい**（2026-08-26 に確認済み）。
+
+   ⚠ **このファイルは `compute()` を一切呼ばないし、`events` にも触らない。**
+   触った瞬間に上の前提が壊れる。検査 `stagetest.mjs` がそこを見張っている。
+   ============================================================ */
+
+/** 段の一覧。持っていなければ空（＝シンプル型） */
+function stages(o){ return Array.isArray(o && o.stages) ? o.stages : []; }
+
+/** 多段型か。シンプル型は今までどおり何も変わらない */
+function isMulti(o){ return stages(o).length > 0; }
+
+/** 段の通過の記録 */
+function passes(o){ return Array.isArray(o && o.passes) ? o.passes : []; }
+
+/** その段で既に引かれた番号 */
+function stageUsed(o, stageId){
+  const out = new Set();
+  for(const p of passes(o)) if(String(p.stageId) === String(stageId)) out.add(p.no | 0);
+  return out;
+}
+
+/**
+ * その段の残り。**客に伝えている「何分のいくつ」はここから作る。**
+ *   のこり = 枚数 − 引かれた枚数
+ *   あたり = あたり枚数 − 出たあたりの枚数
+ */
+function stageRest(o, st){
+  if(!st) return { left: 0, wins: 0 };
+  let 引 = 0, 当 = 0;
+  for(const p of passes(o)){
+    if(String(p.stageId) !== String(st.id)) continue;
+    引++; if(p.win) 当++;
+  }
+  return {
+    left: Math.max(0, (st.slots | 0) - 引),
+    wins: Math.max(0, (st.wins | 0) - 当),
+  };
+}
+
+/**
+ * 通過を客ごとの区切りに割る。
+ *
+ * 1 人の客は「はずれを引く」か「最後の段まであたりを通す」で終わる。
+ * ⚠ **状態を別に持たない。**通過の並びから毎回導く。持つと、端末をまたいだ
+ * ときに食い違う（同期で運ぶものが 1 つ増える）。
+ *
+ * 返す `live` が**いま進行中の客**。`live.length` がその客の通った段数＝
+ * これから引く段の番号（0 なら 1 段目）。
+ */
+function passRuns(o){
+  const n = stages(o).length;
+  const done = [];
+  let cur = [];
+  for(const p of passes(o)){
+    cur.push(p);
+    if(!p.win || (n > 0 && cur.length >= n)){ done.push(cur); cur = []; }
+  }
+  return { done, live: cur };
+}
+
+/**
+ * いま引く段。
+ *
+ * ⚠ **目玉が確定していても、次の客の 1 段目を返す。**
+ * 「賞品を渡すまで番号盤を止める」形も試したが、押し忘れると盤が固まって
+ * 配信が止まる。止まるくらいなら印（`prizeId`）が付かないほうがまし。
+ * 印は「何番から何が出たか」を後から読むための飾りで、金には効かない。
+ */
+function currentStage(o){
+  const st = stages(o);
+  if(!st.length) return null;
+  const k = passRuns(o).live.length;
+  return k < st.length ? st[k] : null;
+}
+
+/**
+ * いまの客が目玉まで通し切って、**まだ賞品を渡していない**か。
+ * 画面に「目玉が確定」と出すための合図で、番号盤は止めない（上の注記）。
+ *
+ * ⚠ 区切りは最後のあたりで自動的に閉じるので、`live` ではなく
+ * **直前に閉じた区切り**を見る。ここを `live` で見ると永久に false になる
+ * （検査 stagetest.mjs が捕まえた）。
+ */
+function reachedTop(o){
+  const st = stages(o);
+  if(!st.length) return false;
+  const { done, live } = passRuns(o);
+  if(live.length) return false;                       // まだ途中の客がいる
+  const r = done[done.length - 1] || [];
+  return r.length >= st.length && r.every(p => p.win) && r.some(p => !p.prizeId);
+}
+
+/**
+ * 通過を 1 つ記録する。**通らない入力は黙って通さず、理由を返す。**
+ * 配信中に押すものなので、間違った記録が静かに残るほうが困る。
+ */
+function addPass(o, stageId, no, win){
+  const st = stages(o).find(s => String(s.id) === String(stageId));
+  if(!st) return { ok: false, why: "その段は無い" };
+
+  const n = Math.round(Number(no) || 0);
+  if(!(n >= 1 && n <= (st.slots | 0))) return { ok: false, why: `番号は 1〜${st.slots | 0}` };
+  if(stageUsed(o, st.id).has(n))       return { ok: false, why: `${n} 番はもう引かれている` };
+
+  const rest = stageRest(o, st);
+  if(rest.left <= 0)                   return { ok: false, why: "この段はもう残っていない" };
+  /* ⚠ あたり枚数を超えて「あたり」を記録させない。超えると客に伝えている
+     確率が嘘になる（分子が実際より多く見える）。 */
+  if(win && rest.wins <= 0)            return { ok: false, why: "この段のあたりはもう出尽くしている" };
+
+  if(!Array.isArray(o.passes)) o.passes = [];
+  o.passes.push({
+    id: newId(), stageId: String(st.id), no: n, win: !!win,
+    at: Date.now(), prizeId: "",
+  });
+  return { ok: true };
+}
+
+/** 直前の通過を取り消す。押し間違いは必ず起きる */
+function undoPass(o){
+  const ps = passes(o);
+  if(!ps.length) return null;
+  return o.passes.pop();
+}
+
+/**
+ * いま終わった客の通過に、渡した賞品の印を付ける。
+ *
+ * これで「何番から何が出たか」が後から読める（運用者の狙い）。
+ * ⚠ **排出の側は書き換えない。**通過の側に印を置くだけなので、口数にも
+ * 金額にも影響しない。
+ */
+function stampRun(o, prizeId){
+  if(!isMulti(o) || !prizeId) return 0;
+  const { done, live } = passRuns(o);
+  // 進行中があればそれ、無ければ直前に終わった客
+  const run = live.length ? live : (done[done.length - 1] || []);
+  let k = 0;
+  for(const p of run){ if(!p.prizeId){ p.prizeId = String(prizeId); k++; } }
+  return k;
+}
+
+/** 番号ごとの選ばれ方。内部用（パネルには出さない。運用者の指示 2026-08-26）*/
+function noPopularity(o, stageId){
+  const st = stages(o).find(s => String(s.id) === String(stageId));
+  if(!st) return [];
+  const 回 = new Map();
+  for(const p of passes(o)){
+    if(String(p.stageId) !== String(st.id)) continue;
+    回.set(p.no | 0, (回.get(p.no | 0) || 0) + 1);
+  }
+  const out = [];
+  for(let n = 1; n <= (st.slots | 0); n++) out.push({ no: n, 回: 回.get(n) || 0 });
+  return out;
+}
+/* ============================================================
    解体シミュレーション
 
    オリパは「目玉が出尽くす」か「残りが薄くなりすぎる」と解体になる。
@@ -5116,54 +5505,91 @@ const quantile = (sorted, q) => sorted.length
   ? sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * q)))]
   : 0;
 
+/* ------------------------------------------------------------
+   あたりの濃さ
+
+   運用者の指示 2026-08-26：「目玉が出尽くしても、当たりの枚数が圧倒的に
+   残っていれば値下げして続けるというシュミレーションも混ぜる」。
+
+   「圧倒的に残っている」を**卓ごとの設計と比べて**測る。あたりが 1 割の卓と
+   3 割の卓で同じ線を引いても意味が無いし、決め打ちの数字には根拠が無い
+   （下げ幅 15% でやらかしたのと同じ轍）。
+
+       濃さ ＝ （残りのあたり枚数 ÷ 残り口数） ÷ （最初のあたり枚数 ÷ 総口数）
+
+   1.0 なら**最初と同じ濃さ**。あたりばかり引かれれば下がり、はずれが先に
+   減れば上がる。`minHit` はその下限で、既定 1.0＝「まだ最初と同じ卓なら
+   目玉が抜けても続く」。0 にすると目玉切れで即解体＝2026-08-26 以前の挙動。
+   ------------------------------------------------------------ */
+const hitDens = (hitLeft, left, hitTotal, N) =>
+  (N > 0 && hitTotal > 0 && left > 0) ? (hitLeft / left) / (hitTotal / N) : 0;
+
 /**
- * o: オリパ / topMult: 目玉＝相場が販売単価の何倍以上か
+ * o: オリパ / topMult: 使わない（目玉はタグで決まる。互換のため残す）
  * minReturn: 残り還元率がこれを下回ったら解体（0で無効）
+ * minHit: あたりの濃さの下限。目玉が出尽くしても、ここを上回るうちは続く
+ *
+ * ⚠ **目玉はタグで決まる**（2026-08-26 から）。以前は「相場 ≧ 単価 × 倍率」
+ * だったので、**値下げすると目玉の枚数が勝手に増えていた**。解体の位置が
+ * 価格で動くのは、値付けを探すときの崖の正体でもあった。いまは賞品に付いた
+ * タグを読むだけなので、価格をいじっても目玉の枚数は動かない。
  */
-function simulateBreakup(o, topMult, minReturn){
+function simulateBreakup(o, topMult, minReturn, minHit){
   const price = Math.max(0, o.price || 0);
   const feeRate = feeRateOf(o);
   const slots = [];
   let costTotal = 0, mktTotal = 0;
-  const topLine = price * (topMult > 0 ? topMult : 0);
 
   for(const p of o.prizes){
     const c = costOf(p), m = mktOf(p), n = Math.max(0, p.count | 0);
+    /* 解体の判定は**買い手から見た目玉**（タグ or 単価 × 倍率）。
+       濃さを数えるほうはタグだけ。理由は 02-market.js の isTopAt */
+    const top = isTopAt(p, price, topMult), hit = isHit(p);
     for(let i = 0; i < n; i++){
-      slots.push({ c, m, top: topLine > 0 && m >= topLine });
+      slots.push({ c, m, top, hit });
       costTotal += c; mktTotal += m;
     }
   }
   const N = slots.length;
   if(!N || price <= 0) return null;
 
+  const topLine = price * (topMult > 0 ? topMult : 0);
   const topCount = slots.filter(x => x.top).length;
+  const hitCount = slots.filter(x => x.hit).length;
+  const hitFloor = Math.max(0, Number(minHit ?? o.simMinHit ?? 1) || 0);
   const trials = N > 400 ? 4000 : (N > 150 ? 10000 : 20000);
-  const rand = rng(hashSeed(`${N}|${costTotal}|${mktTotal}|${price}|${topMult}|${minReturn}|${topCount}`));
+  const rand = rng(hashSeed(`${N}|${costTotal}|${mktTotal}|${price}|${topMult}|${minReturn}|${hitFloor}|${topCount}|${hitCount}`));
 
   const sold = [], cash = [], mar = [], earlyMar = [];
   let broke = 0, cashNeg = 0, early = 0;
 
   const arr = slots.slice();
   for(let t = 0; t < trials; t++){
-    let costDrawn = 0, mktDrawn = 0, topDrawn = 0, k = N, stopped = false;
+    let costDrawn = 0, mktDrawn = 0, topDrawn = 0, hitDrawn = 0, k = N, stopped = false;
     for(let i = 0; i < N; i++){
       // 引く直前に交換する（前から進める Fisher-Yates）。simFromHere と同じ理由
       const j = i + ((rand() * (N - i)) | 0);
       if(j !== i){ const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp; }
       const s = arr[i];
-      costDrawn += s.c; mktDrawn += s.m; if(s.top) topDrawn++;
+      costDrawn += s.c; mktDrawn += s.m;
+      if(s.top) topDrawn++;
+      if(s.hit) hitDrawn++;
       const left = N - (i + 1);
       if(left === 0) break;
       const evMkt = (mktTotal - mktDrawn) / left;
-      const topGone = topCount > 0 && topDrawn === topCount;
-      /* ⚠ **目玉が残っているうちは「薄い」で終わらない**（運用者の指摘
-         2026-08-22）。目玉は卓を回している理由なので、出ないまま解体する
-         ことは無い。ここを外していたので、目玉を抱えたまま終わる——
-         **いちばん高いカードの原価を一度も払わない**——試行が混ざり、
-         利益が実態より良く出ていた。`simFromHere` と同じ直し。 */
-      const thin = minReturn > 0 && topDrawn >= topCount && evMkt / price < minReturn;
-      if(topGone || thin){ k = i + 1; stopped = true; break; }
+      /* ⚠ **目玉が残っているうちは終わらない**（運用者の指摘 2026-08-22）。
+         目玉は卓を回している理由なので、出ないまま解体することは無い。
+         ここを外していたので、目玉を抱えたまま終わる——**いちばん高い
+         カードの原価を一度も払わない**——試行が混ざり、利益が実態より
+         良く出ていた。`simFromHere` と同じ直し。 */
+      if(topCount > 0 && topDrawn < topCount) continue;
+      /* 目玉は出尽くした。**それでも、あたりが最初と同じ濃さで残っていれば
+         続く**（運用者の指示 2026-08-26）。目玉切れ＝即解体だと、あたりを
+         大量に抱えた卓まで畳むことになっていた。 */
+      const rich = hitFloor > 0 &&
+        hitDens(hitCount - hitDrawn, left, hitCount, N) >= hitFloor;
+      const thin = minReturn > 0 && evMkt / price < minReturn;
+      if((topCount > 0 && !rich) || thin){ k = i + 1; stopped = true; break; }
     }
 
     const rev = k * price;
@@ -5191,7 +5617,7 @@ function simulateBreakup(o, topMult, minReturn){
   }
 
   return {
-    N, trials, topCount, topLine, price, costTotal, mktTotal,
+    N, trials, topCount, topLine, hitCount, hitFloor, price, costTotal, mktTotal,
     breakupRate: broke / trials,
     cashNegRate: cashNeg / trials,
     soldMed: quantile(sold, 0.5), soldP10: quantile(sold, 0.1), soldP90: quantile(sold, 0.9),
@@ -5251,14 +5677,15 @@ const ACT_RANK = {
 };
 const actRank = k => (ACT_RANK[k && k.key] !== undefined ? ACT_RANK[k.key] : 1);
 
-/** 残っている目玉。目玉の線は解体シミュレーションと同じ（単価 × 倍率）*/
+/** 残っている目玉。**解体シミュレーションと同じ見方**（タグ or 単価 × 倍率）。
+    画面と判定で目玉の数が食い違うと、続ける根拠の説明が噛み合わなくなる。 */
 function topsLeft(c){
   const topMult = simParams().topMult;
   const line = c.price * (topMult > 0 ? topMult : 0);
   const out = [];
   for(const p of c.o.prizes){
     const rest = Math.max(0, (p.count | 0) - (c.drawnBy.get(p.id) || 0));
-    if(rest > 0 && line > 0 && mktOf(p) >= line) out.push({ p, rest, mkt: mktOf(p) });
+    if(rest > 0 && isTopAt(p, c.price, topMult)) out.push({ p, rest, mkt: mktOf(p) });
   }
   out.sort((a, b) => b.mkt - a.mkt);
   return { line, list: out, count: out.reduce((n, x) => n + x.rest, 0) };
@@ -5439,6 +5866,11 @@ function actionCards(c){
         + `この 2 つは配信で言える数字。`,
   });
 
+  /* ⚠ 「目玉は出たが当たりは残っている」は**札にしない。**行動カードは
+     1 枚しか出ないので、値下げや完売間近と席を取り合って結局出てこない。
+     置き場所は**大物の枠**（26-price-panel.js の renderTops）にした。
+     あちらは常に見えているので、目玉が尽きた瞬間に売り文句が消えない。 */
+
   // 4. ペースが落ちている（値下げの話とは別に、見せ方の問題として出す）
   if(p && p.pace > 0 && p.recentPace > 0 && p.recentPace < p.pace * 0.6 && idle <= idleLine){
     add({
@@ -5560,29 +5992,38 @@ function bidAt(evMktNow, price, targetReturn, rand){
   return Math.max(price, hot * jit);
 }
 
-function simFromHere(c, p, topMult, minReturn, trials){
+function simFromHere(c, p, topMult, minReturn, trials, minHit){
   const price = Math.max(0, p);
   if(price <= 0 || c.left <= 0) return null;
 
   const targetReturn = clamp(c.o.targetReturn ?? 0.8, 0.05, 5);
   const feeRate = c.feeRate;
-  const topLine = price * (topMult > 0 ? topMult : 0);
+  /* あたりの濃さの下限。**その卓の設定から引く**（渡されていなければ）。
+     ⚠ ここで simParams() を呼んではいけない。あれは**開いている卓 S** を見るので、
+     別の卓を試算したときに他人の設定が混ざる（検査で実際に混ざった）。 */
+  const hitFloor = Math.max(0, Number(minHit ?? c.o.simMinHit ?? 1) || 0);
 
-  // 残っている口だけを並べる。目玉かどうかは全体の相場で決まる（既出ぶんも数える）
+  /* 残っている口だけを並べる。
+     ⚠ **解体の判定は「買い手から見た目玉」**（タグ or 単価 × 倍率）。
+     枚数を数えるほう（あたりの濃さ）は**タグだけ**。理由は 02-market.js の
+     isTopAt。価格を振ると前者だけが動く＝値下げで卓が生き返る道が残る。 */
   const rest = [];
-  let topGoneAlready = 0, topTotal = 0;
+  let topGoneAlready = 0, topTotal = 0, hitGoneAlready = 0, hitTotal = 0;
   for(const prize of c.o.prizes){
     const m = mktOf(prize), cost = costOf(prize);
-    const isTop = topLine > 0 && m >= topLine;
+    const top = isTopAt(prize, price, topMult), hit = isHit(prize);
     const n = Math.max(0, prize.count | 0);
     const drawn = Math.min(n, c.drawnBy.get(prize.id) || 0);
-    if(isTop){ topTotal += n; topGoneAlready += drawn; }
-    for(let i = 0; i < n - drawn; i++) rest.push({ c: cost, m, top: isTop });
+    if(top){ topTotal += n; topGoneAlready += drawn; }
+    if(hit){ hitTotal += n; hitGoneAlready += drawn; }
+    for(let i = 0; i < n - drawn; i++) rest.push({ c: cost, m, top, hit });
   }
   const R = rest.length;
   if(!R) return null;
 
   const topLeft = topTotal - topGoneAlready;
+  const hitLeft = hitTotal - hitGoneAlready;
+  const N0 = c.sold + R;   // この卓の総口数（既に出たぶんも含む）
   // 相場（m）は「あと何口さばけるか」の判定にだけ使う（買い手が見る還元率だから）。
   // 損益と在庫の評価は原価（c）で回す。
   const mktLeft  = rest.reduce((n, s) => n + s.m, 0);
@@ -5599,13 +6040,20 @@ function simFromHere(c, p, topMult, minReturn, trials){
      そういう回は**いちばん高いカードの原価を一度も払わない**ので、
      平均原価 ¥191,281（目玉が出た回は ¥297,979）——**¥106,698 も安く**出て、
      「続ける」側の利益がその分だけ良く見えていた。 */
+  /* あたりの濃さ。**目玉が出尽くしても、あたりが最初と同じ濃さで残って
+     いれば続く**（運用者の指示 2026-08-26）。詳しくは 10-breakup-sim.js。 */
+  const densNow = hitDens(hitLeft, R, hitTotal, N0);
+  const richNow = hitFloor > 0 && densNow >= hitFloor;
+
   const thinNow = minReturn > 0 && topLeft === 0 && (mktLeft / R) / price < minReturn;
-  const overNow = topTotal > 0 && topLeft === 0;
+  /* 目玉が出尽くしていて、**あたりも薄い**＝ここが終わり。
+     あたりが濃いうちは、目玉が抜けていても卓は生きている。 */
+  const overNow = topTotal > 0 && topLeft === 0 && !richNow;
 
   // 種に価格を混ぜない。価格を変えても**同じ引き順の束**で比べられるので、
   // 少ない試行数でも価格ごとのブレが消え、損益分岐を挟み込みやすくなる。
   const T = Math.max(200, trials | 0);
-  const rand = rng(hashSeed(`${R}|${mktLeft}|${topMult}|${minReturn}|${topLeft}|${c.revenue}`));
+  const rand = rng(hashSeed(`${R}|${mktLeft}|${topMult}|${hitFloor}|${minReturn}|${topLeft}|${hitLeft}|${c.revenue}`));
 
   const more = [], cash = [], mar = [], bids = [];
   let neg = 0;
@@ -5626,7 +6074,7 @@ function simFromHere(c, p, topMult, minReturn, trials){
   for(let t = 0; t < T; t++){
     let k = 0, costMore = 0, mktMore = 0, revMore = 0;
     if(!thinNow && !overNow){
-      let topOut = topGoneAlready;
+      let topOut = topGoneAlready, hitOut = hitGoneAlready;
       for(let i = 0; i < R; i++){
         /* **引く直前に 1 回だけ交換する**（前から進める Fisher-Yates）。
            先に全部混ぜてしまうと、途中で解体になる回でも残り全部を混ぜることになる。
@@ -5639,16 +6087,22 @@ function simFromHere(c, p, topMult, minReturn, trials){
         // 1 口引く前の残り期待値で値が決まる（買い手が見ているのはその時点の中身）。
         revMore += bidAt((mktLeft - mktMore) / (R - i), price, targetReturn, rand);
         const s = arr[i];
-        costMore += s.c; mktMore += s.m; if(s.top) topOut++;
+        costMore += s.c; mktMore += s.m;
+        if(s.top) topOut++;
+        if(s.hit) hitOut++;
         k = i + 1;
         const leftAfter = R - k;
         if(leftAfter === 0) break;
         const ev = (mktLeft - mktMore) / leftAfter;
-        // 目玉が出尽くした＝ここで解体
-        if(topTotal > 0 && topOut === topTotal) break;
-        /* 残りが薄いのを理由に終われるのは、**待つ目玉がもう無いとき**だけ。
-           目玉が卓に残っているのに解体する終わり方は起こらない（上の注記）。 */
-        if(minReturn > 0 && topOut >= topTotal && ev / price < minReturn) break;
+        /* 目玉が卓に残っているうちは終わらない（上の注記）。 */
+        if(topTotal > 0 && topOut < topTotal) continue;
+        /* 目玉は出尽くした。**それでもあたりが濃く残っていれば続く。**
+           薄まったところが解体（運用者の指示 2026-08-26）。 */
+        const rich = hitFloor > 0 &&
+          hitDens(hitTotal - hitOut, leftAfter, hitTotal, N0) >= hitFloor;
+        if(topTotal > 0 && !rich) break;
+        /* 残りが薄いのを理由に終われるのは、**待つ目玉がもう無いとき**だけ。 */
+        if(minReturn > 0 && ev / price < minReturn) break;
       }
     }
     const rev  = c.revenue + revMore;
@@ -5670,6 +6124,7 @@ function simFromHere(c, p, topMult, minReturn, trials){
 
   return {
     price, trials: T, R, topLeft, topTotal, thinNow, overNow,
+    hitLeft, hitTotal, hitDens: densNow, richNow,
     cashMean, moreMean, bidMean,
     moreMed: quantile(more, 0.5), moreP10: quantile(more, 0.1), moreP90: quantile(more, 0.9),
     cashMed: quantile(cash, 0.5), cashP10: quantile(cash, 0.1), cashP90: quantile(cash, 0.9),
@@ -5704,7 +6159,10 @@ let priceCache = { key: "", at: new Map(), bk: null };
 function simKeyOf(c, topMult, minReturn){
   return `${c.o.id}|${c.N}|${c.costTotal}|${c.mktTotal}`
        + `|${c.sold}|${c.revenue}|${c.costDrawn}|${c.mktDrawn}`
-       + `|${c.price}|${c.feeRate}|${c.o.targetReturn}|${topMult}|${minReturn}`;
+       + `|${c.price}|${c.feeRate}|${c.o.targetReturn}|${topMult}|${minReturn}`
+       /* ⚠ あたりの濃さの線も指紋に入れる。設定を変えたのに前の試算が
+          返ってくると、画面の数字だけ動かない。 */
+       + `|${c.o.simMinHit}`;
 }
 
 /** 状態が変わっていればキャッシュを捨てる。試算に入る口はすべてここを通る */
@@ -5890,12 +6348,16 @@ function decideNow(c){
   const top = seen > 0 ? Math.max(lo, Math.min(top0, Math.round(seen))) : top0;
 
   /* ---- 回収局面の探索範囲 ----
-     解体条件（目玉切れ・薄い）は**価格の崖**になっている。目玉の線は「単価 × 倍率」
-     なので、単価を下げると残っている札が目玉に入り直して、ある一点から急に動き出す。
-     床を原価まで落とすと範囲が一気に広がるので、9 点の刻みでは**崖のすぐ下**を
-     跨いでしまう（8/24 の検査では ¥833 と ¥1,729 を見て、答えの ¥1,200 を素通り
-     していた）。そこで**まだ動く上限**を二分探索で先に出し、そこから下だけを刻む。
-     価格を下げると解体条件はどちらも緩むだけなので、「動く／動かない」は単調。 */
+     解体条件は**価格の崖**になっている。残り還元率の線が「残り期待値 ÷ 価格」
+     なので、単価を下げるとある一点から急に動き出す。床を原価まで落とすと範囲が
+     一気に広がるので、9 点の刻みでは**崖のすぐ下**を跨いでしまう（8/24 の検査では
+     ¥833 と ¥1,729 を見て、答えの ¥1,200 を素通りしていた）。そこで**まだ動く上限**を
+     二分探索で先に出し、そこから下だけを刻む。価格を下げると還元率の条件は緩む
+     だけなので、「動く／動かない」は単調。
+
+     ⚠ 2026-08-26 から**目玉はタグで決まる**ので、値下げしても目玉の枚数は動かない。
+     以前は「単価 × 倍率」だったので、下げた瞬間に手持ちの札が目玉に入り直して
+     卓が生き返っていた。いま生き返らせるのは還元率の線と、あたりの濃さ。 */
   const aliveAt = q => {
     const r = simAtPrice(c, Math.max(10, Math.round(q)), topMult, minReturn);
     return !!(r && r.moreMean >= 1);
@@ -6030,8 +6492,12 @@ function decideNow(c){
      「もう回らない」で終わりにすると、**どこまで下げれば動くのか**が分からない
      （運用者の指示 2026-08-20）。提案の床（下げ幅 15%・原価・損益分岐）を外して、
      **まだ動く上限**を探す。勧める額ではないので参考として出す。
-     価格を下げると解体条件（薄い／目玉切れ）はどちらも緩むだけなので、
-     「動く／動かない」は価格について単調。二分探索でよい。 */
+     価格を下げると還元率の条件は緩むだけなので、「動く／動かない」は価格について
+     単調。二分探索でよい。
+
+     ⚠ **目玉が出尽くし、あたりも薄い卓はどの値段でも動かない**（2026-08-26 から）。
+     目玉がタグになったので、下げても目玉は増えない。そこは `revive` が空になる
+     ——それが正しい。値段では戻らない、というのがこの卓の答え。 */
   let revive = null;
   if(dead){
     const aliveAt = q => {
@@ -6089,7 +6555,7 @@ function decideNow(c){
     costLine,                           // 底の線＝残り1口の中身の原価
     bid: best.r ? Math.round(best.r.bidMean) : 0,   // その値段で競った平均
     worth: !dead && svCash > stop,      // 下げる価値があるか
-    why: [nowSim0 && nowSim0.overNow ? "目玉が出尽くした" : "",
+    why: [nowSim0 && nowSim0.overNow ? "目玉が出尽くした（あたりも薄い）" : "",
           nowSim0 && nowSim0.thinNow ? "残りが薄すぎる" : ""].filter(Boolean).join("・"),
   } : null;
 
@@ -6414,6 +6880,11 @@ function buildRecord(o, endedAt, memo){
     profit: c.profitNow,
     margin: c.marginNow,
     mktLeft: c.mktLeft,
+    /* 締めた時点の**当たりの残り**（タグ基準）。運用者の指示 2026-08-26
+       「今後は残りの当たりの枚数などを気にするようにしたい」。
+       ⚠ 未消化の相場（`mktLeft`）とは別物。1 枚のバケモノが相場を持ち上げても
+       枚数は増えない。あとから「どれだけ抱えたまま畳んだか」を追える。 */
+    hitLeft: c.hitLeft, topLeft: c.topLeft, hitDone: c.hitDone,
     auction: (() => {
       const a = auctionSummary(o);
       return { lots: a.lots, auctions: a.auctions, avg: a.avg, max: a.max, min: a.min };
@@ -6425,7 +6896,11 @@ function buildRecord(o, endedAt, memo){
        記録は同期でも毎回まるごと運ぶので、細いほうが効く。 */
     prizes: o.prizes.map(p => ({
       name: p.name, cost: costOf(p), market: mktOf(p), items: (p.items || []).map(it => ({ ...it })),
-      count: p.count, drawn: c.drawnBy.get(p.id) || 0
+      count: p.count, drawn: c.drawnBy.get(p.id) || 0,
+      /* タグも焼き込む。**あとから引き直せない。**タグは単価と相場から
+         下書きされたうえで人が直したものなので、記録に残さないと
+         「そのとき何を当たりと呼んでいたか」が消える。 */
+      tier: p.tier || ""
     }))
   };
 }
@@ -6465,6 +6940,7 @@ function recordsToCsv(){
                 "総口数","販売口数","消化率","最終単価","落札件数",
                 "平均落札単価","最高落札","最低落札","売上",
                 "排出原価","現金損益","利益率","未消化口数","未消化の相場",
+                "残り当たり枚数","残り目玉枚数",
                 "時給利益","1口あたり利益","買い手の支払い","TikTok負担","メモ"];
   const q = v => {
     const t = String(v == null ? "" : v);
@@ -6489,6 +6965,9 @@ function recordsToCsv(){
       r.revenue, r.costDrawn, r.profit,
       r.revenue > 0 ? (r.margin * 100).toFixed(1) + "%" : "",
       r.left, Math.round(r.mktLeft),
+      // 古い記録には入っていない（タグは 2026-08-26 から）。空欄にする
+      r.hitLeft == null ? "" : r.hitLeft,
+      r.topLeft == null ? "" : r.topLeft,
       (() => { const v = recPerHour(r); return v == null ? "" : Math.round(v); })(),
       r.sold > 0 ? Math.round((Number(r.profit) || 0) / r.sold) : "",
       // 買い手の支払い（LIVE マネージャーに出る額）と、その差の TikTok 負担
@@ -7417,8 +7896,9 @@ function renderList(){
         <div><span class="label">販売単価</span><b>${yen(c.price)}</b></div>
         <div><span class="label">残り口数</span><b>${c.left}<span class="of">/${c.N}</span></b></div>
         <div><span class="label">還元率</span><b>${c.price > 0 ? pct(c.returnAll, 0) : "—"}</b>`
-      + `<span class="of2">${c.price > 0 && c.left > 0
-            ? `アド ${pct(c.adoLeftRate, 0)}` : ""}</span></div>`
+      + `<span class="of2">${c.left > 0
+            ? `当たり ${c.hitLeft} 枚`
+              + (c.price > 0 ? `・アド ${pct(c.adoLeftRate, 0)}` : "") : ""}</span></div>`
       + `
         <div>
           <span class="label">${started ? "現在利益率" : "設計利益率"}</span>
@@ -7872,6 +8352,12 @@ function renderReplay(){
     note.push(`記録した時点：売上 ${yen(r.revenue)}／現金損益 ${syen(r.profit)}`
       + `${r.sold > 0 ? `／1口あたり ${syen(Math.round(r.profit / r.sold))}` : ""}`
       + `${ph == null ? "" : `／時給利益 ${syen(Math.round(ph))}`}。`);
+    /* 締めた時点で**どれだけ当たりを抱えたまま畳んだか**（運用者の指示
+       2026-08-26）。古い記録には入っていないので、あるときだけ出す。 */
+    if(r.hitLeft != null && r.left > 0)
+      note.push(`締めた時点の残り ${r.left} 口に、当たりが ${r.hitLeft} 枚`
+        + `${r.topLeft > 0 ? `（うち目玉 ${r.topLeft}）` : "（目玉は出尽くしていた）"}`
+        + `残っていた。`);
     // LIVE マネージャーと突き合わせるための内訳
     if(Number(r.platYen) > 0)
       note.push(`買い手の支払いは ${yen(Math.round(r.buyerRev))}`
@@ -8107,6 +8593,7 @@ function renderLive(c){
     + `${外した.map(v => `${esc(v.order.buyer || "落札者不明")} ${yen(v.yen)}`).join("／")}</span>`
     + `</span><span><button type="button" class="btn" id="btnVoidedSeen">確認した</button></span></div>`);
   $("liveNotice").innerHTML = notes.join("");
+  renderStageBoard();   // 多段の番号盤（段を持たない回では何も出ない）
   const vb = $("btnVoidedSeen");
   if(vb) vb.addEventListener("click", () => { voidedNow = []; renderNow(); });
 
@@ -8141,12 +8628,15 @@ function renderLive(c){
   // 残り口数はいちばん見たい数字なので、ここを主役にする（販売済は下に回す）
   $("kpiLeft").className = "kpi " + (c.left === 0 ? "is-good" : c.left <= 10 ? "is-warn" : "");
   $("mSold").textContent = c.left > 0 ? String(c.left) : "完売";
-  /* 還元率の隣にアド率を置く。**この 2 つは平気で逆を向く**ので、並べないと
+  /* 還元率・当たり・アドを並べる。**この 3 つは平気で逆を向く**ので、並べないと
      読み違える（運用者から教わった 2026-08-22）。還元率は「いくら配ったか」、
-     アド率は「何人が得をするか」。客が回し続けるかを決めるのは後者。 */
+     アドは「その値段で何人が得をするか」、当たりは「卓に何枚残っているか」。
+     ⚠ **当たりを先に出す。**値段で動かないので、そのまま口に出せる数字は
+     こちら（運用者の指示 2026-08-26）。 */
   $("mSoldSub").textContent = c.left > 0
     ? `販売済 ${c.sold}/${c.N}`
       + (c.pendingSlots > 0 ? `・開封待ち ${c.pendingSlots} 口` : "")
+      + `・当たり ${c.hitLeft} 枚${c.topLeft > 0 ? `（目玉 ${c.topLeft}）` : ""}`
       + `・残り還元率 ${c.price > 0 ? pct(c.returnLeft, 0) : "—"}`
       + `・アド ${c.price > 0 ? `${pct(c.adoLeftRate, 0)}（${c.adoLeft} 口）` : "—"}`
     : `${c.N} 口すべて排出済み`;
@@ -9032,6 +9522,187 @@ async function cancelLot(id, noConfirm){
  * 表全体が読みにくくなるため。
  */
 /** 前の落札からの間隔。テンポが落ちた場所を見つけるのに使う */
+/* ============================================================
+   多段オリパの画面（段の登録と、配信中の番号盤）
+
+   中身の理屈は 09d-stages.js。ここは見せ方と押し方だけ。
+
+   ⚠ **シンプル型には何も出さない。**段を持たないオリパでは、この節が
+   作るものは 1 つも画面に出ない。今までの配信の手順を 1 手も変えない。
+
+   ⚠ **モーダルを出さない。**配信中に画面を覆うものを出すと、賞品ボタンが
+   押せなくなって売上が記録から落ちる（2026-08-21 に起こした）。
+   知らせも入力もその場に置く。
+   ============================================================ */
+
+/** 番号盤で選んでいる番号。**端末ごとの一時的なもので、同期しない** */
+let stageSel = 0;
+
+/** 配信中に段を触ってよいか。見るだけの端末と締めた回では触らせない */
+function stageEditable(){
+  return !!S && !S.closedAt && mode === "live";
+}
+
+/* ---------- 配信中の番号盤 ---------- */
+
+function renderStageBoard(){
+  const box = $("stageBoard");
+  if(!box) return;
+  if(!S || !isMulti(S) || mode === "list" || mode === "edit"){ box.hidden = true; return; }
+  box.hidden = false;
+
+  const st = currentStage(S);
+  const 頂 = reachedTop(S);
+  const 触 = stageEditable();
+
+  let h = "";
+  if(頂){
+    /* ⚠ 番号盤は止めない。押し忘れで盤が固まると配信が止まる（09d の注記）。
+       知らせるだけにして、次の客の番号はそのまま押せるようにしておく。 */
+    h += `<div class="stagetop">🎉 目玉が確定。賞品を押してください</div>`;
+  }
+  if(!st){
+    box.innerHTML = h;
+    return;
+  }
+
+  const rest = stageRest(S, st);
+  const used = stageUsed(S, st.id);
+
+  h += `<div class="stagehead">`
+    +  `<b>${esc(st.name || "この段")}</b>`
+    +  `<span class="stagerest">のこり ${rest.left} 枚`
+    +  `<span class="stagewin">あたり ${rest.wins}</span></span>`
+    +  `</div>`;
+
+  h += `<div class="nos">`;
+  for(let n = 1; n <= (st.slots | 0); n++){
+    const 済 = used.has(n);
+    h += `<button type="button" class="no${済 ? " is-used" : ""}${stageSel === n ? " is-sel" : ""}"`
+      +  ` data-no="${n}"${(済 || !触) ? " disabled" : ""}>${n}</button>`;
+  }
+  h += `</div>`;
+
+  h += `<div class="stagebar">`
+    +  `<button type="button" class="btn big win" data-win="1"${(!触 || !stageSel) ? " disabled" : ""}>あたり</button>`
+    +  `<button type="button" class="btn big lose" data-win="0"${(!触 || !stageSel) ? " disabled" : ""}>はずれ</button>`
+    +  `<button type="button" class="btn ghost" data-undo="1"${(!触 || !passes(S).length) ? " disabled" : ""}>← 取り消し</button>`
+    +  `<span class="hint" id="stageWhy"></span>`
+    +  `</div>`;
+
+  box.innerHTML = h;
+
+  box.querySelectorAll("button[data-no]").forEach(b => {
+    b.addEventListener("click", () => {
+      touchLive();
+      // もう一度押したら選び直し（選んだまま固まらないように）
+      stageSel = stageSel === (b.dataset.no | 0) ? 0 : (b.dataset.no | 0);
+      renderStageBoard();
+    });
+  });
+  box.querySelectorAll("button[data-win]").forEach(b => {
+    b.addEventListener("click", () => takePass(b.dataset.win === "1"));
+  });
+  const u = box.querySelector("button[data-undo]");
+  if(u) u.addEventListener("click", () => {
+    touchLive();
+    if(!stageEditable()) return;
+    const p = undoPass(S);
+    if(!p) return;
+    stageSel = 0;
+    save(); renderNow();
+  });
+}
+
+/** 選んだ番号を、あたり／はずれとして記録する */
+function takePass(win){
+  touchLive();
+  if(!stageEditable() || !stageSel) return;
+  const st = currentStage(S);
+  if(!st) return;
+  const r = addPass(S, st.id, stageSel, win);
+  if(!r.ok){
+    /* ⚠ ここで say()（モーダル）を使わない。配信中に画面を覆うと
+       賞品ボタンが押せなくなる。理由はその場に出す。 */
+    const why = $("stageWhy");
+    if(why) why.textContent = "⚠ " + r.why;
+    return;
+  }
+  stageSel = 0;
+  save(); renderNow();
+}
+
+/* ---------- 編集画面の段の登録 ---------- */
+
+function renderStageEdit(){
+  const box = $("stageRows");
+  if(!box) return;
+  const st = stages(S);
+  const 済 = passes(S).length;
+
+  let h = "";
+  st.forEach((s, i) => {
+    const r = stageRest(S, s);
+    const 引 = (s.slots | 0) - r.left;
+    h += `<tr data-i="${i}">`
+      +  `<td><input type="text" data-f="name" value="${esc(s.name || "")}" aria-label="段の名前"></td>`
+      +  `<td><input type="number" data-f="slots" min="0" step="1" value="${s.slots | 0}" aria-label="枚数" inputmode="numeric"></td>`
+      +  `<td><input type="number" data-f="wins" min="0" step="1" value="${s.wins | 0}" aria-label="あたり枚数" inputmode="numeric"></td>`
+      +  `<td class="num" style="text-align:center;color:var(--ink-3)">${引}</td>`
+      +  `<td><button type="button" class="rowdel" data-del="${i}"`
+      +  `${引 > 0 ? " disabled title='もう引かれているので削除できない'" : ""} aria-label="この段を削除">×</button></td>`
+      +  `</tr>`;
+  });
+  box.innerHTML = h;
+
+  const note = $("stageNote");
+  if(note){
+    note.textContent = st.length
+      ? `客に伝える確率：${st.map(s => { const r = stageRest(S, s); return `${r.wins}/${r.left}`; }).join(" → ")}`
+      : "段を足すと多段オリパになる。空のままならいままでどおり（1 口＝1 排出）。";
+  }
+
+  box.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const i = inp.closest("tr").dataset.i | 0;
+      const s = stages(S)[i];
+      if(!s) return;
+      const f = inp.dataset.f;
+      if(f === "name") s.name = inp.value;
+      else {
+        const v = Math.max(0, Math.round(Number(inp.value) || 0));
+        s[f] = v;
+        /* ⚠ あたり枚数が枚数を超えないようにその場で抑える。超えると客に
+           伝えている確率が 1 を上回る（分子が分母より大きくなる）。 */
+        if(f === "slots" && (s.wins | 0) > v) s.wins = v;
+        if(f === "wins"  && v > (s.slots | 0)) s.wins = s.slots | 0;
+      }
+      save();
+      renderStageEdit();
+    });
+  });
+  box.querySelectorAll("button[data-del]").forEach(b => {
+    b.addEventListener("click", () => {
+      const i = b.dataset.del | 0;
+      const s = stages(S)[i];
+      if(!s) return;
+      /* ⚠ 引かれている段は消さない。消すと通過の行き先が無くなり、
+         「何分のいくつ」が作れなくなる。編集画面でも disabled にしてある */
+      if(passes(S).some(p => String(p.stageId) === String(s.id))) return;
+      S.stages.splice(i, 1);
+      save(); renderStageEdit();
+    });
+  });
+}
+
+/** 段を 1 つ足す。**配信中でも足せる**（登録し忘れは必ず起きる）*/
+function addStage(){
+  if(!S || S.closedAt) return;
+  if(!Array.isArray(S.stages)) S.stages = [];
+  const n = S.stages.length + 1;
+  S.stages.push({ id: newId(), name: `${n} 回目`, slots: 10, wins: 1 });
+  save(); renderStageEdit();
+}
 function fmtGap(ms){
   const m = Math.round(ms / 60000);
   if(!(m > 0)) return "";
@@ -9523,7 +10194,7 @@ function renderPrice(c){
       // どちらの条件で止まったのかを名指しする。参考線がどこから来たのか分かるように
       const why = dec.stay && dec.stay.r
         ? [dec.stay.r.thinNow ? "残りが薄すぎる" : "",
-           dec.stay.r.overNow ? "目玉が出尽くした" : ""].filter(Boolean).join("・")
+           dec.stay.r.overNow ? "目玉が出尽くした（あたりも薄い）" : ""].filter(Boolean).join("・")
         : "";
       const rv = dec.revive;
       const rd = rv ? Math.round(rv.mid - dec.stop) : 0;
@@ -9552,7 +10223,9 @@ function renderPrice(c){
     }
     // 目玉が残っていないなら、その事実も添える（続ける根拠が薄い）
     const T = topsLeft(c);
-    if(T.count === 0) msg += ` 目玉はもう残っていない。`;
+    if(T.count === 0) msg += c.hitLeft > 0
+      ? ` 目玉はもう残っていないが、あたりは ${c.hitLeft} 枚残っている。`
+      : ` 目玉もあたりも残っていない。`;
   }
   box.className = "verdict-box" + (cls ? " " + cls : "");
   $("recMsg").innerHTML = msg;
@@ -9573,9 +10246,22 @@ function renderTops(c){
   const T = topsLeft(c);
 
   if(!T.list.length){
+    /* 目玉が尽きても、**あたりが濃く残っていれば卓はまだ生きている**
+       （運用者の指示 2026-08-26）。「安さだけ」と言い切ると畳ませてしまう。
+       ⚠ 還元率は出さない（運用者の指示 2026-08-20）。**当たる確率**で言う。
+       配信で言うのはこちらのほうが直接効く。
+       ⚠ 枚数はタグで数えているので**値下げしても動かない**。値段を下げながら
+       同じ数字を言い続けられる、というのがこの札の値打ち。 */
     box.innerHTML = `<div class="head">まだ沈んでいる大物`
-      + `<span class="sub">相場 ${yen(T.line)} 以上</span></div>`
-      + `<div class="none">もう残っていない。続ける根拠は「安さ」だけになる。</div>`;
+      + `<span class="sub">相場 ${yen(T.line)} 以上、または目玉タグ</span></div>`
+      + `<div class="none">もう残っていない。`
+      + (c.hitLeft > 0
+          ? `ただし<b>当たりが ${c.hitLeft} 枚</b>、残り ${c.left} 口の中にある。`
+            + `次の 1 口で当たりが出る <b>${pct(pWithin(c.left, c.hitLeft, 1), 1)}</b>`
+            + `／あと 10 口引けば <b>${pct(pWithin(c.left, c.hitLeft, Math.min(10, c.left)), 0)}</b>。`
+            + `値下げしてもこの枚数は動かない。`
+          : `当たりも残っていない。続ける根拠は「安さ」だけになる。`)
+      + `</div>`;
     return;
   }
 
@@ -9592,7 +10278,8 @@ function renderTops(c){
 
   const anyNext = pWithin(c.left, T.count, 1);
   box.innerHTML = `<div class="head">まだ沈んでいる大物`
-    + `<span class="sub">相場 ${yen(T.line)} 以上・合計 ${T.count} 口／残り ${c.left} 口`
+    + `<span class="sub">目玉 ${T.count} 口・あたり ${c.hitLeft} 枚／残り ${c.left} 口`
+    + `（目玉は相場 ${yen(T.line)} 以上、または目玉タグ）`
     + `・次の1口でどれか当たる ${pct(anyNext, 1)}</span></div>` + rows
     + (T.list.length > 6 ? `<div class="none">ほか ${T.list.length - 6} 種</div>` : "");
 }
@@ -9634,6 +10321,19 @@ function renderPulse(c, dec){
   cell("残り還元率", c.price > 0 ? pct(c.returnLeft, 0) : "—",
     `残り1口の期待 ${yen(Math.round(c.evMkt))}`,
     c.returnLeft >= 1 ? "is-good" : c.returnLeft >= 0.7 ? "is-key" : "is-bad");
+
+  /* 当たり率。**残りに当たりが何枚あるか。**（運用者の指示 2026-08-26
+     「今後は残りの当たりの枚数などを気にするようにしたい」）。
+     還元率は「いくら配ったか」（お金の比）、アド率は「何人が得をするか」
+     （その値段での口数の比）、これは**卓に何枚残っているか**（設計の比）。
+     ⚠ **値段をいじっても動かない**のがこの数字の値打ち。値下げしても
+     当たりは増えないので、煽る材料としてそのまま口に出せる。 */
+  if(c.left > 0){
+    cell("当たり率", pct(c.hitLeftRate, 0),
+      `残り ${c.left} 口に ${c.hitLeft} 枚`
+        + (c.topLeft > 0 ? `（うち目玉 ${c.topLeft}）` : "（目玉は出尽くした）"),
+      c.hitLeftRate >= 0.2 ? "is-good" : c.hitLeftRate >= 0.1 ? "is-key" : "is-bad");
+  }
 
   /* アド率。**還元率と並べて置く。**還元率は「いくら配ったか」（お金の比）で、
      アド率は「何人が得をするか」（口数の比）。1 枚のバケモノが還元率を
@@ -9965,6 +10665,7 @@ function renderEdit(c){
   if(document.activeElement !== $("fPrice")) $("fPrice").value = S.price;
   if(document.activeElement !== $("fShopId")) $("fShopId").value = S.shopProductId || "";
   renderShopIdPicks();
+  renderStageEdit();      // 多段の段（空ならシンプル型のまま）
 
   $("setupNotice").innerHTML = "";
   const held = liveHolder(S);
@@ -9991,9 +10692,26 @@ function renderEdit(c){
              title="${p.marketAuto ? "原価 × 相場想定倍率。ここに書くと固定になる" : "手入力"}">`}</td>
       <td><input type="number" data-f="count" min="0" step="1" value="${p.count|0}" aria-label="口数" inputmode="numeric"></td>
       <td><input type="text" data-f="note" value="${esc(p.note || "")}" aria-label="備考"></td>
-      <td style="text-align:center">${p.normal ? `<span class="losertag">ハズレ</span>` : ""}</td>
+      <td style="text-align:center">
+        <select data-f="tier" class="tiersel is-${p.tier}" aria-label="タグ"
+          title="${p.tierAuto ? "相場から引いた下書き。直すと固定される" : "手で決めたもの。上書きされない"}">
+          <option value="top"  ${p.tier === "top"  ? "selected" : ""}>目玉</option>
+          <option value="win"  ${p.tier === "win"  ? "selected" : ""}>あたり</option>
+          <option value="lose" ${p.tier === "lose" ? "selected" : ""}>はずれ</option>
+        </select>${p.tierAuto ? `<span class="autodot" title="相場から引いた下書き">•</span>` : ""}</td>
       <td class="num" style="text-align:center;color:var(--ink-3)">${drawn}</td>
       <td><button type="button" class="rowdel" ${drawn>0?"disabled title='排出済みのため削除できない'":""} aria-label="この行を削除">×</button></td>`;
+
+    /* タグ。⚠ **触ったら手で決めたものとして固定する**（tierAuto を落とす）。
+       これをしないと、単価を変えた拍子に相場から引き直されて消える。
+       いままでの `normal` がまさにそれで、手で付けても読み込むたびに消えていた。 */
+    const sel = tr.querySelector('select[data-f="tier"]');
+    if(sel) sel.addEventListener("change", () => {
+      p.tier = sel.value;
+      p.tierAuto = false;
+      p.normal = p.tier === "lose";
+      save(); render();
+    });
 
     tr.querySelectorAll("input").forEach(inp => {
       const f = inp.dataset.f;
@@ -10010,7 +10728,7 @@ function renderEdit(c){
         // 相場を手で書いたらその行は固定。原価を直したら自動の行は追従させる
         if(f === "market") p.marketAuto = false;
         if(f === "cost") syncMarket(S);
-        markLosers(S);
+        markTiers(S);
         render();
       });
     });
@@ -10116,24 +10834,32 @@ let simCache = { key: "", res: null };
 function simParams(){
   const o = S || {};
   return {
+    /* 目玉の線。役目は 2 つ：取り込み時にタグを下書きする（autoTier）のと、
+       解体の判定で**買い手から見た目玉**を測る（isTopAt）。
+       ⚠ 枚数を数えるほう（当たり・目玉の残り）はタグだけで数える。 */
     topMult: Math.max(0, Number(o.simTopMult ?? 5)),
-    minReturn: clamp(Number(o.simMinReturn ?? 0.5), 0, 2)
+    minReturn: clamp(Number(o.simMinReturn ?? 0.5), 0, 2),
+    /* あたりの濃さの下限。目玉が出尽くしても、ここを上回るうちは続く。
+       既定 1.0＝「最初と同じ濃さで残っていれば続ける」。
+       0 にすると目玉切れで即解体＝2026-08-26 以前の挙動に戻る。 */
+    minHit: clamp(Number(o.simMinHit ?? 1), 0, 5)
   };
 }
 
 function renderSim(){
   const body = $("simBody"), note = $("simNote");
   if(!S){ body.innerHTML = ""; return; }
-  const { topMult, minReturn } = simParams();
+  const { topMult, minReturn, minHit } = simParams();
   $("simTopMult").value   = String(topMult);
   $("simMinReturn").value = String(Math.round(minReturn * 100));
+  if($("simMinHit")) $("simMinHit").value = String(Math.round(minHit * 100));
 
   const key = JSON.stringify([
-    S.prizes.map(p => [costOf(p), mktOf(p), p.count | 0]),
-    S.price, topMult, minReturn
+    S.prizes.map(p => [costOf(p), mktOf(p), p.count | 0, p.tier]),
+    S.price, minReturn, minHit
   ]);
   if(key !== simCache.key){
-    simCache = { key, res: simulateBreakup(S, topMult, minReturn) };
+    simCache = { key, res: simulateBreakup(S, topMult, minReturn, minHit) };
   }
   const r = simCache.res;
 
@@ -10146,11 +10872,19 @@ function renderSim(){
   note.textContent = `${r.trials.toLocaleString()} 回ぶんの引き順で試算`;
 
   const cls = r.marMed >= 0.25 ? "is-good" : r.marMed >= 0 ? "" : "is-bad";
+  /* ⚠ あたりの濃さの線も一緒に言わないと、なぜまだ続く読みなのかが分からない
+     （2026-08-26 から、目玉が抜けてもあたりが濃ければ続く）。 */
+  const 濃さ = r.hitFloor > 0
+    ? `目玉が抜けても、当たり ${r.hitCount} 口（目玉を含む）が最初の`
+      + ` ${pct(r.hitFloor, 0)} の濃さで残っていれば続ける読み。`
+    : "";
   const lead = r.topCount === 0
-    ? `販売単価の ${topMult} 倍（${yen(r.topLine)}）以上の賞品が無いので、`
+    ? `販売単価の ${topMult} 倍（${yen(r.topLine)}）以上の賞品も目玉タグも無いので、`
       + `残り還元率が ${pct(minReturn,0)} を切った時点を終わりとみなしている。`
-    : `目玉 ${r.topCount} 口（相場 ${yen(r.topLine)} 以上）が出尽くすのは中央値で ${r.soldMed} 口目。`
-      + `そこまで売れば売上 ${yen(r.soldMed * r.price)}、手元に残るのが ${syen(r.cashMed)}。`;
+    : `目玉 ${r.topCount} 口（相場 ${yen(r.topLine)} 以上、または目玉タグ）が`
+      + `出尽くすのは中央値で ${r.soldMed} 口目。`
+      + `そこまで売れば売上 ${yen(r.soldMed * r.price)}、手元に残るのが ${syen(r.cashMed)}。`
+      + 濃さ;
 
   const soldPct = r.N ? r.soldMed / r.N : 0;
 
@@ -10273,7 +11007,8 @@ function renderFormulas(c){
     ["残り還元率",       "残り1口の相場期待値 ÷ 販売単価"],
     ["損益分岐価格",     "解体まで売って現金損益が 0 になる価格（中央値・引き順を試行して探す）"],
     ["目標利益率の下限", "解体まで売って利益率が目標に届く価格（同上）"],
-    ["解体までの販売口数", "目玉が出尽くす／残り還元率が下限を割る、どちらか早いほうまでの口数"],
+    ["あたりの濃さ",     "（残りのあたり枚数 ÷ 残り口数）÷（最初のあたり枚数 ÷ 総口数）。1.0 で最初と同じ濃さ"],
+    ["解体までの販売口数", "目玉が出尽くし、かつ「あたりの濃さ」か「残り還元率」が下限を割るまでの口数"],
     ["還元率ベース価格", "残り1口の相場期待値 ÷ 目標還元率"],
     ["これ以上下げない", "残り1口の原価（売れ残りは目減りしないので、ここが底）"],
     ["1口あたり利益",   "現金損益 ÷ 販売口数"],
@@ -10422,7 +11157,7 @@ async function applyImport(){
   // 一覧のバーから後で入れ直せるのはこの値。
   S.marketMult = Number($("impMarket").value) || 1;
   syncMarket(S);
-  markLosers(S);
+  markTiers(S);
   if(pending.fileName && (!S.name || S.name === "新しいオリパ")){
     S.name = pending.fileName.replace(/\.csv$/i, "");
   }
@@ -10697,6 +11432,10 @@ async function draw(prizeId, n = 1){
   for(let i = 0; i < k; i++){
     S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id, at: now });
   }
+  /* 多段のとき、いま終わった客の通過に賞品の印を付ける。
+     ⚠ **排出の側は書き換えない。**通過の側に置くだけなので、口数にも金額にも
+     影響しない。シンプル型では何もしない（09d-stages.js の stampRun）。 */
+  stampRun(S, prizeId);
   renderNow();          // 押した手応えを先に返す。判断の欄はすぐ後から追いつく
   // 出し切ったなら、待っている落札をその場で立てる。次に取りに行くまで
   // 待たせると、届いているのに手が止まって見える
@@ -10774,7 +11513,7 @@ $("btnSetApply").addEventListener("click", () => {
   for(const o of DB.oripas){
     let touched = false;
     if(Number(o.marketMult) !== d.mult){
-      o.marketMult = d.mult; syncMarket(o); markLosers(o); touched = true;
+      o.marketMult = d.mult; syncMarket(o); markTiers(o); touched = true;
     }
     if(feeRateOf(o) !== d.fee){ o.feeRate = d.fee; touched = true; }
     if(touched) o.updatedAt = now;   // 一覧では save() が触らないので明示的に
@@ -10926,6 +11665,10 @@ $("btnDelete").addEventListener("click", async () => {
 });
 
 $("btnUndo").addEventListener("click", undo);
+/* 多段の段を足す。**配信中でも足せる**（準備で入れ忘れは必ず起きるので、
+   足せないとその日は一日パネルが出せない） */
+$("btnAddStage").addEventListener("click", addStage);
+
 $("btnResetDraws").addEventListener("click", async () => {
   if(!S.events.length && !S.lots.length) return;
   if(await ask("排出と落札の記録をすべて消しますか？", { okLabel: "すべて消す", danger: true })){
@@ -10949,7 +11692,7 @@ $("btnApply").addEventListener("click", applyDecidedPrice);
 
 $("fPrice").addEventListener("change", e => {
   S.price = Math.max(0, Math.round(Number(e.target.value) || 0));
-  markLosers(S);            // ハズレ枠の線は単価で決まるので、単価を変えたら引き直す
+  markTiers(S);            // ハズレ枠の線は単価で決まるので、単価を変えたら引き直す
   render();
 });
 $("fName").addEventListener("change", e => { S.name = e.target.value; render(); });
@@ -11083,11 +11826,15 @@ function unmakeSet(p){
 $("btnMakeSet").addEventListener("click", makeSet);
 
 // 解体の条件はオリパごとに覚える（配信中の値下げ判断も同じ前提で計算するため）
-["simTopMult", "simMinReturn"].forEach(id =>
+["simTopMult", "simMinReturn", "simMinHit"].forEach(id =>
   $(id).addEventListener("change", () => {
     if(S){
       S.simTopMult   = Math.max(0, Number($("simTopMult").value) || 0);
       S.simMinReturn = clamp((Number($("simMinReturn").value) || 0) / 100, 0, 2);
+      S.simMinHit    = clamp((Number($("simMinHit").value) || 0) / 100, 0, 5);
+      /* 目玉の線を動かしたら**タグの下書きも引き直す**。手で直したタグ
+         （tierAuto:false）はそのまま残る。 */
+      markTiers(S);
     }
     render();
   }));
