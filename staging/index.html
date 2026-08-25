@@ -1243,6 +1243,59 @@ details.explain dd{ margin:0; color:var(--ink-3); font-family:var(--font-num); f
   *{ animation:none !important; transition:none !important; }
 }
 
+/* ============================================================
+   多段オリパ（段の登録と、配信中の番号盤）
+
+   ⚠ 段を持たない回では出ない。シンプル型の見た目は 1 か所も変わらない。
+   ============================================================ */
+
+/* ---- 配信中の番号盤 ---- */
+#stageBoard{
+  border:1px solid var(--line); border-radius:12px;
+  background:var(--surface-2); padding:12px; margin-bottom:10px;
+}
+.stagetop{
+  background:var(--gold-bg); color:var(--gold-ink); font-weight:700;
+  border-radius:8px; padding:8px 12px; margin-bottom:10px;
+}
+.stagehead{ display:flex; align-items:baseline; gap:10px; margin-bottom:8px; }
+.stagehead b{ font-size:1.15rem; }
+.stagerest{ margin-left:auto; color:var(--ink-2); font-variant-numeric:tabular-nums; }
+.stagewin{
+  margin-left:8px; background:var(--gold-bg); color:var(--gold-ink);
+  border-radius:6px; padding:1px 8px; font-weight:700;
+}
+
+/* 番号。**押しやすさを優先**して大きく取る。配信中に外すと客を待たせる */
+.nos{ display:flex; flex-wrap:wrap; gap:6px; }
+.no{
+  min-width:46px; height:46px; padding:0 6px;
+  border:1px solid var(--line-2); border-radius:8px;
+  background:var(--surface); color:var(--ink);
+  font-size:1.1rem; font-weight:700; font-variant-numeric:tabular-nums;
+  cursor:pointer;
+}
+.no:hover:not(:disabled){ border-color:var(--gold); }
+.no.is-sel{ background:var(--gold); border-color:var(--gold); color:#fff; }
+/* 引かれた番号は**消さずに残して灰にする**。消すと並びが詰まって、
+   客が言った番号を探しにくくなる */
+.no.is-used{ opacity:.28; text-decoration:line-through; cursor:not-allowed; }
+.no:disabled:not(.is-used){ opacity:.5; cursor:not-allowed; }
+
+.stagebar{ display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.btn.big{ font-size:1.05rem; font-weight:700; padding:12px 22px; }
+.btn.big.win{  background:var(--good); border-color:var(--good); color:#fff; }
+.btn.big.lose{ background:var(--flat); border-color:var(--flat); color:#fff; }
+.btn.big:disabled{ opacity:.4; }
+#stageWhy{ color:var(--bad); font-weight:600; }
+
+/* ---- 編集画面の段 ---- */
+.stagebox{ margin-top:18px; border-top:1px solid var(--line); padding-top:14px; }
+.stagehead2{ display:flex; align-items:center; gap:12px; margin-bottom:8px; }
+.stagehead2 h3{ margin:0; font-size:1rem; }
+.stagehead2 .btn{ margin-left:auto; }
+.stagetbl input{ width:100%; }
+
 .stgbar{
   position:sticky; top:0; z-index:50;
   background:#B3261E; color:#fff; text-align:center;
@@ -1312,7 +1365,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='24d3898 (08/26 01:44)';</script>
+<script>window.__BUILD='b294d35 (08/26 01:52)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -1629,6 +1682,10 @@ window.__SYNC_DEFAULTS = {
         <div class="body">
           <div class="inbox" id="inbox" hidden></div>
           <div id="lotBar"></div>
+          <!-- 多段オリパの番号盤。段を持たない回では出ない（renderStageBoard）。
+               カードの手前に置く。現実の手順が 番号を選ぶ → 開ける →
+               あたり/はずれ → 賞品、の順なので、画面もその順に並べる -->
+          <div id="stageBoard" hidden></div>
           <div class="prizes" id="prizeList"></div>
           <div class="drawbar">
             <button type="button" class="btn" id="btnUndo">← 1 件取り消し</button>
@@ -2215,6 +2272,27 @@ window.__SYNC_DEFAULTS = {
           <b>金額と落札者が配信画面へ自動で届く</b>（同期の設定が要る）。
           押すのは出たカードだけになる。
         </p>
+
+        <!-- 多段オリパの段。空のままならシンプル型で、いままでどおり動く -->
+        <div class="stagebox">
+          <div class="stagehead2">
+            <h3>段（多段オリパのとき）</h3>
+            <button type="button" class="btn" id="btnAddStage">段を足す</button>
+          </div>
+          <table class="tbl stagetbl">
+            <thead><tr>
+              <th>名前</th><th style="width:7em">枚数</th><th style="width:7em">あたり</th>
+              <th style="width:5em">引かれた</th><th style="width:3em"></th>
+            </tr></thead>
+            <tbody id="stageRows"></tbody>
+          </table>
+          <p class="hint" id="stageNote" style="margin:8px 0 0"></p>
+          <p class="hint" style="margin:6px 0 0">
+            あたり券は<b>原価ゼロの通過券</b>なので、賞品には入れない。
+            賞品に入れるのは<b>最終到達物だけ</b>（残念賞と目玉）。
+            段は配信中でも足せる。
+          </p>
+        </div>
 
 
       </div>
@@ -8319,6 +8397,7 @@ function renderLive(c){
     + `${外した.map(v => `${esc(v.order.buyer || "落札者不明")} ${yen(v.yen)}`).join("／")}</span>`
     + `</span><span><button type="button" class="btn" id="btnVoidedSeen">確認した</button></span></div>`);
   $("liveNotice").innerHTML = notes.join("");
+  renderStageBoard();   // 多段の番号盤（段を持たない回では何も出ない）
   const vb = $("btnVoidedSeen");
   if(vb) vb.addEventListener("click", () => { voidedNow = []; renderNow(); });
 
@@ -9244,6 +9323,187 @@ async function cancelLot(id, noConfirm){
  * 表全体が読みにくくなるため。
  */
 /** 前の落札からの間隔。テンポが落ちた場所を見つけるのに使う */
+/* ============================================================
+   多段オリパの画面（段の登録と、配信中の番号盤）
+
+   中身の理屈は 09d-stages.js。ここは見せ方と押し方だけ。
+
+   ⚠ **シンプル型には何も出さない。**段を持たないオリパでは、この節が
+   作るものは 1 つも画面に出ない。今までの配信の手順を 1 手も変えない。
+
+   ⚠ **モーダルを出さない。**配信中に画面を覆うものを出すと、賞品ボタンが
+   押せなくなって売上が記録から落ちる（2026-08-21 に起こした）。
+   知らせも入力もその場に置く。
+   ============================================================ */
+
+/** 番号盤で選んでいる番号。**端末ごとの一時的なもので、同期しない** */
+let stageSel = 0;
+
+/** 配信中に段を触ってよいか。見るだけの端末と締めた回では触らせない */
+function stageEditable(){
+  return !!S && !S.closedAt && mode === "live";
+}
+
+/* ---------- 配信中の番号盤 ---------- */
+
+function renderStageBoard(){
+  const box = $("stageBoard");
+  if(!box) return;
+  if(!S || !isMulti(S) || mode === "list" || mode === "edit"){ box.hidden = true; return; }
+  box.hidden = false;
+
+  const st = currentStage(S);
+  const 頂 = reachedTop(S);
+  const 触 = stageEditable();
+
+  let h = "";
+  if(頂){
+    /* ⚠ 番号盤は止めない。押し忘れで盤が固まると配信が止まる（09d の注記）。
+       知らせるだけにして、次の客の番号はそのまま押せるようにしておく。 */
+    h += `<div class="stagetop">🎉 目玉が確定。賞品を押してください</div>`;
+  }
+  if(!st){
+    box.innerHTML = h;
+    return;
+  }
+
+  const rest = stageRest(S, st);
+  const used = stageUsed(S, st.id);
+
+  h += `<div class="stagehead">`
+    +  `<b>${esc(st.name || "この段")}</b>`
+    +  `<span class="stagerest">のこり ${rest.left} 枚`
+    +  `<span class="stagewin">あたり ${rest.wins}</span></span>`
+    +  `</div>`;
+
+  h += `<div class="nos">`;
+  for(let n = 1; n <= (st.slots | 0); n++){
+    const 済 = used.has(n);
+    h += `<button type="button" class="no${済 ? " is-used" : ""}${stageSel === n ? " is-sel" : ""}"`
+      +  ` data-no="${n}"${(済 || !触) ? " disabled" : ""}>${n}</button>`;
+  }
+  h += `</div>`;
+
+  h += `<div class="stagebar">`
+    +  `<button type="button" class="btn big win" data-win="1"${(!触 || !stageSel) ? " disabled" : ""}>あたり</button>`
+    +  `<button type="button" class="btn big lose" data-win="0"${(!触 || !stageSel) ? " disabled" : ""}>はずれ</button>`
+    +  `<button type="button" class="btn ghost" data-undo="1"${(!触 || !passes(S).length) ? " disabled" : ""}>← 取り消し</button>`
+    +  `<span class="hint" id="stageWhy"></span>`
+    +  `</div>`;
+
+  box.innerHTML = h;
+
+  box.querySelectorAll("button[data-no]").forEach(b => {
+    b.addEventListener("click", () => {
+      touchLive();
+      // もう一度押したら選び直し（選んだまま固まらないように）
+      stageSel = stageSel === (b.dataset.no | 0) ? 0 : (b.dataset.no | 0);
+      renderStageBoard();
+    });
+  });
+  box.querySelectorAll("button[data-win]").forEach(b => {
+    b.addEventListener("click", () => takePass(b.dataset.win === "1"));
+  });
+  const u = box.querySelector("button[data-undo]");
+  if(u) u.addEventListener("click", () => {
+    touchLive();
+    if(!stageEditable()) return;
+    const p = undoPass(S);
+    if(!p) return;
+    stageSel = 0;
+    save(); renderNow();
+  });
+}
+
+/** 選んだ番号を、あたり／はずれとして記録する */
+function takePass(win){
+  touchLive();
+  if(!stageEditable() || !stageSel) return;
+  const st = currentStage(S);
+  if(!st) return;
+  const r = addPass(S, st.id, stageSel, win);
+  if(!r.ok){
+    /* ⚠ ここで say()（モーダル）を使わない。配信中に画面を覆うと
+       賞品ボタンが押せなくなる。理由はその場に出す。 */
+    const why = $("stageWhy");
+    if(why) why.textContent = "⚠ " + r.why;
+    return;
+  }
+  stageSel = 0;
+  save(); renderNow();
+}
+
+/* ---------- 編集画面の段の登録 ---------- */
+
+function renderStageEdit(){
+  const box = $("stageRows");
+  if(!box) return;
+  const st = stages(S);
+  const 済 = passes(S).length;
+
+  let h = "";
+  st.forEach((s, i) => {
+    const r = stageRest(S, s);
+    const 引 = (s.slots | 0) - r.left;
+    h += `<tr data-i="${i}">`
+      +  `<td><input type="text" data-f="name" value="${esc(s.name || "")}" aria-label="段の名前"></td>`
+      +  `<td><input type="number" data-f="slots" min="0" step="1" value="${s.slots | 0}" aria-label="枚数" inputmode="numeric"></td>`
+      +  `<td><input type="number" data-f="wins" min="0" step="1" value="${s.wins | 0}" aria-label="あたり枚数" inputmode="numeric"></td>`
+      +  `<td class="num" style="text-align:center;color:var(--ink-3)">${引}</td>`
+      +  `<td><button type="button" class="rowdel" data-del="${i}"`
+      +  `${引 > 0 ? " disabled title='もう引かれているので削除できない'" : ""} aria-label="この段を削除">×</button></td>`
+      +  `</tr>`;
+  });
+  box.innerHTML = h;
+
+  const note = $("stageNote");
+  if(note){
+    note.textContent = st.length
+      ? `客に伝える確率：${st.map(s => { const r = stageRest(S, s); return `${r.wins}/${r.left}`; }).join(" → ")}`
+      : "段を足すと多段オリパになる。空のままならいままでどおり（1 口＝1 排出）。";
+  }
+
+  box.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const i = inp.closest("tr").dataset.i | 0;
+      const s = stages(S)[i];
+      if(!s) return;
+      const f = inp.dataset.f;
+      if(f === "name") s.name = inp.value;
+      else {
+        const v = Math.max(0, Math.round(Number(inp.value) || 0));
+        s[f] = v;
+        /* ⚠ あたり枚数が枚数を超えないようにその場で抑える。超えると客に
+           伝えている確率が 1 を上回る（分子が分母より大きくなる）。 */
+        if(f === "slots" && (s.wins | 0) > v) s.wins = v;
+        if(f === "wins"  && v > (s.slots | 0)) s.wins = s.slots | 0;
+      }
+      save();
+      renderStageEdit();
+    });
+  });
+  box.querySelectorAll("button[data-del]").forEach(b => {
+    b.addEventListener("click", () => {
+      const i = b.dataset.del | 0;
+      const s = stages(S)[i];
+      if(!s) return;
+      /* ⚠ 引かれている段は消さない。消すと通過の行き先が無くなり、
+         「何分のいくつ」が作れなくなる。編集画面でも disabled にしてある */
+      if(passes(S).some(p => String(p.stageId) === String(s.id))) return;
+      S.stages.splice(i, 1);
+      save(); renderStageEdit();
+    });
+  });
+}
+
+/** 段を 1 つ足す。**配信中でも足せる**（登録し忘れは必ず起きる）*/
+function addStage(){
+  if(!S || S.closedAt) return;
+  if(!Array.isArray(S.stages)) S.stages = [];
+  const n = S.stages.length + 1;
+  S.stages.push({ id: newId(), name: `${n} 回目`, slots: 10, wins: 1 });
+  save(); renderStageEdit();
+}
 function fmtGap(ms){
   const m = Math.round(ms / 60000);
   if(!(m > 0)) return "";
@@ -10177,6 +10437,7 @@ function renderEdit(c){
   if(document.activeElement !== $("fPrice")) $("fPrice").value = S.price;
   if(document.activeElement !== $("fShopId")) $("fShopId").value = S.shopProductId || "";
   renderShopIdPicks();
+  renderStageEdit();      // 多段の段（空ならシンプル型のまま）
 
   $("setupNotice").innerHTML = "";
   const held = liveHolder(S);
@@ -10909,6 +11170,10 @@ async function draw(prizeId, n = 1){
   for(let i = 0; i < k; i++){
     S.events.push({ prizeId, price: lotSlotPrice(lot, already + i), lotId: lot.id, at: now });
   }
+  /* 多段のとき、いま終わった客の通過に賞品の印を付ける。
+     ⚠ **排出の側は書き換えない。**通過の側に置くだけなので、口数にも金額にも
+     影響しない。シンプル型では何もしない（09d-stages.js の stampRun）。 */
+  stampRun(S, prizeId);
   renderNow();          // 押した手応えを先に返す。判断の欄はすぐ後から追いつく
   // 出し切ったなら、待っている落札をその場で立てる。次に取りに行くまで
   // 待たせると、届いているのに手が止まって見える
@@ -11138,6 +11403,10 @@ $("btnDelete").addEventListener("click", async () => {
 });
 
 $("btnUndo").addEventListener("click", undo);
+/* 多段の段を足す。**配信中でも足せる**（準備で入れ忘れは必ず起きるので、
+   足せないとその日は一日パネルが出せない） */
+$("btnAddStage").addEventListener("click", addStage);
+
 $("btnResetDraws").addEventListener("click", async () => {
   if(!S.events.length && !S.lots.length) return;
   if(await ask("排出と落札の記録をすべて消しますか？", { okLabel: "すべて消す", danger: true })){
