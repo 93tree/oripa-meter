@@ -1312,7 +1312,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='a8a824b (08/25 19:07)';</script>
+<script>window.__BUILD='fcb3aed (08/25 19:19)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -8087,6 +8087,21 @@ function renderLive(c){
       + `落札の表で同じ落札者・同じ金額の行を見つけて、あとから立ったほうを`
       + `「×」で取り消すこと。注文 ID: ${dup.map(([k]) => esc(k)).join("・")}</div>`);
   }
+  /* ⚠ **手で入れた落札と、同じ売上に見える注文。**上の見張りは注文 ID でしか
+     照合できないので、手入力ぶんは素通りする。押すと二重に乗る
+     （2026-08-25 に踏みかけた。`suspectDoubleTake` の注記）。 */
+  const 二重かも = suspectDoubleTake(S);
+  if(二重かも.length){
+    notes.push(`<div class="notice">⚠ <b>手で入れた落札と同じに見える注文</b> が `
+      + `${二重かも.length} 件、受信箱に残っている。`
+      + `<b>そのまま押すと売上が二重に乗る。</b>`
+      + `手入力ぶんが正なら「取り込まずに消す」、受信箱ぶんが正なら`
+      + `先に手入力の落札を「×」で取り消すこと。<br>`
+      + 二重かも.map(({ order, lot }) =>
+          `　注文 ${fmtClock(order.at)} ${yen(lotTotalOfOrder(order))}`
+          + ` ／ 手入力の落札 ${fmtClock(lot.at)} ${yen(lotTotal(lot))}`).join("<br>")
+      + `</div>`);
+  }
   const short = (S.lots || []).filter(l => Number(l.shortBy) > 0);
   if(short.length) notes.push(`<div class="notice">⚠ 残りが足りず渡せなかった口が `
     + `<b>${short.reduce((n, l) => n + Number(l.shortBy), 0)} 口</b>`
@@ -8539,6 +8554,54 @@ function renderInbox(c){
 /** その注文から立った落札。**二重取り込みの照合はこれで行う** */
 const lotForOrder = (o, id) =>
   ((o && o.lots) || []).find(l => l.orderId && String(l.orderId) === String(id)) || null;
+
+/* 手で入れた落札と、同じ売上に見える注文の近さ。
+   実データ（2026-08-25）では 注文 18:46 → 落札 18:49、18:50 → 18:51 と
+   数分ずれていた。押してから記録するまでの間があるので、分単位で見る。 */
+const SAME_SALE_MS = 15 * 60 * 1000;
+
+/**
+ * **手で入れた落札と同じ売上に見える、未取り込みの注文。**
+ *
+ * ⚠ 二重取り込みの見張り（`lotForOrder`）は**注文 ID でしか照合できない**。
+ * 手で入れた落札には注文 ID が無いので、同じ売上を手入力と受信箱の両方から
+ * 立てても**何も警告が出ず、売上が二重に乗る**。
+ *
+ * 実際 2026-08-25 の配信で踏みかけた。受信箱に注文が出ない不具合があって
+ * 手入力に切り替えたが、不具合を直した版を配ると同じ注文が受信箱に現れ、
+ * 押すと 3 件ぶん二重になる状態だった（運用者に確かめて消した）。
+ *
+ * 金額（落札の合計）が一致し、時刻が近いものを「同じ売上かもしれない」として出す。
+ * **消しも止めもしない。**人が見て決めるための知らせ。
+ */
+/** 注文 1 件ぶんの落札額（口数ぶん）。落札の `lotTotal` と同じ土俵にする */
+const lotTotalOfOrder = x =>
+  (Number(x && x.price) || 0) * Math.max(1, Number(x && x.qty) || 1);
+
+function suspectDoubleTake(o){
+  if(!o || o.closedAt) return [];
+  /* 注文から立った落札は照合済みなので見ない。見るのは**手で入れたぶん**だけ */
+  const 手入力 = (o.lots || []).filter(l => !l.orderId);
+  if(!手入力.length) return [];
+  /* ⚠ **落札 1 件は 1 件の注文としか組ませない。**同じ金額の落札が 1 件しか
+     無いのに注文が 2 件あると、素直に探すと**両方が同じ落札に当たって**
+     「2 件とも二重かも」と言ってしまう。近いものから順に取って、使った落札は外す。 */
+  const 空き = 手入力.slice();
+  const out = [];
+  for(const x of ordersFor(o).pending){
+    const 合計 = lotTotalOfOrder(x);
+    const at = Number(x.at) || 0;
+    let best = -1, 差 = Infinity;
+    空き.forEach((l, i) => {
+      if(lotTotal(l) !== 合計) return;
+      const d = Math.abs((Number(l.at) || 0) - at);
+      if(d > SAME_SALE_MS || d >= 差) return;
+      best = i; 差 = d;
+    });
+    if(best >= 0) out.push({ order: x, lot: 空き.splice(best, 1)[0] });
+  }
+  return out;
+}
 
 /** 届いた落札を、進行中の落札として立てる */
 function takeOrder(orderId){
