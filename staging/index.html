@@ -1296,6 +1296,14 @@ details.explain dd{ margin:0; color:var(--ink-3); font-family:var(--font-num); f
 .stagehead2 .btn{ margin-left:auto; }
 .stagetbl input{ width:100%; }
 
+/* 賞品のタグ（目玉／あたり／はずれ）。当たり枚数を数える元 */
+.tiersel{ width:100%; font-size:.85rem; padding:3px 4px; }
+.tiersel.is-top{  color:var(--gold-ink); background:var(--gold-bg); font-weight:700; }
+.tiersel.is-win{  color:var(--good);     background:var(--good-bg); font-weight:700; }
+.tiersel.is-lose{ color:var(--ink-3); }
+/* 相場から引いた下書きの印。手で直すと消える */
+.autodot{ color:var(--ink-3); font-size:1.1rem; line-height:0; margin-left:2px; }
+
 .stgbar{
   position:sticky; top:0; z-index:50;
   background:#B3261E; color:#fff; text-align:center;
@@ -1365,7 +1373,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='6a0d48f (08/26 02:00)';</script>
+<script>window.__BUILD='24d1182 (08/26 02:15)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2078,7 +2086,10 @@ window.__SYNC_DEFAULTS = {
               （編集画面の相場欄が破線＋灰色なら自動）。</li>
             <li>この 1 つの数字で<b>還元率・目玉の判定・ハズレ枠の線・「AIの提案」が
               言う相場</b>が動く。低すぎると判断が「もっと下げろ」に寄る。</li>
-            <li><b>ハズレ枠は自動</b>（相場が販売単価の 20% 以下）。印を付ける操作はない。
+            <li><b>タグ（目玉／あたり／はずれ）は取り込み時に相場から下書きされる。</b>
+              ⚠ 下書きは当て推量なので、<b>手で直すこと</b>。一度直したタグは
+              単価を変えても相場を入れ直しても<b>二度と上書きされない</b>。
+              残りの当たり枚数はこのタグで数える。
               まとめ排出はこの印とは無関係で、残りが 5 口以上の行に出る。</li>
           </ul>
         </details>
@@ -2200,7 +2211,7 @@ window.__SYNC_DEFAULTS = {
                 <th style="width:12%">相場</th>
                 <th style="width:9%">口数</th>
                 <th style="width:20%">備考</th>
-                <th style="width:7%">ハズレ</th>
+                <th style="width:9%">タグ</th>
                 <th style="width:7%">排出済</th>
                 <th></th>
               </tr>
@@ -2505,7 +2516,7 @@ function starterOripas(){
 function normalizeOripa(o){
   const t = Date.now();
   // 相場の埋め直し → ハズレ判定 の順。ハズレは相場を見るので順番が要る
-  return markLosers(syncMarket({
+  return markTiers(syncMarket({
     ...o,                       // 知らないフィールドも捨てずに持ち越す
     id: o.id || newId(),
     name: String(o.name || "無題のオリパ"),
@@ -2546,6 +2557,11 @@ function normalizeOripa(o){
       market: Math.max(0, Number(p.market) || 0),
       count: Math.max(0, Math.round(Number(p.count) || 0)),
       note: String(p.note || ""), normal: !!p.normal,
+      /* 賞品のタグ（目玉 / あたり / はずれ）。当たり枚数を数える元。
+         ⚠ tierAuto が false なら**手で直したもの**なので二度と上書きしない
+         （02-market.js の markTiers）。 */
+      tier: TIERS.includes(p.tier) ? p.tier : "",
+      tierAuto: p.tierAuto === undefined ? true : !!p.tierAuto,
       // 相場が原価と同額（＝倍率1.0で取り込んだ跡）か未設定なら「自動」とみなす。
       // 実売相場をわざわざ原価ちょうどで入れることは無いので、この判定で拾える。
       marketAuto: p.marketAuto === undefined
@@ -2651,13 +2667,54 @@ function syncMarket(o){
   return o;
 }
 
-/** ハズレ枠かどうかは印を付けてもらうのではなく、単価との比で決める。
-    印を人手で維持させると必ず付け忘れる（実際 83 口の行が付いていなかった）。 */
-function markLosers(o){
-  const line = (Number(o.price) || 0) * LOSER_RATIO;
-  for(const p of o.prizes) p.normal = line > 0 && mktOf(p) <= line;
+/* ============================================================
+   賞品のタグ（目玉 / あたり / はずれ）
+
+   運用者の指示 2026-08-26：
+     「価格を下回るとすべてアドではないという事になるので、オリパの商品ごとに
+      あたり・はずれのタグを持たせたい」
+     「今後は残りの当たりの枚数などを気にするようにしたい、これはすべての
+      計算式に当てはめたい」
+
+   これまで「当たり」は 3 つの別々の基準が**相場から自動で**決めていた。
+     アド     … 相場 > その口で払った額
+     目玉     … 相場 ≥ 単価 × 5
+     ハズレ枠 … 相場 ≤ 単価 × 0.2（編集画面に印を出すだけで、計算には無関係）
+   どれも単価に張り付いているので、単価が高いと何も当たりにならず、値下げ
+   すると枚数が勝手に動く。**枚数は卓の性質**であって値段の関数ではない。
+
+   ⚠ **手で直したタグは二度と上書きしない。**`tierAuto` が false になり、
+   単価を変えても相場を入れ直しても動かない。以前の `normal` は読み込むたびに
+   相場から引き直していたので、手で付けても消えていた（そこが直したかった点）。
+   ============================================================ */
+
+const TIERS = ["top", "win", "lose"];
+
+/** 取り込み直後の下書き。**相場から引くだけの当て推量**なので、手で直す前提 */
+function autoTier(o, p){
+  const price = Number(o.price) || 0;
+  if(price <= 0) return "lose";                 // 単価が無いうちは決めようがない
+  const m = mktOf(p);
+  const topLine = price * (Number(o.simTopMult ?? 5) || 0);
+  if(topLine > 0 && m >= topLine) return "top";
+  // ⚠ 線は**単価そのもの**。客が得をするかどうかがいちばん素直な区切り
+  return m >= price ? "win" : "lose";
+}
+
+/** 自動のぶんだけタグを引き直す。手で直したものには触らない */
+function markTiers(o){
+  for(const p of o.prizes){
+    if(p.tierAuto !== false || !TIERS.includes(p.tier)) p.tier = autoTier(o, p);
+    // 昔の印。編集画面の表示がまだ見ているので、タグに合わせて残しておく
+    p.normal = p.tier === "lose";
+  }
   return o;
 }
+
+/** その賞品は客から見て「当たり」か（目玉も当たりのうち）*/
+const isHit = p => p && (p.tier === "top" || p.tier === "win");
+/** 目玉か */
+const isTop = p => !!p && p.tier === "top";
 
 /** lots が無かった頃のイベントを、1口ずつの即決として拾い直す */
 function backfillLots(o){
@@ -4063,10 +4120,15 @@ function csvToPrizes(text, opts){
   const prizes = out.map(o => ({
     id: uid++, name: o.name, cost: o.cost, market: o.market,
     count: o.count, note: o.note || "", normal: NORMAL_RE.test(o.name), items: [],
+    tier: NORMAL_RE.test(o.name) ? "lose" : "",
+    tierAuto: !NORMAL_RE.test(o.name),
     // CSV に相場の列が無ければ、相場は 原価 × 相場想定倍率 で埋める
     marketAuto: idx.market == null
   }));
-  // ハズレ枠は取り込み時ではなく markLosers() が単価との比で決めるので、ここでは触らない
+  /* タグ（目玉/あたり/はずれ）は取り込み時ではなく markTiers() が決める。
+     ただし**名前にハズレと書いてあるものは、そこで決め打ちにする**。
+     相場から引いた下書きより人が付けた名前のほうが確かなので、手で直した
+     ものと同じ扱い（tierAuto: false）にして二度と上書きしない。 */
   const slots = prizes.reduce((n, p) => n + p.count, 0);
   const cost  = prizes.reduce((n, p) => n + costOf(p) * p.count, 0);
   return { prizes, slots, cost, hasMarket: idx.market != null };
@@ -4199,6 +4261,26 @@ function compute(o){
   };
   const adoLeft = adoLeftAt(price);
 
+  /* ── 当たり枚数（タグ基準）──────────────────────────────
+     運用者の指示 2026-08-26：「今後は残りの当たりの枚数などを気にするように
+     したい、これはすべての計算式に当てはめたい」。
+
+     ⚠ **アドと違って単価に張り付かない。**アドは「相場 > その口で払った額」
+     なので、単価が高いと何も当たりにならず、値下げすると枚数が勝手に動く。
+     枚数は卓の性質であって値段の関数ではない。タグは人が決める。
+
+     当たり ＝ 目玉 ＋ あたり（客から見ればどちらも当たり）。
+     目玉だけを別に数えるのは、解体の判断がそこを見るため。 */
+  let topLeft = 0, winLeft = 0, topDone = 0, winDone = 0;
+  for(const p of o.prizes){
+    const got  = drawnBy.get(p.id) || 0;
+    const rest = Math.max(0, (p.count | 0) - got);
+    if(isTop(p)){ topLeft += rest; topDone += got; }
+    else if(isHit(p)){ winLeft += rest; winDone += got; }
+  }
+  const hitLeft = topLeft + winLeft;
+  const hitDone = topDone + winDone;
+
   const baseEvMkt  = N > 0 ? mktTotal / N : 0;
   const heat       = (baseEvMkt > 0 && left > 0) ? evMkt / baseEvMkt : 1;
   const returnLeft = price > 0 ? evMkt / price : 0;
@@ -4241,6 +4323,9 @@ function compute(o){
        ので、値下げの効き目をアド率で測れる。 */
     adoDone, adoYen, adoDoneRate: sold > 0 ? adoDone / sold : 0,
     adoLeft, adoLeftRate: left > 0 ? adoLeft / left : 0, adoLeftAt,
+    /* 当たり枚数（タグ基準）。アドと違い単価に張り付かない */
+    topLeft, winLeft, hitLeft, topDone, winDone, hitDone,
+    hitLeftRate: left > 0 ? hitLeft / left : 0,
     returnLeft, returnAll, finalRev, finalProfit, finalMargin,
     pBE, pTarget, pBuyer, pFloor, rec, tm, state, verdict, drawnBy
   };
@@ -10464,9 +10549,26 @@ function renderEdit(c){
              title="${p.marketAuto ? "原価 × 相場想定倍率。ここに書くと固定になる" : "手入力"}">`}</td>
       <td><input type="number" data-f="count" min="0" step="1" value="${p.count|0}" aria-label="口数" inputmode="numeric"></td>
       <td><input type="text" data-f="note" value="${esc(p.note || "")}" aria-label="備考"></td>
-      <td style="text-align:center">${p.normal ? `<span class="losertag">ハズレ</span>` : ""}</td>
+      <td style="text-align:center">
+        <select data-f="tier" class="tiersel is-${p.tier}" aria-label="タグ"
+          title="${p.tierAuto ? "相場から引いた下書き。直すと固定される" : "手で決めたもの。上書きされない"}">
+          <option value="top"  ${p.tier === "top"  ? "selected" : ""}>目玉</option>
+          <option value="win"  ${p.tier === "win"  ? "selected" : ""}>あたり</option>
+          <option value="lose" ${p.tier === "lose" ? "selected" : ""}>はずれ</option>
+        </select>${p.tierAuto ? `<span class="autodot" title="相場から引いた下書き">•</span>` : ""}</td>
       <td class="num" style="text-align:center;color:var(--ink-3)">${drawn}</td>
       <td><button type="button" class="rowdel" ${drawn>0?"disabled title='排出済みのため削除できない'":""} aria-label="この行を削除">×</button></td>`;
+
+    /* タグ。⚠ **触ったら手で決めたものとして固定する**（tierAuto を落とす）。
+       これをしないと、単価を変えた拍子に相場から引き直されて消える。
+       いままでの `normal` がまさにそれで、手で付けても読み込むたびに消えていた。 */
+    const sel = tr.querySelector('select[data-f="tier"]');
+    if(sel) sel.addEventListener("change", () => {
+      p.tier = sel.value;
+      p.tierAuto = false;
+      p.normal = p.tier === "lose";
+      save(); render();
+    });
 
     tr.querySelectorAll("input").forEach(inp => {
       const f = inp.dataset.f;
@@ -10483,7 +10585,7 @@ function renderEdit(c){
         // 相場を手で書いたらその行は固定。原価を直したら自動の行は追従させる
         if(f === "market") p.marketAuto = false;
         if(f === "cost") syncMarket(S);
-        markLosers(S);
+        markTiers(S);
         render();
       });
     });
@@ -10895,7 +10997,7 @@ async function applyImport(){
   // 一覧のバーから後で入れ直せるのはこの値。
   S.marketMult = Number($("impMarket").value) || 1;
   syncMarket(S);
-  markLosers(S);
+  markTiers(S);
   if(pending.fileName && (!S.name || S.name === "新しいオリパ")){
     S.name = pending.fileName.replace(/\.csv$/i, "");
   }
@@ -11251,7 +11353,7 @@ $("btnSetApply").addEventListener("click", () => {
   for(const o of DB.oripas){
     let touched = false;
     if(Number(o.marketMult) !== d.mult){
-      o.marketMult = d.mult; syncMarket(o); markLosers(o); touched = true;
+      o.marketMult = d.mult; syncMarket(o); markTiers(o); touched = true;
     }
     if(feeRateOf(o) !== d.fee){ o.feeRate = d.fee; touched = true; }
     if(touched) o.updatedAt = now;   // 一覧では save() が触らないので明示的に
@@ -11430,7 +11532,7 @@ $("btnApply").addEventListener("click", applyDecidedPrice);
 
 $("fPrice").addEventListener("change", e => {
   S.price = Math.max(0, Math.round(Number(e.target.value) || 0));
-  markLosers(S);            // ハズレ枠の線は単価で決まるので、単価を変えたら引き直す
+  markTiers(S);            // ハズレ枠の線は単価で決まるので、単価を変えたら引き直す
   render();
 });
 $("fName").addEventListener("change", e => { S.name = e.target.value; render(); });
