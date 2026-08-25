@@ -1312,7 +1312,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='ab2b5c9 (08/26 01:25)';</script>
+<script>window.__BUILD='24d3898 (08/26 01:44)';</script>
 
 <div class="stgbar">ステージング — 本番ではありません。<b>ここのデータは本番と別</b>です。
 同期コードは末尾に <b>-test</b> を付けてください。</div>
@@ -2387,7 +2387,10 @@ function blankOripa(name){
   return {
     id: newId(), name: name || "新しいオリパ",
     price: 0, targetMargin: 0.30, targetReturn: 0.80,
-    prizes: [], events: [], lots: [], totalSlots: 0, createdAt: t, updatedAt: t
+    prizes: [], events: [], lots: [], totalSlots: 0, createdAt: t, updatedAt: t,
+    /* 多段オリパ。空ならシンプル型（今までどおり）。
+       ⚠ passes は口数にも金額にも影響しない（09d-stages.js の注記） */
+    stages: [], passes: []
   };
 }
 
@@ -2440,6 +2443,25 @@ function normalizeOripa(o){
     marketMult: Number(o.marketMult) > 0 ? Number(o.marketMult) : 1,
     // TikTok Shop の商品 ID。落札の自動取り込みで、注文とオリパを結ぶ鍵
     shopProductId: String(o.shopProductId || "").trim(),
+    /* 多段オリパの段。空ならシンプル型で、今までと何も変わらない。
+       ⚠ **口数にも金額にも効かない。**あたり券は原価ゼロの通過券なので、
+       排出として立てない（09d-stages.js の注記）。 */
+    stages: (Array.isArray(o.stages) ? o.stages : []).map(st => ({
+      id: st.id || newId(),
+      name: String(st.name || ""),
+      slots: Math.max(0, Math.round(Number(st.slots) || 0)),
+      // あたり枚数は枚数を超えない。超えると確率が 1 を上回る
+      wins: clamp(Math.round(Number(st.wins) || 0), 0, Math.max(0, Math.round(Number(st.slots) || 0))),
+    })),
+    passes: (Array.isArray(o.passes) ? o.passes : []).map(p => ({
+      id: p.id || newId(),
+      stageId: String(p.stageId || ""),
+      no: Math.max(0, Math.round(Number(p.no) || 0)),
+      win: !!p.win,
+      at: Number(p.at) || 0,
+      // どの賞品に行き着いたか。「何番から何が出たか」を後から読むための印
+      prizeId: String(p.prizeId || ""),
+    })),
     prizes: (Array.isArray(o.prizes) ? o.prizes : []).map(p => ({
       id: p.id, name: String(p.name || ""),
       cost: Math.max(0, Number(p.cost) || 0),
@@ -5096,6 +5118,185 @@ function rebuildRecord(o){
   fresh.updatedAt = Date.now();
   DB.records[i] = fresh;
   return { before: Math.round(Number(old.revenue) || 0), after: Math.round(fresh.revenue) };
+}
+/* ============================================================
+   多段オリパの器
+
+   要件は docs/oripa-panel-requirements.md の 2〜5 章。
+
+   ■ 多段とは
+   1 回の購入で客がパックを何度か選ぶ形。段ごとに「あたり券」か「はずれ券」で、
+   はずれた時点で残念賞を渡して終わり。あたりを規定回数通すと目玉が確定する。
+   番号は**段ごとに 1 から振り直す**。段数もあたり枚数も回によって変わる。
+
+   ■ ⚠ ここがいちばん大事：口数と金額に触らない
+
+   いまのエンジンは「1 口 = 1 排出」で固まっている（`sold` ＝排出の件数、
+   残り口数 ＝総口数 − 排出件数）。多段を素直に入れると 1 人買っただけで
+   口数が 3 減り、還元率も崩れる。
+
+   だからイベントを 2 種類に分ける。
+
+     排出（既存 `events`）… 原価を持つ。最終到達物だけ。口数を消化する
+     通過（新規 `passes`）… 原価ゼロ。段・番号・あたり/はずれだけ。口数に触らない
+
+   あたり券は**原価ゼロの通過券**なので、記録上これを排出として立てない。
+   運用者は以前から最終到達物だけを 1 口 1 排出で入れており、**過去の
+   原価・還元率・損益はすべて正しい**（2026-08-26 に確認済み）。
+
+   ⚠ **このファイルは `compute()` を一切呼ばないし、`events` にも触らない。**
+   触った瞬間に上の前提が壊れる。検査 `stagetest.mjs` がそこを見張っている。
+   ============================================================ */
+
+/** 段の一覧。持っていなければ空（＝シンプル型） */
+function stages(o){ return Array.isArray(o && o.stages) ? o.stages : []; }
+
+/** 多段型か。シンプル型は今までどおり何も変わらない */
+function isMulti(o){ return stages(o).length > 0; }
+
+/** 段の通過の記録 */
+function passes(o){ return Array.isArray(o && o.passes) ? o.passes : []; }
+
+/** その段で既に引かれた番号 */
+function stageUsed(o, stageId){
+  const out = new Set();
+  for(const p of passes(o)) if(String(p.stageId) === String(stageId)) out.add(p.no | 0);
+  return out;
+}
+
+/**
+ * その段の残り。**客に伝えている「何分のいくつ」はここから作る。**
+ *   のこり = 枚数 − 引かれた枚数
+ *   あたり = あたり枚数 − 出たあたりの枚数
+ */
+function stageRest(o, st){
+  if(!st) return { left: 0, wins: 0 };
+  let 引 = 0, 当 = 0;
+  for(const p of passes(o)){
+    if(String(p.stageId) !== String(st.id)) continue;
+    引++; if(p.win) 当++;
+  }
+  return {
+    left: Math.max(0, (st.slots | 0) - 引),
+    wins: Math.max(0, (st.wins | 0) - 当),
+  };
+}
+
+/**
+ * 通過を客ごとの区切りに割る。
+ *
+ * 1 人の客は「はずれを引く」か「最後の段まであたりを通す」で終わる。
+ * ⚠ **状態を別に持たない。**通過の並びから毎回導く。持つと、端末をまたいだ
+ * ときに食い違う（同期で運ぶものが 1 つ増える）。
+ *
+ * 返す `live` が**いま進行中の客**。`live.length` がその客の通った段数＝
+ * これから引く段の番号（0 なら 1 段目）。
+ */
+function passRuns(o){
+  const n = stages(o).length;
+  const done = [];
+  let cur = [];
+  for(const p of passes(o)){
+    cur.push(p);
+    if(!p.win || (n > 0 && cur.length >= n)){ done.push(cur); cur = []; }
+  }
+  return { done, live: cur };
+}
+
+/**
+ * いま引く段。
+ *
+ * ⚠ **目玉が確定していても、次の客の 1 段目を返す。**
+ * 「賞品を渡すまで番号盤を止める」形も試したが、押し忘れると盤が固まって
+ * 配信が止まる。止まるくらいなら印（`prizeId`）が付かないほうがまし。
+ * 印は「何番から何が出たか」を後から読むための飾りで、金には効かない。
+ */
+function currentStage(o){
+  const st = stages(o);
+  if(!st.length) return null;
+  const k = passRuns(o).live.length;
+  return k < st.length ? st[k] : null;
+}
+
+/**
+ * いまの客が目玉まで通し切って、**まだ賞品を渡していない**か。
+ * 画面に「目玉が確定」と出すための合図で、番号盤は止めない（上の注記）。
+ *
+ * ⚠ 区切りは最後のあたりで自動的に閉じるので、`live` ではなく
+ * **直前に閉じた区切り**を見る。ここを `live` で見ると永久に false になる
+ * （検査 stagetest.mjs が捕まえた）。
+ */
+function reachedTop(o){
+  const st = stages(o);
+  if(!st.length) return false;
+  const { done, live } = passRuns(o);
+  if(live.length) return false;                       // まだ途中の客がいる
+  const r = done[done.length - 1] || [];
+  return r.length >= st.length && r.every(p => p.win) && r.some(p => !p.prizeId);
+}
+
+/**
+ * 通過を 1 つ記録する。**通らない入力は黙って通さず、理由を返す。**
+ * 配信中に押すものなので、間違った記録が静かに残るほうが困る。
+ */
+function addPass(o, stageId, no, win){
+  const st = stages(o).find(s => String(s.id) === String(stageId));
+  if(!st) return { ok: false, why: "その段は無い" };
+
+  const n = Math.round(Number(no) || 0);
+  if(!(n >= 1 && n <= (st.slots | 0))) return { ok: false, why: `番号は 1〜${st.slots | 0}` };
+  if(stageUsed(o, st.id).has(n))       return { ok: false, why: `${n} 番はもう引かれている` };
+
+  const rest = stageRest(o, st);
+  if(rest.left <= 0)                   return { ok: false, why: "この段はもう残っていない" };
+  /* ⚠ あたり枚数を超えて「あたり」を記録させない。超えると客に伝えている
+     確率が嘘になる（分子が実際より多く見える）。 */
+  if(win && rest.wins <= 0)            return { ok: false, why: "この段のあたりはもう出尽くしている" };
+
+  if(!Array.isArray(o.passes)) o.passes = [];
+  o.passes.push({
+    id: newId(), stageId: String(st.id), no: n, win: !!win,
+    at: Date.now(), prizeId: "",
+  });
+  return { ok: true };
+}
+
+/** 直前の通過を取り消す。押し間違いは必ず起きる */
+function undoPass(o){
+  const ps = passes(o);
+  if(!ps.length) return null;
+  return o.passes.pop();
+}
+
+/**
+ * いま終わった客の通過に、渡した賞品の印を付ける。
+ *
+ * これで「何番から何が出たか」が後から読める（運用者の狙い）。
+ * ⚠ **排出の側は書き換えない。**通過の側に印を置くだけなので、口数にも
+ * 金額にも影響しない。
+ */
+function stampRun(o, prizeId){
+  if(!isMulti(o) || !prizeId) return 0;
+  const { done, live } = passRuns(o);
+  // 進行中があればそれ、無ければ直前に終わった客
+  const run = live.length ? live : (done[done.length - 1] || []);
+  let k = 0;
+  for(const p of run){ if(!p.prizeId){ p.prizeId = String(prizeId); k++; } }
+  return k;
+}
+
+/** 番号ごとの選ばれ方。内部用（パネルには出さない。運用者の指示 2026-08-26）*/
+function noPopularity(o, stageId){
+  const st = stages(o).find(s => String(s.id) === String(stageId));
+  if(!st) return [];
+  const 回 = new Map();
+  for(const p of passes(o)){
+    if(String(p.stageId) !== String(st.id)) continue;
+    回.set(p.no | 0, (回.get(p.no | 0) || 0) + 1);
+  }
+  const out = [];
+  for(let n = 1; n <= (st.slots | 0); n++) out.push({ no: n, 回: 回.get(n) || 0 });
+  return out;
 }
 /* ============================================================
    解体シミュレーション
