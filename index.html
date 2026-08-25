@@ -1305,7 +1305,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='f868ebd (08/25 13:31)';</script>
+<script>window.__BUILD='a8a824b (08/25 19:01)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -2659,7 +2659,7 @@ function ordersFor(o){
   const host = orphanHost();
   const takesOrphans = !!host && String(host.id) === String(o.id);
   /* ⚠ **迷子は「当日のもの」だけ引き受ける**（運用者の指示 2026-08-24）。
-     `isOrphanOrder` は「その商品IDを使っているオリパが 1 つも無いか」しか見ないので、
+     `unclaimedByOpen` は「その商品IDを名乗っている**開いた**オリパが無いか」しか見ないので、
      **引退した出品は永久に迷子**になる。期限が無かったため、8/24 の配信の受信箱に
      **8/4〜8/20 の 62 件（¥320,566）**が並んでいた。うち 49 件はアプリを使い始める
      前（いちばん古いオリパは 8/14）の配信のもので、突き合わせようがない。
@@ -2667,7 +2667,7 @@ function ordersFor(o){
      商品 ID の入れ忘れはその日のうちに効けばよいので、当日で足りる。
      線を越えたぶんは受信箱に出さず、件数だけ知らせる（`staleOrphans`）。 */
   const orphanOK = x => {
-    if(!isOrphanOrder(x)) return false;
+    if(!unclaimedByOpen(x)) return false;
     const base = Number(o.liveStartedAt) || Date.now();
     return Math.abs((Number(x.at) || 0) - base) <= ORPHAN_TAKE_MS;
   };
@@ -2714,8 +2714,11 @@ function staleOrphans(){
     (DB.oripas || []).flatMap(o => (o.lots || []).map(l => String(l.orderId || ""))).filter(Boolean));
   const host = orphanHost();
   const base = host && Number(host.liveStartedAt) ? Number(host.liveStartedAt) : Date.now();
+  /* ⚠ 引き取りの判定（`orphanOK`）と**同じものさし**で数える。ここだけ
+     `isOrphanOrder` にすると、締めた回が商品 ID を握っている注文が
+     「引き取られもせず、数にも出ない」＝黙って消える。 */
   return (DB.orders || []).filter(x =>
-    isOrphanOrder(x) && !used.has(String(x.id)) && x.paid && !x.cancelled
+    unclaimedByOpen(x) && !used.has(String(x.id)) && x.paid && !x.cancelled
     && Math.abs((Number(x.at) || 0) - base) > ORPHAN_TAKE_MS);
 }
 
@@ -2815,10 +2818,33 @@ function pruneOrders(){
   return ids.size;
 }
 
-/** その注文の商品 ID を持つオリパが 1 つも無いか */
+/** その注文の商品 ID を持つオリパが 1 つも無いか（＝どこにも行き先が無い）*/
 function isOrphanOrder(x){
   const known = new Set(DB.oripas.map(o => String(o.shopProductId || "").trim()).filter(Boolean));
   return !x.productId || !known.has(String(x.productId));
+}
+
+/**
+ * **まだ開いているオリパが誰もその商品 ID を名乗っていないか。**
+ * 配信中の回が引き取ってよいかは、こちらで決める。
+ *
+ * ⚠ `isOrphanOrder` と分けたのは、**締めた回が商品 ID を握ったまま**になるから。
+ * 同じ出品を次の晩も使うと（TikTok の商品 ID は出品ごとで、使い回す）、
+ * 前の晩のオリパがその ID を持っている。すると新しく落札された注文は
+ * 「迷子ではない」と判定され、配信中の回が引き取れず、**締めた回に配られて
+ * 画面から消える**（運用者の報告 2026-08-25：「いま落札されたデータって
+ * 入ってきた？受信出来てない感じするけど」。実際 18:46 の ¥6,500 が
+ * 前の晩のオリパ宛になっていた）。
+ *
+ * 締めた回はもう注文を受け取れないので、**行き先として数えない。**
+ * 迷子の一覧（`unlinkedGroups` など）のほうは今までどおり全部のオリパで見る
+ * ——そちらは「結びつける先があるか」の話で、締めた回も先ではある。
+ */
+function unclaimedByOpen(x){
+  const open = new Set(DB.oripas
+    .filter(o => !o.closedAt)
+    .map(o => String(o.shopProductId || "").trim()).filter(Boolean));
+  return !x.productId || !open.has(String(x.productId));
 }
 
 /* 迷子の注文を引き受けるオリパ＝**いま配信しているもの**。
