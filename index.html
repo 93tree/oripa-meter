@@ -1366,7 +1366,7 @@ window.__SYNC_DEFAULTS = {
   </form>
 </div>
 
-<script>window.__BUILD='9e24ea5 (08/26 04:57)';</script>
+<script>window.__BUILD='5ca2730 (08/26 05:09)';</script>
 
 <header class="topbar">
   <div class="brand">
@@ -3932,8 +3932,17 @@ async function syncNow(manual){
       method: "POST", body, redirect: "follow",
       headers: { "Content-Type": "text/plain;charset=utf-8" }
     });
-    if(!res.ok) throw new Error("HTTP " + res.status);
-    const data = JSON.parse(await res.text());
+    /* ⚠ **本文を先に読む。**`!res.ok` で即投げていたので、サーバが理由を
+       返していても画面には `HTTP 500` としか出なかった（2026-08-26）。
+       置き場所が落ちたのか合言葉が違うのかが現場から区別できない。 */
+    const text = await res.text();
+    let data = null;
+    try{ data = JSON.parse(text); }catch(_){}
+    if(!res.ok){
+      const why = data && data.error ? data.error : text.slice(0, 200).trim();
+      throw new Error(`HTTP ${res.status}${why ? " — " + why : ""}`);
+    }
+    if(!data) throw new Error("応答が読めない：" + text.slice(0, 200).trim());
     if(!data.ok) throw new Error(data.error || "サーバが受け付けなかった");
 
     const changed = syncApply(data.items);
